@@ -2926,9 +2926,11 @@ const RIG = {
   height: 2.3,       // world units, feet to crown — about a mossback's shoulder
   idle: 'idle',
   walk: 'walk_fwd',
-  // Blender exports Z-up and this one was modelled facing away, so its eyes come out on
-  // -Z while the game's heading treats +Z as forward. Without this it walks backwards.
-  yaw: Math.PI,
+  // The game treats +Z as forward. Check a new export before trusting this: measure which
+  // side the eye geometry sits on, because it flips with how the model was rigged. The
+  // rigged re-export of this one faces +Z, so it needs no correction; the earlier static
+  // one did.
+  yaw: 0,
   lamp: null,        // null = derive from the model's own bounds; [x,y,z] to place it by hand
   blinkL: 'eye_L_close',    // one shape per eye, so it can wink as well as blink
   blinkR: 'eye_R_close',
