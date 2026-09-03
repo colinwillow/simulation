@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b13';
+const BUILD = 'b14';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -834,6 +834,27 @@ const waterUni = {
   uWk: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] },
   uSky: { value: new THREE.Color(0x9dc9ec) }
 };
+// The same four Gerstner trains and set envelopes as waveDisp() in the vertex shader, read
+// from the live uniforms so storm steepness comes along. Vertical term only: a swimmer
+// wants the height of the surface over his head, not where a mesh vertex slid to.
+function waveY(x, z) {
+  const t = waterUni.uT.value; let y = 0;
+  for (let i = 0; i < 4; i++) {
+    const w = waterUni.uW.value[i], g = waterUni.uG.value[i];
+    const dl = Math.hypot(w.x, w.y) || 1, gl = Math.hypot(g.x, g.y) || 1;
+    const k = 6.2831853 / w.w, c = Math.sqrt(9.8 / k);
+    const e = .5 + .5 * Math.sin((g.x * x + g.y * z) / gl * g.z - t * g.w);
+    const env = .30 + 1.15 * e * e;
+    const a = (w.z / k) * env;
+    y += a * Math.sin(k * ((w.x * x + w.y * z) / dl - c * t));
+  }
+  return SEA + y;
+}
+const _wn = new THREE.Vector3(), _wup = new THREE.Vector3(0, 1, 0);
+function waveNormal(x, z, d = .8) {
+  const dx = waveY(x + d, z) - waveY(x - d, z), dz = waveY(x, z + d) - waveY(x, z - d);
+  return _wn.set(-dx, 2 * d, -dz).normalize();
+}
 const water = new THREE.Mesh(waterGeo, waterMat);
 water.position.y = SEA; water.receiveShadow = false; water.renderOrder = 0; scene.add(water);
 
@@ -1896,7 +1917,7 @@ class Creature {
   }
   pose(dt) {
     this.g.position.x = this.rx; this.g.position.z = this.rz;
-    const base = this.aquatic ? SEA - .4 : this.flying ? this.alt : groundY(this.rx, this.rz);
+    const base = this.aquatic ? waveY(this.rx, this.rz) - .4 : this.flying ? this.alt : groundY(this.rx, this.rz);
     this.pos.y = base; this.g.position.y = base;
     if (!this.flying && !this.aquatic) { alignTo(this.g, this.rx, this.rz, .55); this.g.rotateY(this.heading); }
     else this.g.rotation.set(0, this.heading, 0);
@@ -2359,7 +2380,7 @@ class Ferry {
     const r = this.radius(this.a); this.a = (this.a + dt * 5 * (1 - WX.storm * .85) / r) % (Math.PI * 2);   // the ferry waits out a storm
     const nx = Math.cos(this.a) * this.radius(this.a), nz = Math.sin(this.a) * this.radius(this.a);
     const dx = nx - this.pos.x, dz = nz - this.pos.z; this.pos.set(nx, SEA, nz);
-    this.g.position.set(nx, SEA - .5 + Math.sin(world.clock * 1.7) * .22, nz);
+    this.g.position.set(nx, waveY(nx, nz) - .5, nz);   // the ferry rides the swell instead of faking one
     if (dx || dz) this.g.rotation.y = Math.atan2(dx, dz);
     this.g.rotation.z = Math.sin(world.clock * 1.3) * .055; this.g.rotation.x = Math.cos(world.clock * 1.1) * .035;
     this.sail.scale.x = 1 + Math.sin(world.clock * .9) * .05;
@@ -3338,7 +3359,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -3459,10 +3480,16 @@ function updatePlayer(dt) {
     const h = height(player.pos.x, player.pos.z);
     // Deep water under you is not the same as being in it. Keyed off the terrain alone, a
     // jump off a cliff went into the swim — slow, flat — while still ten units in the air.
-    const inWater = h < SEA - .3 && player.pos.y < SEA + .5;
+    const wy = waveY(player.pos.x, player.pos.z);
+    const inWater = h < SEA - .3 && player.pos.y < wy + .5;
     player.swim = lerp(player.swim, inWater ? 1 : 0, Math.min(1, dt * 4));
-    const target = Math.max(h, SEA) - player.swim * .85;
-    player.gy = lerp(player.gy, target, Math.min(1, dt * 14));   // smooth the ground under the feet
+    // Feet sit below the surface by a depth that depends on what he is doing: treading
+    // water he hangs chest-deep, swimming forward he flattens out near the top.
+    const depth = lerp(1.35, .55, player.moving);
+    // Over deep water the dry target is the surface itself — not flat SEA — so he falls onto
+    // the actual swell and the swim picks up from there rather than hovering above a trough.
+    const target = lerp(Math.max(h, wy), Math.max(h, wy - depth), player.swim);
+    player.gy = lerp(player.gy, target, Math.min(1, dt * (player.swim > .5 ? 6 : 14)));   // ground snaps; water bobs
     const canLead = RIG.jumpLead > 0 && player.rigH && player.rigH.acts.jumpStart;
     if (player.jump && player.grounded && player.swim < .5 && player.leadT <= 0) {
       if (canLead) player.leadT = RIG.jumpLead;             // crouch first, launch when it lands
@@ -3483,6 +3510,11 @@ function updatePlayer(dt) {
   // heading is where the stick points; faceH is where the body has got round to yet
   { let d = player.heading - player.faceH; d = Math.atan2(Math.sin(d), Math.cos(d)); player.faceH += d * Math.min(1, dt * 9); }
   if (!player.fly && player.swim < .5) { alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.faceH); }
+  else if (!player.fly) {   // in the water: lie along the wave, a little more so at speed
+    const n = waveNormal(player.pos.x, player.pos.z);
+    g.quaternion.setFromUnitVectors(_wup, n.lerp(_wup, 1 - lerp(.4, .8, player.moving)).normalize());
+    g.rotateY(player.faceH);
+  }
   else g.rotation.set(0, player.faceH, 0);
   const bobT = world.clock * 9;
   // A walk clip carries its own bounce. Without one — the placeholder, or a model exported

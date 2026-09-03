@@ -312,7 +312,14 @@ to rest slower than it reacts.
 Gerstner waves (points move in circles, not up-down — that's what gives sharp crests and
 flat troughs). Four trains, each modulated by a slow drifting envelope so waves arrive in
 *sets*. Terrain depth is baked into the mesh as a vertex attribute for depth-based colour.
-Fresnel toward the live sky colour. Kelvin-style wake trails anything cutting the surface
+Fresnel toward the live sky colour.
+
+`waveY(x, z)` is the same four trains ported to JS and read from the live uniforms, so the
+CPU knows where the surface is: the wanderer rides it (chest-deep treading, flatter and
+shallower swimming, tilted to `waveNormal`), aquatic creatures sit on it, and the ferry rides
+the real swell instead of a faked sine. Before this everything at sea sat at flat `SEA` while
+the waves rolled over and under it. Keep the two in step: a change to `waveDisp()` in the
+shader is a change here. Kelvin-style wake trails anything cutting the surface
 (4 slots, filled by priority each frame).
 
 ### Particles
