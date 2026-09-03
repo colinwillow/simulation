@@ -104,8 +104,14 @@ shape names, `lamp` (`null` derives it from the model's bounds), and `yaw`.
 facing the other way — its eyes come out on -Z — so it needs `Math.PI` or it walks
 backwards. Check a new model before assuming: find which side its eye geometry sits on.
 
+Clip names are matched loosely by `pickClip`: exact, then case-insensitive, then any
+name containing the word — so `Walking`, `walk_cycle` and `Armature|walk_fwd` all resolve.
+Junk tracks are skipped: Blender leaves a one-frame `CINEMA_4D_Main` in these exports and
+Mixamo adds a `mixamo.com`, and no real cycle is under a quarter second.
+
 **The current player has no animation at all.** `alien_orange.glb` ships with no armature,
-no clips and no blend shapes, so it stands in one pose and slides. Everything degrades
+no clips and no blend shapes — the armature never made it out of Blender, so no amount of
+renaming helps — and it stands in one pose and slides. Everything degrades
 rather than breaking — no clips means no blending, no shapes means no blinking, and the
 placeholder's procedural bob comes back so it is not completely inert — but it wants an
 `idle` and a `walk_fwd` before it reads as alive.

@@ -1359,10 +1359,7 @@ function attachRig(parent, cfg, done) {
     inst.rotation.y = cfg.yaw || 0;
     parent.add(inst);
 
-    const find = n => e.anims.find(a => a.name === n);
-    // Blender left a one-frame 'CINEMA_4D_Main' track in these exports; never play it.
-    const idle = find(cfg.idle) || e.anims.find(a => a.duration > .5);
-    const walk = find(cfg.walk);
+    const idle = pickClip(e.anims, cfg.idle, 'idle'), walk = pickClip(e.anims, cfg.walk, 'walk|run');
     if (walk && e.strides[walk.name] === undefined) e.strides[walk.name] = measureStride(e.root, walk);
     const mixer = new THREE.AnimationMixer(inst);
     const acts = {};
@@ -1381,6 +1378,19 @@ function attachRig(parent, cfg, done) {
       blink: morphs.length ? { t: 1.5 + Math.random() * 3, p: -1, which: 3, morphs } : null,
     });
   });
+}
+
+// Find a clip without insisting on the exact name a previous export happened to use:
+// exact, then case-insensitive, then anything containing the word. Blender leaves a
+// one-frame 'CINEMA_4D_Main' track in these exports, and a Mixamo one is often called
+// 'mixamo.com' — both are junk, and a real cycle is never that short.
+function pickClip(anims, name, words) {
+  const real = anims.filter(a => a.duration > .25 && !/^(mixamo\.com|CINEMA_4D)/i.test(a.name));
+  const low = (name || '').toLowerCase(), re = new RegExp(words, 'i');
+  return real.find(a => a.name === name)
+      || real.find(a => a.name.toLowerCase() === low)
+      || real.find(a => re.test(a.name))
+      || null;
 }
 
 // Blend idle against walk by how fast the thing is actually travelling, run the walk cycle
