@@ -82,6 +82,7 @@ and `walk_fwd` clips and one blend shape per eye. Everything about the swap live
 | `RIG.blinkL` / `RIG.blinkR` | blend shape names for each eye |
 | `RIG.lamp` | `null` to float the lantern off the model's own bounds, or `[x,y,z]` |
 | `RIG.rateMin` / `rateMax` | bounds on walk playback speed |
+| `RIG.forceOpaque` | drop the Blender BLEND alpha mode that corrupts the draw order |
 
 The primitive body is still built first and thrown away when the GLB lands, so the world is
 never headless while several MB is in flight. If the loaders are missing or the fetch fails,
@@ -115,9 +116,30 @@ The model is Draco-compressed (`KHR_draco_mesh_compression` is in `extensionsReq
 than pulled from a CDN, so there is no second origin to trust and no path to break. It also
 carries `EXT_texture_webp` with a PNG fallback; r128 understands both, and picks the webp.
 
-A note on how it looks: the texture is a normal 2048² sRGB atlas and renders correctly. The
-game grades hard toward night, so at dawn and dusk this creature's dark teal albedo goes
-nearly black — that is the grade, not a broken map.
+### Blender exports arrive blended, and it looks like a broken texture
+
+The first thing this model did was render as blocky garbage — the mesh smeared with
+mismatched patches of its own texture. It reads exactly like a corrupt UV map, and it is not.
+
+Blender writes `alphaMode: BLEND` for any material whose blend mode is not *Opaque*, even
+when the texture is fully opaque. GLTFLoader honours that: `transparent = true`, and three
+then sets `depthWrite = false`. The material is also `doubleSided`. With no depth writing, a
+closed double-sided body draws its own back faces and innards over its front in whatever
+order the index buffer happens to run — hence the patchwork.
+
+`RIG.forceOpaque` clears it at load (`transparent = false`, `depthWrite = true`). Fix it at
+source instead where you can: in Blender, **Material Properties → Settings → Blend Mode →
+Opaque**. Turn the flag off only for a model that genuinely needs to blend.
+
+How to tell this class of bug apart from a real texture problem, in one step: swap the
+material for a `MeshBasicMaterial` carrying the same map. Unlit removes lighting, depth
+sorting and blending from the picture. If it comes back clean, the texture and the UVs are
+fine and the fault is in the material or the draw order — not the asset.
+
+It is worth saying what this was *not*, since compression is the obvious suspect: Draco left
+the UVs at about 2^-19 precision, roughly 256x finer than a texel, and the normals unit-length
+and smooth. The webp and its PNG fallback differ by a gamma step but carry the same picture.
+None of them were the problem.
 
 ### Species
 

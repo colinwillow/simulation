@@ -2722,6 +2722,12 @@ const RIG = {
   // Playback rate is derived from the clip's own stride (see measureStride), not
   // guessed. These bound it: past about 2.6x a walk cycle reads as a cartoon.
   rateMin: .6, rateMax: 2.6,
+  // Blender writes alphaMode BLEND whenever the material's blend mode is not Opaque,
+  // even with a fully opaque texture. three then turns off depth writing, and a
+  // double-sided model renders its own back faces and innards over its front in
+  // whatever order they happen to be drawn — it looks like a corrupt texture. Set
+  // this false only for a model that genuinely needs to blend.
+  forceOpaque: true,
 };
 (() => {
   const g = new THREE.Group();
@@ -2791,6 +2797,10 @@ function loadRig(g) {
     rig.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = true; o.receiveShadow = true;
+      if (RIG.forceOpaque) for (const m of [].concat(o.material)) {
+        if (!m || !m.transparent) continue;
+        m.transparent = false; m.depthWrite = true; m.alphaTest = 0; m.needsUpdate = true;
+      }
       // The bind-pose box above is why: three's culling sphere is computed the same
       // wrong way, so the creature would wink out at screen edges. It is one model.
       o.frustumCulled = false;
