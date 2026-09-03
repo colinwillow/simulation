@@ -83,6 +83,7 @@ and `walk_fwd` clips and one blend shape per eye. Everything about the swap live
 | `RIG.lamp` | `null` to float the lantern off the model's own bounds, or `[x,y,z]` |
 | `RIG.rateMin` / `rateMax` | bounds on walk playback speed |
 | `RIG.forceOpaque` | drop the Blender BLEND alpha mode that corrupts the draw order |
+| `RIG.ambientLift` | how much of its own colour a surface emits, so it never goes pure black |
 
 The primitive body is still built first and thrown away when the GLB lands, so the world is
 never headless while several MB is in flight. If the loaders are missing or the fetch fails,
@@ -140,6 +141,22 @@ It is worth saying what this was *not*, since compression is the obvious suspect
 the UVs at about 2^-19 precision, roughly 256x finer than a texel, and the normals unit-length
 and smooth. The webp and its PNG fallback differ by a gamma step but carry the same picture.
 None of them were the problem.
+
+### Backlit, it turns into a cut-out
+
+Jump toward the sun over open water and the body drops to solid black, leaving the eyes
+floating — which is roughly what a physically-lit dark object does against a very bright
+backdrop. The island's own creatures never show it because they are painted in much lighter
+flat colours.
+
+`RIG.ambientLift` (0.45) has each surface emit a fraction of its own colour: the textured
+body through `emissiveMap`, the flat eye materials through their `color`. So shadowed sides
+bottom out at a dim version of themselves instead of black. Keep it well under the 0.88 bloom
+threshold, or the creature starts to glow at night.
+
+Worth knowing when chasing something like this: `updateSky()` rewrites every light's
+intensity each frame, so poking a light from the console does nothing — the next frame puts
+it back. Test lighting by changing the material, or by changing the time of day.
 
 ### Species
 

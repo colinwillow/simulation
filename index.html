@@ -2751,6 +2751,12 @@ const RIG = {
   // whatever order they happen to be drawn — it looks like a corrupt texture. Set
   // this false only for a model that genuinely needs to blend.
   forceOpaque: true,
+  // A dark-albedo creature backlit against bright water reads as a black cut-out — which
+  // is roughly correct, and looks like the body vanished and left the eyes behind. The
+  // island's own creatures dodge it by being painted in much lighter colours. This emits a
+  // fraction of each surface's own colour so nothing ever falls to pure black. Keep it
+  // well under the 0.88 bloom threshold or the creature starts to glow.
+  ambientLift: .45,
 };
 (() => {
   const g = new THREE.Group();
@@ -2820,9 +2826,17 @@ function loadRig(g) {
     rig.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = true; o.receiveShadow = true;
-      if (RIG.forceOpaque) for (const m of [].concat(o.material)) {
-        if (!m || !m.transparent) continue;
-        m.transparent = false; m.depthWrite = true; m.alphaTest = 0; m.needsUpdate = true;
+      for (const m of [].concat(o.material)) {
+        if (!m) continue;
+        if (RIG.forceOpaque && m.transparent) {
+          m.transparent = false; m.depthWrite = true; m.alphaTest = 0; m.needsUpdate = true;
+        }
+        if (RIG.ambientLift > 0 && m.emissive) {
+          // With a map the lift follows the texture; the flat eye materials follow their colour.
+          if (m.map) { m.emissiveMap = m.map; m.emissive.setScalar(RIG.ambientLift); }
+          else m.emissive.copy(m.color).multiplyScalar(RIG.ambientLift);
+          m.needsUpdate = true;
+        }
       }
       // The bind-pose box above is why: three's culling sphere is computed the same
       // wrong way, so the creature would wink out at screen edges. It is one model.
