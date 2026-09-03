@@ -17,6 +17,13 @@ Three.js r128 still loads from cdnjs; the two glTF loaders and the Draco decoder
 will not fetch the model. `python3 -m http.server` is enough, and GitHub Pages serves it
 as-is.
 
+**On a phone**, use Share → Add to Home Screen. The page declares itself an app (the
+`apple-*` metas for iOS, `manifest.webmanifest` for everything else) and runs full-screen
+with no browser chrome; the HUD and sticks keep clear of the notch and home bar through
+`env(safe-area-inset-*)`. The icons live in `icons/` and come from one source image:
+`node tools/icons.js path/to/icon.png` crops the picture out of any bezel and writes the
+three sizes. iOS masks its own corners, so a full-bleed square is what it wants.
+
 **Controls**
 
 | Input | Action |

@@ -6,7 +6,8 @@
     "check:shader": "node tools/glslcheck.js index.html",
     "check:terrain": "node tools/terrain.js index.html",
     "check:sim": "node tools/headless.js index.html 6000",
-    "check:model": "node tools/model.js"
+    "check:model": "node tools/model.js",
+    "icons": "node tools/icons.js"
   },
   "devDependencies": {
     "fbx-parser": "^2.1.3",
