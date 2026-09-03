@@ -266,6 +266,7 @@ npm install                            # three r128 + the GLSL validator, dev-on
 npm run check:shader                   # compile the water shader for real
 npm run check:terrain                  # land area, walkable %, height distribution
 npm run check:sim                      # 6000 frames with no GPU, print sim stats
+npm run check:model models/*.glb       # what is in a model, and can the game use it
 ```
 
 Each also takes an explicit file and frame count, e.g. `node tools/headless.js index.html 2000`.
@@ -273,6 +274,13 @@ Each also takes an explicit file and frame count, e.g. `node tools/headless.js i
 **glslcheck** pulls the water material out of the HTML, runs it through Three's real
 `onBeforeCompile` path, resolves all `#include` chunks the way Three does, and compiles the
 result as GLSL ES 1.0. Run this after *any* shader edit.
+
+**model** reports what is actually inside a .glb or .fbx — armature, vertex weights,
+clips, blend shapes, material alpha mode — and says plainly whether the game can use it.
+Run it on both ends of the pipeline: if an FBX out of Cinema 4D shows joints, a skin
+deformer and takes but the GLB out of Blender shows none, the loss happened in Blender,
+not in the export. The glTF side is checked against both models in the repo; the FBX side
+against synthetic fixtures, so treat its output as a strong hint rather than gospel.
 
 **terrain** samples the height field on a grid and reports land area, walkable fraction and
 height distribution. Use it to check terrain changes against intent instead of eyeballing.
