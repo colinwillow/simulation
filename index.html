@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b12';
+const BUILD = 'b13';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -235,6 +235,29 @@ const P = {
   hull: col('#5b3f2e'), sail: col('#ece0c6'), eye: col('#0d0d10')
 };
 const std = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: .82, metalness: 0 }, o));
+// ---------- see-through ----------
+// The boom only avoids the heightfield; a tree, a boulder or the canopy between the lens
+// and the wanderer just blocked him. This punches a screen-door hole through any surface
+// that is both closer to the camera than he is and within a circle around him on screen.
+// It lives in the shared material shader rather than per object because the trees are
+// merged into a few big meshes on shared materials — there is no object to fade.
+const holeUni = { uHoleC: { value: new THREE.Vector2(-1e5, -1e5) }, uHoleR: { value: 0 }, uHoleZ: { value: 0 } };
+THREE.MeshStandardMaterial.prototype.onBeforeCompile = function (sh) {
+  if (this.userData.noHole) return;
+  sh.uniforms.uHoleC = holeUni.uHoleC; sh.uniforms.uHoleR = holeUni.uHoleR; sh.uniforms.uHoleZ = holeUni.uHoleZ;
+  sh.fragmentShader = `
+    uniform vec2 uHoleC; uniform float uHoleR, uHoleZ;
+    float holeDither(vec2 p){ vec2 q = floor(mod(p, 4.0)); return (mod(q.x * 3.0 + q.y * 5.0 + q.x * q.y * 7.0, 16.0) + 0.5) / 16.0; }
+  ` + sh.fragmentShader.replace('#include <clipping_planes_fragment>', `
+    #include <clipping_planes_fragment>
+    if (uHoleR > 0.0) {
+      float hd = distance(gl_FragCoord.xy, uHoleC);
+      if (hd < uHoleR && vViewPosition.z < uHoleZ - 1.5) {
+        float k = smoothstep(1.0, 0.45, hd / uHoleR);     // solid at the rim, open in the middle
+        if (holeDither(gl_FragCoord.xy) < k * 0.92) discard;
+      }
+    }`);
+};
 const M = {
   barkA: std(P.bark, { roughness: .95 }), barkB: std(P.bark2, { roughness: .95 }),
   canopy: [std(P.canopy, { roughness: .78 }), std(P.canopy2, { roughness: .78 }), std(P.canopy3, { roughness: .78 })],
@@ -670,6 +693,7 @@ terrainGeo.rotateX(-Math.PI / 2);
   terrainGeo.computeVertexNormals();
 }
 const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 }));
+terrain.material.userData.noHole = true;
 terrain.receiveShadow = true; scene.add(terrain);
 
 // ---------- water + foam ----------
@@ -1657,6 +1681,7 @@ function stepRig(r, dt, speed, grounded, ctx) {
   if (a.run) a.run.timeScale = clamp(speed / (r.runSpeed || ref * 3), .75, 1.6);
   if (a.swim) a.swim.timeScale = clamp(speed / 6, .6, 1.6);
   if (a.jumpLand) a.jumpLand.timeScale = 1.5;
+  if (a.jumpStart) a.jumpStart.timeScale = 2;    // the crouch has to be over by the time he lifts
   // fade every weight toward its target; one-shots restart the moment they are wanted
   for (const k in a) {
     const t = want[k] || 0, prev = r.w[k] || 0;
@@ -3169,9 +3194,9 @@ function eraName() {
 // holding one angle keeps the island reading the way it was framed. solveCam still drops
 // the boom below this to clear a hill — that is collision, not the player aiming.
 const CAM_POL = 1.05;
-const cam = { az: .7, pol: CAM_POL, r: 30, tgt: new THREE.Vector3(0, 6, 0), idle: 0 };
-const camS = { pol: CAM_POL, r: 30 };       // what the camera actually flies at
-const _camWant = new THREE.Vector3();
+const cam = { az: .7, pol: CAM_POL, r: 24, tgt: new THREE.Vector3(0, 6, 0), idle: 0 };
+const camS = { pol: CAM_POL, r: 24 };       // what the camera actually flies at
+const _camWant = new THREE.Vector3(), _holeP = new THREE.Vector3(), _holeV = new THREE.Vector3();
 // Treat the terrain as a heightfield and march the boom: if the shot is blocked,
 // first climb (a drone lifting over a ridge), and only pull in if climbing can't clear it.
 function camClear(pol, r) {
@@ -3264,7 +3289,7 @@ const RIG = {
   // The crouch before a jump only reads if the body is still on the ground while it plays.
   // This holds the physical launch for that long after the button, so the initiate clip
   // leads and the legs extend as he lifts. Feels late? Set 0 and he launches on the press.
-  jumpLead: .3,
+  jumpLead: .15,
   // The game treats +Z as forward and this model already faces +Z, so it needs no turn.
   // The only test worth trusting: force heading 0 and the camera to az PI (which is where
   // the follow cam sits while you walk forward) and look. Back visible means correct.
@@ -3570,6 +3595,16 @@ function frame(now) {
     cam.tgt.z + Math.cos(cam.az) * Math.sin(camS.pol) * camS.r);
   camera.lookAt(cam.tgt);
   sky.position.copy(camera.position);
+  {   // the see-through hole follows the wanderer's chest on screen
+    camera.updateMatrixWorld(); camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+    const p = _holeP.set(player.pos.x, player.pos.y + RIG.height * .5, player.pos.z);
+    const vz = _holeV.copy(p).applyMatrix4(camera.matrixWorldInverse).z;   // negative in front of the lens
+    p.project(camera);
+    if (!player.free && vz < -1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1) {
+      holeUni.uHoleC.value.set((p.x * .5 + .5) * rtScene.width, (p.y * .5 + .5) * rtScene.height);
+      holeUni.uHoleR.value = rtScene.height * .17; holeUni.uHoleZ.value = -vz;
+    } else holeUni.uHoleR.value = 0;
+  }
 
   updateWeather(dt);
   updateSky();

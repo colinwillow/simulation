@@ -126,8 +126,9 @@ procedural stretch comes back.
 
 **`RIG.jumpLead`** is the knob that makes the initiate clip work at all. The crouch only
 reads while the feet are still on the ground, so the physical launch is held for that long
-after the press and the legs extend as he lifts. It is a real input delay; if it feels late,
-set it to 0 and he launches on the press.
+after the press and the legs extend as he lifts. It is 0.15 s with the initiate clip played at double speed, so the crouch is over by the
+time he lifts. It is a real input delay; if it feels late, set it to 0 and he launches on
+the press.
 
 Clip names are matched loosely by `pickClip`, because exporters decorate freely:
 `Armature|walk_fwd`, `idle.001`, `alien_walk_cycle_v2` and `Walking` all resolve. It tries
@@ -151,6 +152,16 @@ Pitch is fixed at `CAM_POL`. Looking up and down was never worth a whole stick a
 the right stick only orbits now and its vertical axis is free for something else. `solveCam`
 still drops the boom below `CAM_POL` to clear a hill — that is collision, not the player
 aiming, and it is why a pitch reading moves a little while orbiting.
+
+The resting distance is 24. The boom only avoids the heightfield, so anything else between
+the lens and the wanderer — a tree, a boulder, the canopy — used to just block him. Now a
+screen-door hole is punched through any surface that is both closer to the camera than he
+is and inside a circle around him on screen. It lives in the shared `MeshStandardMaterial`
+shader (a prototype `onBeforeCompile`), because the trees are merged into a few big meshes
+on shared materials and there is no object to fade; `holeUni` is aimed at his chest every
+frame. The terrain opts out with `userData.noHole` — the ground in front of his feet is
+always nearer than his chest, and a hole in the grass every frame is not what anyone wants.
+Materials with their own `onBeforeCompile` (water, grass) are untouched.
 
 There is a `BUILD` stamp in the HUD's perf line. Pages caches `index.html`, so a phone can
 sit on an old build while the repo has moved on; that once cost a whole round trip arguing
