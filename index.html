@@ -48,6 +48,11 @@
 </div>
 <div id="btns"><button id="flyB">fly</button><button id="freeB">free cam</button></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- Loaders are vendored, not CDN: the model is Draco-compressed, so GLTFLoader needs a
+     DRACOLoader and its decoder. Keeping them in-repo means no extra origin to trust and
+     nothing to break if a CDN path moves. vendor/ is copied verbatim from three r128. -->
+<script src="vendor/three/GLTFLoader.js"></script>
+<script src="vendor/three/DRACOLoader.js"></script>
 <script>
 (() => {
 // ============================================================
@@ -2703,32 +2708,156 @@ el.addEventListener('pointerup', endPtr); el.addEventListener('pointercancel', e
 el.addEventListener('wheel', e => { cam.r = clamp(cam.r * (1 + e.deltaY * .0012), 8, 420); cam.idle = 0; e.preventDefault(); }, { passive: false });
 // ---------- the wanderer: a body to move through the world with ----------
 const player = { pos: new THREE.Vector3(), heading: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1 };
+// The rig: a real model stands in for the placeholder. RIG.height is the only
+// number worth touching — the model is measured at load and normalised to it, so
+// swapping in a differently-scaled export needs no other change.
+const RIG = {
+  url: 'models/creature_green.glb',
+  height: 2.3,       // world units, feet to crown — about a mossback's shoulder
+  idle: 'idle',
+  walk: 'walk_fwd',
+  lamp: null,        // null = derive from the model's own bounds; [x,y,z] to place it by hand
+  blinkL: 'eye_L_close',    // one shape per eye, so it can wink as well as blink
+  blinkR: 'eye_R_close',
+  // Playback rate is derived from the clip's own stride (see measureStride), not
+  // guessed. These bound it: past about 2.6x a walk cycle reads as a cartoon.
+  rateMin: .6, rateMax: 2.6,
+};
 (() => {
   const g = new THREE.Group();
+  // Placeholder body. It shows instantly and is thrown away when the model lands,
+  // so the world is never headless while a few MB of GLB is still in flight.
+  const ph = new THREE.Group();
   const cloak = std(col('#3f5271'), { roughness: .92 });
-  g.add(mesh(G.cone, cloak, .66, 1.9, .66, 0, .95, 0));
-  g.add(mesh(G.blob[0], cloak, .5, .44, .5, 0, 1.9, 0));
-  g.add(mesh(G.blob[3], std(col('#e8d3ab'), { roughness: .8 }), .3, .3, .26, 0, 1.82, .3));
+  ph.add(mesh(G.cone, cloak, .66, 1.9, .66, 0, .95, 0));
+  ph.add(mesh(G.blob[0], cloak, .5, .44, .5, 0, 1.9, 0));
+  ph.add(mesh(G.blob[3], std(col('#e8d3ab'), { roughness: .8 }), .3, .3, .26, 0, 1.82, .3));
   const legs = [];
   for (const sx of [1, -1]) {
     const hip = new THREE.Group(); hip.position.set(sx * .21, .62, 0);
     hip.add(mesh(G.cylT, std(col('#2e3c53'), { roughness: .9 }), .13, .62, .13, 0, -.31, 0));
-    g.add(hip); legs.push({ hip, sx });
+    ph.add(hip); legs.push({ hip, sx });
   }
   const staff = mesh(G.cyl, std(col('#6b4a30'), { roughness: .95 }), .055, 3.1, .055, .52, 1.35, .12);
-  staff.rotation.z = -.1; g.add(staff);
-  g.add(mesh(G.sph, M.lantern, .23, .3, .23, .66, 2.75, .12));
-  const gl = glow('#ffc276', 7, .75); gl.position.set(.66, 2.75, .12); g.add(gl);
-  const light = new THREE.PointLight(0xffb468, 2.2, 34, 2); light.position.set(.66, 2.9, .12); g.add(light);
+  staff.rotation.z = -.1; ph.add(staff);
+  g.add(ph);
+  // The lantern is the wanderer's, not the body's — it survives the swap, because
+  // the night lighting and the mote attractor both key off it.
+  const lamp = new THREE.Group(); lamp.position.set(.66, 2.75, .12);
+  lamp.add(mesh(G.sph, M.lantern, .23, .3, .23, 0, 0, 0));
+  const gl = glow('#ffc276', 7, .75); lamp.add(gl);
+  const light = new THREE.PointLight(0xffb468, 2.2, 34, 2); light.position.set(0, .15, 0); lamp.add(light);
+  g.add(lamp);
   g.traverse(m => { if (m.isMesh) m.castShadow = true; });
   scene.add(g);
-  Object.assign(player, { g, legs, gl, light });
+  Object.assign(player, { g, ph, legs, lamp, gl, light, rig: null, mixer: null, acts: null, blink: null, speed: 0 });
   const sp = world.spawn || { x: 0, z: 0 };
   player.pos.set(sp.x, Math.max(height(sp.x, sp.z), SEA), sp.z);
   g.position.copy(player.pos);
   cam.tgt.set(sp.x, player.pos.y + 3.4, sp.z);
+  loadRig(g);
 })();
 world.player = player;
+window.isle = { player, world };   // a handle to poke at from the console
+
+// True bounds of a skinned mesh. Box3.setFromObject is wrong here: it transforms the
+// rest-pose geometry box by the world matrix and ignores the bind matrices entirely,
+// which on this export (0.01 armature scale, 100x inverse binds) is off by ~100x.
+function skinnedBounds(root) {
+  const box = new THREE.Box3(), v = new THREE.Vector3();
+  root.updateMatrixWorld(true);
+  root.traverse(o => {
+    if (!o.isSkinnedMesh) return;
+    o.skeleton.update();
+    const n = o.geometry.attributes.position.count;
+    for (let i = 0; i < n; i++) { o.boneTransform(i, v); box.expandByPoint(v.applyMatrix4(o.matrixWorld)); }
+  });
+  return box;
+}
+
+function loadRig(g) {
+  if (!THREE.GLTFLoader) return;                       // no loader, keep the placeholder
+  const draco = new THREE.DRACOLoader(); draco.setDecoderPath('vendor/draco/');
+  const loader = new THREE.GLTFLoader(); loader.setDRACOLoader(draco);
+  loader.load(RIG.url, gltf => {
+    const rig = gltf.scene;
+    // Measure in the bind pose, then normalise: height to RIG.height, feet to y=0.
+    const box = skinnedBounds(rig);
+    const h = box.max.y - box.min.y;
+    const s = h > 1e-4 ? RIG.height / h : 1;
+    rig.scale.setScalar(s);
+    rig.position.y = -box.min.y * s;
+    const morphs = [];
+    rig.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = true;
+      // The bind-pose box above is why: three's culling sphere is computed the same
+      // wrong way, so the creature would wink out at screen edges. It is one model.
+      o.frustumCulled = false;
+      const d = o.morphTargetDictionary;
+      if (d && o.morphTargetInfluences) morphs.push({ inf: o.morphTargetInfluences, l: d[RIG.blinkL], r: d[RIG.blinkR] });
+    });
+    g.remove(player.ph); disposeTree(player.ph);
+    player.ph = null; player.legs = [];               // no primitive legs left to swing
+    g.add(rig); player.rig = rig;
+    // Float the lantern clear of the silhouette rather than through the creature's face:
+    // just outboard of its widest point, at crown height, a little behind.
+    player.lamp.position.fromArray(RIG.lamp || [
+      (box.max.x - box.min.x) * s * .62,
+      RIG.height * 1.02,
+      -(box.max.z - box.min.z) * s * .22,
+    ]);
+    const find = n => gltf.animations.find(a => a.name === n);
+    // Blender leaves a one-frame 'CINEMA_4D_Main' track in this export; never play it.
+    const idle = find(RIG.idle) || gltf.animations.find(a => a.duration > .5);
+    const walk = find(RIG.walk);
+    // Measure before the real mixer exists, so nothing fights over the bones.
+    player.walkSpeed = walk ? measureStride(rig, walk, s) : 0;
+    const mixer = new THREE.AnimationMixer(rig);
+    const acts = {};
+    if (idle) { acts.idle = mixer.clipAction(idle); acts.idle.play(); }
+    if (walk) { acts.walk = mixer.clipAction(walk); acts.walk.play(); acts.walk.setEffectiveWeight(0); }
+    player.mixer = mixer; player.acts = acts;
+    player.blink = { t: 1.5 + Math.random() * 3, p: -1, which: 3, morphs };
+    logMsg('The wanderer takes shape.');
+  }, undefined, err => console.warn('rig load failed, keeping placeholder:', err));
+}
+
+// Materials only. The geometry in G is a shared pool — every tree and creature draws
+// from it, so disposing it here would take the island with it.
+// How fast the ground would have to move for this walk cycle to look planted.
+// A foot's travel along z while it is on the ground is one stride; a cycle is two of
+// them. Deriving it means a re-export at a different scale or tempo still looks right.
+function measureStride(rig, clip, scale) {
+  const feet = [];
+  rig.traverse(o => { if (o.isBone && /foot|ankle/i.test(o.name) && !/toe/i.test(o.name)) feet.push(o); });
+  if (!feet.length || !clip.duration) return 0;
+  const mx = new THREE.AnimationMixer(rig);
+  mx.clipAction(clip).play();
+  const inv = new THREE.Matrix4(), p = new THREE.Vector3();
+  const lo = feet.map(() => Infinity), hi = feet.map(() => -Infinity);
+  const N = 24;
+  for (let i = 0; i < N; i++) {
+    mx.setTime(i / N * clip.duration);
+    rig.updateMatrixWorld(true);
+    inv.copy(rig.matrixWorld).invert();
+    feet.forEach((b, k) => {
+      p.setFromMatrixPosition(b.matrixWorld).applyMatrix4(inv);
+      lo[k] = Math.min(lo[k], p.z); hi[k] = Math.max(hi[k], p.z);
+    });
+  }
+  mx.stopAllAction();
+  let sum = 0; for (let k = 0; k < feet.length; k++) sum += hi[k] - lo[k];
+  const stride = sum / feet.length * scale;      // one step, in world units
+  return 2 * stride / clip.duration;             // two steps to the cycle
+}
+
+function disposeTree(o) {
+  o.traverse(c => {
+    if (!c.isMesh) return;
+    for (const m of [].concat(c.material)) if (m && m.dispose) m.dispose();
+  });
+}
 
 const stick = { L: { x: 0, y: 0 }, R: { x: 0, y: 0 } };
 function bindStick(el, out, onTap) {
@@ -2756,7 +2885,9 @@ addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
 const flyB = document.getElementById('flyB'), freeB = document.getElementById('freeB');
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; });
+const _prevP = new THREE.Vector3();
 function updatePlayer(dt) {
+  _prevP.copy(player.pos);
   let lx = stick.L.x, ly = stick.L.y; const rx = stick.R.x, ry = stick.R.y;
   if (keys.a || keys.arrowleft) lx -= 1; if (keys.d || keys.arrowright) lx += 1;
   if (keys.w || keys.arrowup) ly -= 1; if (keys.s || keys.arrowdown) ly += 1;
@@ -2806,7 +2937,11 @@ function updatePlayer(dt) {
   if (!player.fly && player.swim < .5) { alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.heading); }
   else g.rotation.set(0, player.heading, 0);
   const bobT = world.clock * 9;
-  g.position.y += Math.abs(Math.sin(bobT)) * .12 * player.moving + (player.fly ? Math.sin(world.clock * 1.6) * .25 : 0);
+  // The placeholder needs a fake bob; the rig has one baked into its clips.
+  const bob = player.rig ? 0 : Math.abs(Math.sin(bobT)) * .12 * player.moving;
+  g.position.y += bob + (player.fly ? Math.sin(world.clock * 1.6) * .25 : 0);
+  player.speed = dt > 0 ? Math.hypot(player.pos.x - _prevP.x, player.pos.z - _prevP.z) / dt : 0;
+  updateRig(dt);
   // airborne: tuck the legs, then squash a little on landing
   player.hang = lerp(player.hang || 0, player.grounded ? 0 : 1, Math.min(1, dt * 10));
   if (player.grounded && player.vy === 0 && (player.land || 0) > 0) player.land = Math.max(0, player.land - dt * 3.2);
@@ -2817,6 +2952,37 @@ function updatePlayer(dt) {
   g.scale.set(2 - squash, squash, 2 - squash);
   player.light.intensity = 1.1 + world.night * 3.2;
   player.gl.scale.setScalar(4 + world.night * 6);
+}
+
+// Blend idle against walk by how fast the creature is actually travelling, and run the
+// walk cycle at the speed it was authored for so the feet do not skate.
+function updateRig(dt) {
+  const m = player.mixer; if (!m) return;
+  const a = player.acts;
+  const grounded = !player.fly && player.swim < .5 && player.grounded;
+  // Blend in over the first stride's worth of speed, so a nudge does not snap to a full walk.
+  const ref = player.walkSpeed || 3;
+  const w = grounded ? clamp(player.speed / ref, 0, 1) : 0;
+  if (a.walk) {
+    a.walk.setEffectiveWeight(w);
+    a.walk.timeScale = clamp(player.speed / ref, RIG.rateMin, RIG.rateMax);
+  }
+  if (a.idle) a.idle.setEffectiveWeight(1 - w);
+  m.update(dt);
+
+  // Blink after the mixer: the clips do not touch the eye shapes, but writing the
+  // influences first would still be overwritten by a future clip that does.
+  const b = player.blink; if (!b) return;
+  if (b.p >= 0) {
+    b.p += dt / .13;
+    const v = b.p >= 1 ? 0 : Math.sin(b.p * Math.PI);
+    const vl = (b.which & 1) ? v : 0, vr = (b.which & 2) ? v : 0;
+    for (const t of b.morphs) { t.inf[t.l] = vl; t.inf[t.r] = vr; }
+    if (b.p >= 1) { b.p = -1; b.t = 1.8 + Math.random() * 4.5; }
+  } else if ((b.t -= dt) <= 0) {
+    b.p = 0;
+    b.which = Math.random() < .12 ? (Math.random() < .5 ? 1 : 2) : 3;   // an occasional wink
+  }
 }
 const ray = new THREE.Raycaster();
 function tap(cx, cy) {

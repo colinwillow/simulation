@@ -1,6 +1,15 @@
 {
-  "dependencies": {
+  "name": "lantern-isle",
+  "private": true,
+  "description": "Tooling for the Lantern Isle simulation. The game itself needs none of this.",
+  "scripts": {
+    "check:shader": "node tools/glslcheck.js index.html",
+    "check:terrain": "node tools/terrain.js index.html",
+    "check:sim": "node tools/headless.js index.html 6000"
+  },
+  "devDependencies": {
     "glslang-validator-prebuilt-predownloaded": "^0.0.2",
+    "playwright": "^1.62.1",
     "three": "^0.128.0"
   }
 }

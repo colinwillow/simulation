@@ -11,9 +11,11 @@ noise-displaced primitives, with a clean seam for swapping in real models later.
 
 ## Running it
 
-Open the HTML file in a browser. There is no build step, no package install, no server.
-Three.js r128 loads from cdnjs. That constraint is deliberate — keep it if you can, because
-it makes the whole thing a single artifact you can open on a phone.
+Open `index.html` in a browser. There is no build step and no package install.
+Three.js r128 still loads from cdnjs; the two glTF loaders and the Draco decoder live in
+`vendor/` (see **The wanderer's model** below), so keep the page on a server — `file://`
+will not fetch the model. `python3 -m http.server` is enough, and GitHub Pages serves it
+as-is.
 
 **Controls**
 
@@ -63,8 +65,59 @@ class Grazer extends Creature {
 collision, terrain alignment, leg animation, render smoothing — is handled by the base class.
 
 **This is the seam for custom models.** Load a GLTF, drop it into `this.body`, delete the
-primitive assembly, and the creature keeps behaving identically. Same for the wanderer
-(one IIFE near the input section).
+primitive assembly, and the creature keeps behaving identically. The wanderer already works
+this way — see below.
+
+### The wanderer's model
+
+The player is `models/creature_green.glb`, a rigged Mixamo-skeleton creature with `idle`
+and `walk_fwd` clips and one blend shape per eye. Everything about the swap lives in the
+`RIG` object and `loadRig()`:
+
+| Knob | Does |
+|---|---|
+| `RIG.url` | which GLB to load |
+| `RIG.height` | world units, feet to crown — the model is measured and scaled to this |
+| `RIG.idle` / `RIG.walk` | clip names to look for |
+| `RIG.blinkL` / `RIG.blinkR` | blend shape names for each eye |
+| `RIG.lamp` | `null` to float the lantern off the model's own bounds, or `[x,y,z]` |
+| `RIG.rateMin` / `rateMax` | bounds on walk playback speed |
+
+The primitive body is still built first and thrown away when the GLB lands, so the world is
+never headless while several MB is in flight. If the loaders are missing or the fetch fails,
+the placeholder simply stays — the game does not break.
+
+Three things are measured at load rather than hardcoded, so a re-export at a different scale
+or tempo still drops in:
+
+- **Size.** `skinnedBounds()` walks every vertex through `boneTransform`. `Box3.setFromObject`
+  is *wrong* on a skinned mesh — it transforms the rest-pose box by the world matrix and
+  ignores the bind matrices, which on this export (0.01 armature scale against 100x inverse
+  binds) is off by about 100x. That same wrong box is what three culls against, which is why
+  the meshes are `frustumCulled = false`.
+- **Stride.** `measureStride()` samples how far a foot travels along z through the walk cycle;
+  two of those per cycle is the ground speed the clip was authored for. Playback rate is
+  `speed / that`, so the feet stay planted instead of skating.
+- **Lantern position.** Placed just outboard of the widest point at crown height, so it does
+  not hang through the creature's face.
+
+**The walk cycle does not match the wanderer's speed.** This clip is authored for about
+1.4 units/s; the wanderer runs at 17 (`updatePlayer`, the `17` in `const sp = ...`). Playback
+is clamped at `RIG.rateMax` because past ~2.6x a walk reads as a cartoon, so at full tilt the
+feet skate. Three ways out, none of them done: slow the wanderer down, add a run cycle and
+blend on speed, or accept it.
+
+### Draco
+
+The model is Draco-compressed (`KHR_draco_mesh_compression` is in `extensionsRequired`), so
+`GLTFLoader` alone cannot read it — it needs a `DRACOLoader` and the decoder in
+`vendor/draco/`. Those files are copied verbatim out of three r128 and pinned in-repo rather
+than pulled from a CDN, so there is no second origin to trust and no path to break. It also
+carries `EXT_texture_webp` with a PNG fallback; r128 understands both, and picks the webp.
+
+A note on how it looks: the texture is a normal 2048² sRGB atlas and renders correctly. The
+game grades hard toward night, so at dawn and dusk this creature's dark teal albedo goes
+nearly black — that is the grade, not a broken map.
 
 ### Species
 
@@ -122,12 +175,14 @@ Three Node scripts in `tools/`. All were written because I shipped bugs that the
 have caught.
 
 ```bash
-npm install three@0.128.0 glslang-validator-prebuilt-predownloaded
+npm install                            # three r128 + the GLSL validator, dev-only
 
-node tools/glslcheck.js index.html    # compile the water shader for real
-node tools/terrain.js  index.html     # land area, walkable %, height distribution
-node tools/headless.js index.html 6000 # run 6000 frames with no GPU, print sim stats
+npm run check:shader                   # compile the water shader for real
+npm run check:terrain                  # land area, walkable %, height distribution
+npm run check:sim                      # 6000 frames with no GPU, print sim stats
 ```
+
+Each also takes an explicit file and frame count, e.g. `node tools/headless.js index.html 2000`.
 
 **glslcheck** pulls the water material out of the HTML, runs it through Three's real
 `onBeforeCompile` path, resolves all `#include` chunks the way Three does, and compiles the
@@ -160,8 +215,13 @@ ecology changes don't stall the world.
 - **Bloom threshold is delicate.** Too low and ordinary daylight blooms, washing the whole
   scene to white. It's at 0.88 so only genuinely emissive things glow.
 - **Test the harness too.** More than once the tests were wrong, not the code — a collision
-  check that didn't know about `minObR`, a canvas stub missing `createImageData`. If a result
-  looks insane, suspect the measurement first.
+  check that didn't know about `minObR`, a canvas stub missing `createImageData`, a missing
+  `window` stub. If a result looks insane, suspect the measurement first.
+- **`headless.js` cannot see the model.** It stubs WebGL and never defines `GLTFLoader`, so
+  the rig load is skipped and the placeholder stands in. Anything about the model itself has
+  to be checked in a real browser.
+- **Skinned meshes lie about their size.** See **The wanderer's model** above; it costs you
+  both a wrong scale and wrong frustum culling.
 
 ---
 
@@ -196,7 +256,8 @@ ecology changes don't stall the world.
 ## Where I'd go next
 
 - Swap placeholder geometry for real models, species by species — `build()` is the only
-  method you need to touch.
+  method you need to touch. `loadRig()` is the worked example.
+- Give the creature the rest of its verbs: jump, and a run cycle to fix the skating above.
 - A seeded RNG for reproducible runs.
 - LOD or instancing for distant trees; they dominate the draw call count.
 - Give creatures memory — a mossback that remembers where good moss was, a tinker that
