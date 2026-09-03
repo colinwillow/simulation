@@ -124,9 +124,9 @@ have caught.
 ```bash
 npm install three@0.128.0 glslang-validator-prebuilt-predownloaded
 
-node tools/glslcheck.js lantern-isle.html    # compile the water shader for real
-node tools/terrain.js  lantern-isle.html     # land area, walkable %, height distribution
-node tools/headless.js lantern-isle.html 6000 # run 6000 frames with no GPU, print sim stats
+node tools/glslcheck.js index.html    # compile the water shader for real
+node tools/terrain.js  index.html     # land area, walkable %, height distribution
+node tools/headless.js index.html 6000 # run 6000 frames with no GPU, print sim stats
 ```
 
 **glslcheck** pulls the water material out of the HTML, runs it through Three's real

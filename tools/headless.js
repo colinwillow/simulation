@@ -10,11 +10,13 @@ global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,ge
 let cbs=[]; global.requestAnimationFrame=f=>cbs.push(f); global.addEventListener=()=>{}; global.setInterval=()=>{}; global.setTimeout=()=>{};
 global.__t=0; global.performance={now:()=>global.__t};
 const fs=require('fs');
-const file=process.argv[2]||'lantern-isle.html';
+const file=process.argv[2]||'index.html';
 const html=fs.readFileSync(file,'utf8');
 const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('Lantern Isle'));
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
-src=src.replace('})();\n','global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;})();\n');
+// inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
+const cut=src.lastIndexOf('})();');
+src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;'+src.slice(cut);
 eval(src);
 const N=+process.argv[3]||6000;
 const w=global.__w,C=global.__C,c=global.__count,obRad=global.__obRad;

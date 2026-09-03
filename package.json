@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "glslang-validator-prebuilt-predownloaded": "^0.0.2",
+    "three": "^0.128.0"
+  }
+}

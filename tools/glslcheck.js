@@ -1,5 +1,5 @@
 const THREE=require('three'), fs=require('fs'), {execFileSync}=require('child_process');
-const html=fs.readFileSync(process.argv[2]||'lantern-isle.html','utf8');
+const html=fs.readFileSync(process.argv[2]||'index.html','utf8');
 // pull the water onBeforeCompile out of the file and run it against three's real shader
 const js=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('Lantern Isle v2'));
 const body=js.replace(/^<script>/,'').replace(/<\/script>$/,'');
