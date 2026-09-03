@@ -89,7 +89,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b9';
+const BUILD = 'b10';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -737,20 +737,23 @@ waterMat.onBeforeCompile = sh => {
     float wakeAt(vec2 p){
       float w = 0.0;
       for(int i=0;i<4;i++){
-        float amp = uWk[i].z == 0.0 && uWk[i].w == 0.0 ? 0.0 : 1.0;
-        if(amp < 0.5) continue;
-        vec2 c = uWk[i].xy, d = normalize(uWk[i].zw);
+        // zw is heading scaled by speed: length is how hard the thing is pushing water
+        float amp = length(uWk[i].zw);
+        if(amp < 0.02) continue;
+        vec2 c = uWk[i].xy, d = uWk[i].zw / amp;
         vec2 rel = p - c;
         float along = -dot(rel, d);
-        if(along < -3.0 || along > 110.0) continue;
+        if(along < -8.0 || along > 120.0) continue;
+        // no hard start line: the V grows in over the first few units behind the bow
+        float head = smoothstep(-6.0, 3.0, along);
+        float tail = exp(-along * 0.022) * (1.0 - smoothstep(90.0, 120.0, along));
         float side = abs(dot(rel, vec2(-d.y, d.x)));
         float halfW = 2.0 + along * 0.34;
         float arm = exp(-pow((side - halfW) / (1.6 + along * 0.06), 2.0));
-        float tail = exp(-along * 0.022);
         float rip = 0.55 + 0.45 * sin(along * 0.75 - uT * 2.6);
-        w += arm * tail * rip;
-        w += exp(-dot(rel, rel) * 0.045) * 0.7;                 // bow foam
-        w += exp(-pow(side / (halfW * 0.55 + 0.6), 2.0)) * tail * 0.35;  // churned centre
+        w += arm * tail * rip * head * amp;
+        w += exp(-dot(rel, rel) * 0.045) * 0.7 * amp;                       // bow foam
+        w += exp(-pow(side / (halfW * 0.55 + 0.6), 2.0)) * tail * head * 0.35 * amp;  // churned centre
       }
       return clamp(w, 0.0, 1.0);
     }
@@ -3365,7 +3368,10 @@ function updatePlayer(dt) {
   }
   if (!player.fly) {
     const h = height(player.pos.x, player.pos.z);
-    player.swim = lerp(player.swim, h < SEA - .3 ? 1 : 0, Math.min(1, dt * 4));
+    // Deep water under you is not the same as being in it. Keyed off the terrain alone, a
+    // jump off a cliff went into the swim — slow, flat — while still ten units in the air.
+    const inWater = h < SEA - .3 && player.pos.y < SEA + .5;
+    player.swim = lerp(player.swim, inWater ? 1 : 0, Math.min(1, dt * 4));
     const target = Math.max(h, SEA) - player.swim * .85;
     player.gy = lerp(player.gy, target, Math.min(1, dt * 14));   // smooth the ground under the feet
     if (player.jump && player.grounded && player.swim < .5) { player.vy = 25; player.grounded = 0; player.hang = 1; }
@@ -3504,9 +3510,10 @@ function frame(now) {
   waterUni.uT.value = world.clock; foamUni.uT.value = world.clock; grassUni.uT.value = world.clock;
   {   // things cutting the surface leave a wake
     const wk = waterUni.uWk.value; let n = 0;
-    const push = (x, z, hx, hz) => { if (n < 4) { const d = Math.hypot(hx, hz) || 1; wk[n++].set(x, z, hx / d, hz / d); } };
+    // heading scaled by how fast the thing is actually going: a treading swimmer leaves no V
+    const push = (x, z, hx, hz, k = 1) => { if (n < 4) { const d = Math.hypot(hx, hz) || 1; wk[n++].set(x, z, hx / d * k, hz / d * k); } };
     if (ferry) push(ferry.pos.x, ferry.pos.z, Math.sin(ferry.g.rotation.y), Math.cos(ferry.g.rotation.y));
-    if (player.swim > .4) push(player.pos.x, player.pos.z, Math.sin(player.heading), Math.cos(player.heading));
+    if (player.swim > .4) push(player.pos.x, player.pos.z, Math.sin(player.heading), Math.cos(player.heading), clamp(player.speed / 8, 0, 1));
     for (const c of world.creatures) {
       if (n >= 4) break;
       if (c.alive && c instanceof Leviathan && c.depth < 2.2) push(c.rx, c.rz, Math.sin(c.heading), Math.cos(c.heading));

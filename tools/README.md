@@ -385,6 +385,13 @@ ecology changes don't stall the world.
 - **Measure a rig in its idle pose.** Mixamo keeps the bind-pose hips at the origin and the
   clips a hip-height above it, so a model normalised to its bind pose stood in the air the
   moment it idled. `idlePoseBounds` samples the idle clip at three times and unions them.
+- **Deep water under you is not the same as being in it.** The swim state keyed off the
+  terrain height alone, so a jump off a cliff went slow and flat while still in the air. It
+  also needs `player.pos.y` at the surface.
+- **The wake started with a hard line.** `if (along < -3.0) continue;` is a straight edge just
+  ahead of the swimmer, at full strength even when treading water — it read as a sharp
+  rectangle of light under the lantern. The V now grows in over a few units and the wake
+  slot carries speed in the length of its heading vector, so a still swimmer leaves nothing.
 - **Test the harness too.** More than once the tests were wrong, not the code — a collision
   check that didn't know about `minObR`, a canvas stub missing `createImageData`, a missing
   `window` stub. If a result looks insane, suspect the measurement first.
