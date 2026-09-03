@@ -114,6 +114,21 @@ only test worth trusting takes a minute: force `heading = 0` and `cam.az = Math.
 the follow cam sits while you walk forward) and look. Seeing the back means correct;
 seeing the face means the model walks backwards.
 
+**The blend tree** (`stepRig`) is driven by what the body is doing, never by the input.
+On the ground it is idle → walk → run by measured speed, with the run taking over past
+about twice the walk's authored pace and each cycle played at the rate its own stride was
+measured for. In the water it is tread ↔ swim forward. A jump is three one-shots chained
+by the physics: `jump_initiate` while `leadT` counts down, `jump_in_air` while airborne,
+`jump_landing` for half a second after touchdown. Every weight fades over a tenth of a
+second; the one-shots restart the moment they are wanted. A file that lacks a role simply
+does not get it — no run clip and the walk carries on at speed, no jump clips and the old
+procedural stretch comes back.
+
+**`RIG.jumpLead`** is the knob that makes the initiate clip work at all. The crouch only
+reads while the feet are still on the ground, so the physical launch is held for that long
+after the press and the legs extend as he lifts. It is a real input delay; if it feels late,
+set it to 0 and he launches on the press.
+
 Clip names are matched loosely by `pickClip`, because exporters decorate freely:
 `Armature|walk_fwd`, `idle.001`, `alien_walk_cycle_v2` and `Walking` all resolve. It tries
 exact, then case-insensitive, then a whole word inside the name, then a bare substring.

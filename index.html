@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b11';
+const BUILD = 'b12';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1562,13 +1562,32 @@ function attachRig(parent, cfg, done) {
     inst.rotation.y = cfg.yaw || 0;
     parent.add(inst);
 
-    const idle = pickClip(e.anims, cfg.idle, 'idle', 'walk|run');
-    const walk = pickClip(e.anims, cfg.walk, 'walk|run', 'idle');
-    if (walk && e.strides[walk.name] === undefined) e.strides[walk.name] = measureStride(e.root, walk);
+    // Locomotion clips are looked up by role, not by exact name, and a file that lacks a role
+    // simply does not get it: no run means walk carries on at speed, no jump clips means the
+    // old procedural stretch, no swim clips means the walk plays in the water.
+    const land = e.anims.filter(a => !/swim|tread|water|jump|leap|hop/i.test(a.name));
+    const water = e.anims.filter(a => /swim|tread|water/i.test(a.name));
+    const jump = e.anims.filter(a => /jump|leap|hop/i.test(a.name));
+    const clips = {
+      idle: pickClip(land, cfg.idle, 'idle', 'walk|run'),
+      walk: pickClip(land, cfg.walk, 'walk', 'idle|run'),
+      run: pickClip(land, cfg.run, 'run|sprint', 'idle|walk'),
+      swimIdle: pickClip(water, cfg.swimIdle, 'idle|tread|float', 'fwd|forward|move'),
+      swim: pickClip(water, cfg.swim, 'fwd|forward|swim', 'idle|tread|float'),
+      jumpStart: pickClip(jump, cfg.jumpStart, 'init|initiate|start|launch|crouch|takeoff', 'air|land|mid|loop'),
+      jumpAir: pickClip(jump, cfg.jumpAir, 'air|mid|loop|fall|hang', 'init|initiate|start|land'),
+      jumpLand: pickClip(jump, cfg.jumpLand, 'land|landing|down|end|touch', 'init|initiate|start|air'),
+    };
+    for (const k of ['walk', 'run']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
     const mixer = new THREE.AnimationMixer(inst);
     const acts = {};
-    if (idle) { acts.idle = mixer.clipAction(idle); acts.idle.play(); }
-    if (walk) { acts.walk = mixer.clipAction(walk); acts.walk.play(); acts.walk.setEffectiveWeight(0); }
+    for (const k in clips) {
+      if (!clips[k]) continue;
+      const a = mixer.clipAction(clips[k]); acts[k] = a;
+      if (k === 'jumpStart' || k === 'jumpLand') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      a.play(); a.setEffectiveWeight(k === 'idle' ? 1 : 0);
+    }
+    const walk = clips.walk, run = clips.run;
 
     const morphs = [];
     inst.traverse(o => {
@@ -1579,6 +1598,8 @@ function attachRig(parent, cfg, done) {
     done({
       root: inst, mixer, acts, box: e.box, scale: s,
       walkSpeed: walk ? e.strides[walk.name] * s : 0,
+      runSpeed: run ? e.strides[run.name] * s : 0,
+      w: {},                                              // smoothed weight per action
       blink: morphs.length ? { t: 1.5 + Math.random() * 3, p: -1, which: 3, morphs } : null,
     });
   });
@@ -1611,12 +1632,38 @@ function pickClip(anims, name, words, notWords) {
 
 // Blend idle against walk by how fast the thing is actually travelling, run the walk cycle
 // at the speed it was authored for, and blink. Shared by the wanderer and the creatures.
-function stepRig(r, dt, speed, grounded) {
+// ctx is optional: { swim 0..1, air bool, start bool (winding up), landK 0..1 }. Creatures
+// pass nothing and get idle/walk; the wanderer passes everything and gets the whole tree.
+function stepRig(r, dt, speed, grounded, ctx) {
   if (!r || !r.mixer) return;
-  const a = r.acts, ref = r.walkSpeed || 3;
-  const w = grounded ? clamp(speed / ref, 0, 1) : 0;
-  if (a.walk) { a.walk.setEffectiveWeight(w); a.walk.timeScale = clamp(speed / ref, MODEL.rateMin, MODEL.rateMax); }
-  if (a.idle) a.idle.setEffectiveWeight(1 - w);
+  const a = r.acts, ref = r.walkSpeed || 3, c = ctx || {};
+  const want = {};
+  const swim = a.swim || a.swimIdle ? c.swim || 0 : 0;
+  // ground: idle -> walk -> run by actual speed. The run takes over past ~2x walk pace.
+  const loco = grounded ? clamp(speed / ref, 0, 1) : 0;
+  const runMix = a.run ? smooth(ref * 1.9, ref * 3.2, speed) : 0;
+  want.idle = (1 - loco); want.walk = loco * (1 - runMix); want.run = loco * runMix;
+  // water: tread <-> swim forward
+  const sw = clamp(speed / 6, 0, 1);
+  want.swimIdle = 1 - sw; want.swim = sw;
+  // jump: the three phases own the body while they run
+  const air = c.air ? 1 : 0, start = c.start ? 1 : 0, landK = c.landK || 0;
+  want.jumpStart = start; want.jumpAir = air * (1 - start); want.jumpLand = landK;
+  // mix the layers: water replaces ground; jump phases sit on top of whichever is under them
+  const jumpK = Math.max(start, air, landK);
+  for (const k of ['idle', 'walk', 'run']) want[k] *= (1 - swim) * (1 - jumpK);
+  for (const k of ['swimIdle', 'swim']) want[k] *= swim * (1 - jumpK);
+  if (a.walk) a.walk.timeScale = clamp(speed / ref, MODEL.rateMin, MODEL.rateMax);
+  if (a.run) a.run.timeScale = clamp(speed / (r.runSpeed || ref * 3), .75, 1.6);
+  if (a.swim) a.swim.timeScale = clamp(speed / 6, .6, 1.6);
+  if (a.jumpLand) a.jumpLand.timeScale = 1.5;
+  // fade every weight toward its target; one-shots restart the moment they are wanted
+  for (const k in a) {
+    const t = want[k] || 0, prev = r.w[k] || 0;
+    if ((k === 'jumpStart' || k === 'jumpLand') && t > .5 && prev <= .5) a[k].reset().play();
+    const nw = lerp(prev, t, Math.min(1, dt / .1));
+    r.w[k] = nw; a[k].setEffectiveWeight(nw);
+  }
   r.mixer.update(dt);
   // After the mixer: the clips do not touch the eye shapes, but writing first would still
   // be overwritten by a future clip that does.
@@ -3202,7 +3249,7 @@ addEventListener('dblclick', e => e.preventDefault(), { passive: false });
 addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });   // trackpad pinch
 
 // ---------- the wanderer: a body to move through the world with ----------
-const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1 };
+const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1, leadT: 0, landT: 0, airT: 0 };
 // The rig: a real model stands in for the placeholder. RIG.height is the only
 // number worth touching — the model is measured at load and normalised to it, so
 // swapping in a differently-scaled export needs no other change.
@@ -3211,6 +3258,13 @@ const RIG = {
   height: 2.8,       // world units, feet to crown — head and shoulders over a mossback
   idle: 'idle',
   walk: 'walk_fwd',
+  run: 'run_fwd',
+  swim: 'swim_fwd', swimIdle: 'swim_idle',
+  jumpStart: 'jump_initiate', jumpAir: 'jump_in_air', jumpLand: 'jump_landing',
+  // The crouch before a jump only reads if the body is still on the ground while it plays.
+  // This holds the physical launch for that long after the button, so the initiate clip
+  // leads and the legs extend as he lifts. Feels late? Set 0 and he launches on the press.
+  jumpLead: .3,
   // The game treats +Z as forward and this model already faces +Z, so it needs no turn.
   // The only test worth trusting: force heading 0 and the camera to az PI (which is where
   // the follow cam sits while you walk forward) and look. Back visible means correct.
@@ -3384,12 +3438,21 @@ function updatePlayer(dt) {
     player.swim = lerp(player.swim, inWater ? 1 : 0, Math.min(1, dt * 4));
     const target = Math.max(h, SEA) - player.swim * .85;
     player.gy = lerp(player.gy, target, Math.min(1, dt * 14));   // smooth the ground under the feet
-    if (player.jump && player.grounded && player.swim < .5) { player.vy = 25; player.grounded = 0; player.hang = 1; }
+    const canLead = RIG.jumpLead > 0 && player.rigH && player.rigH.acts.jumpStart;
+    if (player.jump && player.grounded && player.swim < .5 && player.leadT <= 0) {
+      if (canLead) player.leadT = RIG.jumpLead;             // crouch first, launch when it lands
+      else { player.vy = 25; player.grounded = 0; player.hang = 1; }
+    }
     player.jump = 0;
+    if (player.leadT > 0) { player.leadT -= dt; if (player.leadT <= 0) { player.vy = 25; player.grounded = 0; player.hang = 1; } }
+    const wasGrounded = player.grounded;
     player.vy -= 32 * dt;
     player.pos.y += player.vy * dt;
     if (player.pos.y <= player.gy) { player.pos.y = player.gy; player.vy = 0; player.grounded = 1; }
-  } else { player.jump = 0; player.vy = 0; player.grounded = 0; }
+    if (player.grounded && !wasGrounded && player.airT > .12 && player.swim < .5) player.landT = .55;   // touched down after a real jump
+    player.airT = player.grounded ? 0 : player.airT + dt;
+    if (player.landT > 0) player.landT -= dt;
+  } else { player.jump = 0; player.vy = 0; player.grounded = 0; player.leadT = 0; player.landT = 0; }
   const g = player.g;
   g.position.copy(player.pos);
   // heading is where the stick points; faceH is where the body has got round to yet
@@ -3410,7 +3473,8 @@ function updatePlayer(dt) {
   if (!player.grounded) player.land = 1;
   for (const l of player.legs)
     l.hip.rotation.x = lerp(Math.sin(bobT + (l.sx > 0 ? 0 : Math.PI)) * .7 * player.moving, -1.15 + l.sx * .25, player.hang);
-  const squash = player.grounded ? 1 - (player.land || 0) * .16 : 1 + player.hang * .07;
+  const hasJump = player.rigH && player.rigH.acts.jumpAir;
+  const squash = hasJump ? 1 : player.grounded ? 1 - (player.land || 0) * .16 : 1 + player.hang * .07;
   g.scale.set(2 - squash, squash, 2 - squash);
   player.light.intensity = 1.1 + world.night * 3.2;
   player.gl.scale.setScalar(4 + world.night * 6);
@@ -3419,7 +3483,11 @@ function updatePlayer(dt) {
 // Blend idle against walk by how fast the creature is actually travelling, and run the
 // walk cycle at the speed it was authored for so the feet do not skate.
 function updateRig(dt) {
-  stepRig(player.rigH, dt, player.speed, !player.fly && player.swim < .5 && player.grounded);
+  const p = player;
+  stepRig(p.rigH, dt, p.speed, !p.fly && p.swim < .5 && p.grounded, {
+    swim: p.swim, air: !p.fly && !p.grounded && p.leadT <= 0 && p.swim < .5,
+    start: p.leadT > 0, landK: p.landT > 0 ? smooth(0, .12, p.landT) : 0,
+  });
 }
 
 const ray = new THREE.Raycaster();
