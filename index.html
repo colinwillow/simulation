@@ -89,7 +89,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b7';
+const BUILD = 'b8';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -416,7 +416,11 @@ class PSys {
       if (k >= 1 || (this.floor !== undefined && this.pos[ix + 1] < this.floor)) { this.age[i] = -1; this.alA[i] = 0; this.szA[i] = 0; continue; }
       const d = Math.max(0, 1 - this.drag * dt);
       this.vel[ix] *= d; this.vel[ix + 2] *= d; this.vel[ix + 1] = this.vel[ix + 1] * d + this.gy * dt;
-      if (this.wind) { this.vel[ix] += Math.sin(t * .7 + this.pos[ix + 1] * .15) * this.wind * dt; this.vel[ix + 2] += Math.cos(t * .55 + this.pos[ix] * .12) * this.wind * dt; }
+      if (this.wind) {
+        this.vel[ix] += Math.sin(t * .7 + this.pos[ix + 1] * .15) * this.wind * dt; this.vel[ix + 2] += Math.cos(t * .55 + this.pos[ix] * .12) * this.wind * dt;
+        const wk = WX.windK * this.wind * 2.4 * dt;   // and the real wind, once there is one
+        this.vel[ix] += WX.wind.x * wk; this.vel[ix + 2] += WX.wind.y * wk;
+      }
       this.pos[ix] += this.vel[ix] * dt; this.pos[ix + 1] += this.vel[ix + 1] * dt; this.pos[ix + 2] += this.vel[ix + 2] * dt;
       this.colA[ix] = lerp(this.c0.r, this.c1.r, k); this.colA[ix + 1] = lerp(this.c0.g, this.c1.g, k); this.colA[ix + 2] = lerp(this.c0.b, this.c1.b, k);
       this.szA[i] = lerp(this.s0, this.s1, k);
@@ -539,23 +543,56 @@ function glow(hex, size, opacity = .8) {
 // ---------- sky dome ----------
 const skyUni = {
   uTop: { value: new THREE.Color(0x2a6fc4) }, uMid: { value: new THREE.Color(0x9ec8ea) }, uLow: { value: new THREE.Color(0xd9e5ee) },
-  uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Color(0xffe6bb) }, uSunI: { value: 1 }
+  uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Color(0xffe6bb) }, uSunI: { value: 1 },
+  // weather: cloud cover, storm darkening, drift time and direction, rainbow, lightning
+  uCloud: { value: 0 }, uStorm: { value: 0 }, uCloudT: { value: 0 }, uWind: { value: new THREE.Vector2(1, 0) },
+  uRainbow: { value: 0 }, uFlash: { value: 0 }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
   vertexShader: `varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
   fragmentShader: `
-    uniform vec3 uTop,uMid,uLow,uSunCol; uniform vec3 uSun; uniform float uSunI; varying vec3 vD;
+    uniform vec3 uTop,uMid,uLow,uSunCol; uniform vec3 uSun; uniform float uSunI;
+    uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash; uniform vec2 uWind; varying vec3 vD;
+    // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
+    float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+    float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+      return mix(mix(hsh(i),hsh(i+vec2(1.0,0.0)),f.x), mix(hsh(i+vec2(0.0,1.0)),hsh(i+vec2(1.0,1.0)),f.x), f.y); }
+    float fbm(vec2 p){ float v=0.0, a=0.5; for(int i=0;i<4;i++){ v+=a*vno(p); p=p*2.03+vec2(17.3,9.1); a*=0.5; } return v; }
+    vec3 hue(float h){ return clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0, 0.0, 1.0); }
     void main(){
       vec3 d = normalize(vD);
       float h = d.y;
       vec3 c = mix(uLow, uMid, smoothstep(-0.06, 0.28, h));
       c = mix(c, uTop, smoothstep(0.18, 0.85, h));
-      float sd = max(dot(d, normalize(uSun)), 0.0);
-      c += uSunCol * pow(sd, 9.0) * 0.5 * uSunI;
-      c += uSunCol * pow(sd, 260.0) * 3.5 * uSunI;
-      float band = exp(-abs(h)*7.0) * max(uSun.y*1.4,0.0);
-      c += uSunCol * band * pow(sd,2.0) * 0.35;
+      vec3 sn = normalize(uSun);
+      float sd = max(dot(d, sn), 0.0);
+      // clouds: project the dome onto a plane overhead so they sit flat and recede
+      float hm = smoothstep(0.015, 0.22, h);
+      vec2 cuv = d.xz / max(h, 0.06) * 0.9 + uWind * uCloudT * 0.018;
+      float n = fbm(cuv * 1.25);
+      float cl = smoothstep(0.64 - uCloud*0.44, 0.80 - uCloud*0.22, n) * smoothstep(0.02, 0.25, uCloud) * hm;
+      float dayL = clamp(sn.y * 1.6 + 0.32, 0.14, 1.0);
+      float sh = fbm(cuv * 2.7 + 3.1);
+      vec3 cLit = mix(vec3(1.0), uMid, 0.3) * dayL;
+      vec3 cDk  = uMid * 0.5 * dayL;
+      vec3 cc = mix(cDk, cLit, sh);
+      cc = mix(cc, cc * vec3(0.50, 0.53, 0.60), uStorm);
+      // the sun goes soft behind cloud, and vanishes behind storm
+      float sunK = uSunI * (1.0 - cl * 0.85);
+      c += uSunCol * pow(sd, 9.0) * 0.5 * sunK;
+      c += uSunCol * pow(sd, 260.0) * 3.5 * sunK;
+      float band = exp(-abs(h)*7.0) * max(sn.y*1.4,0.0);
+      c += uSunCol * band * pow(sd,2.0) * 0.35 * (1.0 - uCloud * 0.6);
+      c = mix(c, cc, cl * 0.94);
+      // rainbow: a 40-42 degree cone around the anti-solar point, red outside
+      if (uRainbow > 0.001 && sn.y > 0.03) {
+        float ang = degrees(acos(clamp(dot(d, -sn), -1.0, 1.0)));
+        float t = (ang - 40.4) / 2.2;
+        float bw = smoothstep(0.0, 0.2, t) * smoothstep(1.0, 0.8, t);
+        c += hue((1.0 - t) * 0.72) * bw * uRainbow * smoothstep(0.0, 0.08, h) * 0.52 * (1.0 - cl * 0.7);
+      }
+      c += uFlash * vec3(0.85, 0.92, 1.05) * (0.45 + 0.9 * cl);
       gl_FragColor = vec4(c, 1.0);
     }`
 }));
@@ -796,19 +833,23 @@ const foam = new THREE.Mesh(foamGeo, new THREE.ShaderMaterial({
 foam.position.y = SEA + .12; foam.renderOrder = 1; scene.add(foam);
 
 // ---------- grass field (instanced, wind in the vertex shader) ----------
-const grassUni = { uT: { value: 0 } };
+const grassUni = { uT: { value: 0 }, uWind: { value: new THREE.Vector3(1, 0, 0) } };   // dir.x, dir.z, strength
 const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: .92 });
 grassMat.onBeforeCompile = s => {
-  s.uniforms.uT = grassUni.uT;
-  s.vertexShader = 'uniform float uT;\n' + s.vertexShader.replace('#include <begin_vertex>', `
+  s.uniforms.uT = grassUni.uT; s.uniforms.uWind = grassUni.uWind;
+  s.vertexShader = 'uniform float uT; uniform vec3 uWind;\n' + s.vertexShader.replace('#include <begin_vertex>', `
     #include <begin_vertex>
     #ifdef USE_INSTANCING
       vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
       float g = sin(uT*1.1 + ip.x*0.06 + ip.z*0.05);
       float sway = sin(uT*2.0 + ip.x*0.5 + ip.z*0.41)*0.35 + g*0.65;
       float k = pow(max(transformed.y,0.0), 1.6);
-      transformed.x += sway * k * 0.42;
-      transformed.z += cos(uT*1.7 + ip.z*0.44)*k*0.22;
+      // a steady lean downwind, and a flutter that gets busier as it blows harder
+      float wk = uWind.z;
+      float gust = sin(uT*7.0 + ip.x*0.9 + ip.z*0.7) * 0.5 + sin(uT*11.3 + ip.z*1.3) * 0.5;
+      transformed.x += sway * k * 0.42 * (1.0 + wk) + (uWind.x * (0.85 + gust * 0.35)) * wk * k * 1.1;
+      transformed.z += cos(uT*1.7 + ip.z*0.44)*k*0.22 * (1.0 + wk) + (uWind.y * (0.85 + gust * 0.35)) * wk * k * 1.1;
+      transformed.y -= wk * k * 0.25;
     #endif
   `);
 };
@@ -838,6 +879,138 @@ const grass = (() => {
 const world = { t: DAY * .28, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '' };
 const logEl = document.getElementById('log');
 function logMsg(s) { const d = document.createElement('div'); d.textContent = s; logEl.appendChild(d); while (logEl.children.length > 5) logEl.removeChild(logEl.firstChild); setTimeout(() => d.remove(), 11500); }
+
+// ---------- weather ----------
+// Fronts come in off the sea every few minutes: cloud builds, rain follows, about half
+// the time it breaks into a storm, and it clears — into a rainbow if the sun is up.
+// Everything below reads WX.cloud / rain / storm as smoothed 0..1 values. The rest of
+// the world does not ask what the weather *is*; it asks how wet, dark or windy it is.
+const WX = {
+  state: 'clear', t: rnd(45, 90), haze: false,
+  cloud: 0, rain: 0, storm: 0, tc: 0, tr: 0, ts: 0,
+  wind: new THREE.Vector2(1, 0), windDir: rnd(Math.PI * 2), windK: .15, windT: .15,
+  wet: 0,                       // soil moisture: fills while it rains, drains over about a day
+  flash: 0, boltT: 0, boltLife: 0, rainbow: 0, rainbowT: 0,
+  fronts: 0, strikes: 0, force: null,
+};
+const WX_LOG = {
+  building: ['Clouds gathered out over the sea.', 'The light went flat. Something was coming in off the water.'],
+  haze: ['A high haze took the edge off the sun.'],
+  rain: ['Rain came in off the water.', 'The first drops hit the moss.'],
+  storm: ['The storm broke over the island.', 'Thunder, and the sea went white.'],
+  clearing: ['The rain passed.', 'The clouds thinned and let the light back through.'],
+};
+function setWx(st) {
+  WX.state = st;
+  if (st === 'clear')    { WX.tc = 0; WX.tr = 0; WX.ts = 0; WX.windT = rnd(.08, .28); WX.t = rnd(70, 170); }
+  if (st === 'haze')     { WX.tc = .5; WX.tr = 0; WX.ts = 0; WX.windT = .25; WX.t = rnd(30, 60); }
+  if (st === 'building') { WX.tc = 1; WX.tr = 0; WX.ts = 0; WX.windT = .4; WX.t = rnd(18, 30); WX.fronts++; }
+  if (st === 'rain')     { WX.tc = 1; WX.tr = .8; WX.ts = 0; WX.windT = .5; WX.t = rnd(40, 85); WX.stormRoll = Math.random() < .5; }
+  if (st === 'storm')    { WX.tc = 1; WX.tr = 1; WX.ts = 1; WX.windT = .95; WX.t = rnd(35, 70); WX.boltT = rnd(1, 3); }
+  if (st === 'clearing') { WX.tc = .35; WX.tr = 0; WX.ts = 0; WX.windT = .3; WX.t = rnd(26, 40);
+                           if (world.sunE > .08 && world.sunE < .62) { WX.rainbowT = rnd(40, 60); logMsg('The rain passed, and a rainbow stood over the bay.'); } }
+  const line = WX_LOG[st]; if (line && !(st === 'clearing' && WX.rainbowT > 0)) logMsg(pick(line));
+}
+// One bolt, reused: a jagged polyline from cloud height to the ground, plus a stub branch.
+const bolt = (() => {
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * 24), 3));
+  const m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xf2f6ff, transparent: true, opacity: 1, fog: false, depthWrite: false }));
+  m.visible = false; m.frustumCulled = false; scene.add(m);
+  const gl = glow('#dfe8ff', 9, .95); gl.visible = false; scene.add(gl);
+  return { m, gl, pts: g.attributes.position };
+})();
+const boltFx = new Streaks({ n: 48, life: .22, size: .42, stretch: 3.2, alpha: .95, additive: true, c0: '#ffffff', c1: '#dfe9ff',
+  spawn: (p, v) => { const q = boltFx.q.shift() || [0, -99, 0, 0, 0, 0]; p.set(q[0], q[1], q[2]); v.set(q[3], q[4], q[5]); } });
+boltFx.q = [];
+function strike() {
+  // out in front of the camera, give or take: a bolt nobody sees is just a flash
+  const a = Math.atan2(-Math.cos(cam.az), -Math.sin(cam.az)) + rnd(-.85, .85), r = rnd(32, 115);
+  const x = clamp(cam.tgt.x + Math.cos(a) * r, -W, W), z = clamp(cam.tgt.z + Math.sin(a) * r, -W, W), gy = groundY(x, z);
+  // main trunk: 8 segments with jitter that grows on the way down, then one branch off the middle
+  const p = bolt.pts.array; let k = 0, px = x + rnd(-12, 12), pz = z + rnd(-12, 12), py = gy + 82;
+  const seg = (x0, y0, z0, x1, y1, z1) => { p[k++] = x0; p[k++] = y0; p[k++] = z0; p[k++] = x1; p[k++] = y1; p[k++] = z1; };
+  for (let i = 1; i <= 8; i++) {
+    const t = i / 8, nx = lerp(px, x, .55) + rnd(-6, 6) * (1 - t), nz = lerp(pz, z, .55) + rnd(-6, 6) * (1 - t), ny = gy + 82 * (1 - t);
+    seg(px, py, pz, i === 8 ? x : nx, ny, i === 8 ? z : nz); px = i === 8 ? x : nx; pz = i === 8 ? z : nz; py = ny;
+    if (i === 4) { const bx = px + rnd(-16, 16), bz = pz + rnd(-16, 16); seg(px, py, pz, bx, py - rnd(18, 34), bz); seg(bx, py - rnd(18, 34), bz, bx + rnd(-8, 8), py - rnd(38, 52), bz + rnd(-8, 8)); }
+  }
+  while (k < p.length) p[k++] = 0;
+  bolt.pts.needsUpdate = true; bolt.m.visible = true; bolt.gl.visible = true; bolt.gl.position.set(x, gy + 3, z);
+  // A one-pixel line is invisible at phone resolution. Lay a stretched streak card along
+  // each segment: pointed down the segment, the card becomes a ribbon that blooms and fades.
+  boltFx.q.length = 0;
+  for (let i = 0; i + 5 < k; i += 6) {
+    const dx = p[i + 3] - p[i], dy = p[i + 4] - p[i + 1], dz = p[i + 5] - p[i + 2], L = Math.hypot(dx, dy, dz) || 1;
+    boltFx.q.push([p[i] + dx * .5, p[i + 1] + dy * .5, p[i + 2] + dz * .5, dx / L * 44, dy / L * 44, dz / L * 44]);
+  }
+  boltFx.emit(boltFx.q.length);
+  WX.boltLife = .16; WX.flash = 1; WX.strikes++;
+  world.effects.push(new Burst(x, gy + 2, z, '#dfe9ff', 14, 1.5));
+  if (gy > SEA + .6 && Math.hypot(x - cam.tgt.x, z - cam.tgt.z) > 9) {
+    // The same thing a tap does: a spark the motes gather to. Lightning can seed a bloom.
+    world.sparks.push(new Spark(x, z));
+    logMsg(gy > 9 ? 'Lightning struck the hillside.' : gy < 2.4 ? 'Lightning struck the shore.' : 'Lightning struck the moss, and left something glowing.');
+  } else logMsg('Lightning lit the whole bay.');
+}
+function updateWeather(dt) {
+  if (WX.force) { setWx(WX.force); WX.force = null; }
+  WX.t -= dt;
+  if (WX.t <= 0) {
+    const st = WX.state;
+    if (st === 'clear') setWx(Math.random() < .3 ? 'haze' : 'building');
+    else if (st === 'haze') setWx('clear');
+    else if (st === 'building') setWx('rain');
+    else if (st === 'rain') setWx(WX.stormRoll ? 'storm' : 'clearing');
+    else if (st === 'storm') setWx('clearing');
+    else setWx('clear');
+  }
+  WX.cloud = lerp(WX.cloud, WX.tc, Math.min(1, dt / 14));
+  WX.rain = lerp(WX.rain, WX.tr, Math.min(1, dt / 7));
+  WX.storm = lerp(WX.storm, WX.ts, Math.min(1, dt / 9));
+  WX.windK = lerp(WX.windK, WX.windT, Math.min(1, dt / 6));
+  WX.windDir += (Math.sin(world.clock * .11) * .4 + Math.sin(world.clock * .037) * .6) * dt * .12;
+  WX.wind.set(Math.cos(WX.windDir), Math.sin(WX.windDir));
+  WX.wet = clamp(WX.wet + WX.rain * dt / 45 - dt / (DAY * 1.3), 0, 1);
+  // rainbow: only while the rain is actually clearing, and it fades on its own
+  if (WX.rainbowT > 0) { WX.rainbowT -= dt; WX.rainbow = lerp(WX.rainbow, world.sunE > .08 ? 1 : 0, Math.min(1, dt / 5)); }
+  else WX.rainbow = lerp(WX.rainbow, 0, Math.min(1, dt / 6));
+  // The shot is pitched down at the island and never shows much sky. A rainbow and a storm
+  // are the two things worth looking up for, so the camera lifts for both.
+  cam.pol = lerp(CAM_POL, 1.42, Math.max(smooth(.05, .9, WX.rainbow), smooth(.3, .9, WX.storm) * .8));
+  // lightning
+  if (WX.storm > .4) { WX.boltT -= dt; if (WX.boltT <= 0) { strike(); WX.boltT = rnd(4, 15) * (1.8 - WX.storm); } }
+  WX.flash = clamp(WX.flash - dt * 6.5, 0, 1);
+  if (WX.boltLife > 0) { WX.boltLife -= dt; bolt.m.material.opacity = clamp(WX.boltLife / .16, 0, 1); bolt.gl.scale.setScalar(26 * clamp(WX.boltLife / .16, 0, 1) + 6); }
+  else if (bolt.m.visible) { bolt.m.visible = false; bolt.gl.visible = false; }
+  // the systems that only need a number
+  rain.rate = WX.rain * (MOBILE ? 380 : 760);
+  mist.rate = WX.rain * (MOBILE ? 14 : 24);
+  grassUni.uWind.value.set(WX.wind.x, WX.wind.y, WX.windK);
+  for (let i = 0; i < 4; i++) waterUni.uW.value[i].z = WX.W0[i] * (1 + WX.storm * .95 + WX.rain * .2);
+  skyUni.uCloud.value = WX.cloud; skyUni.uStorm.value = WX.storm; skyUni.uCloudT.value = world.clock;
+  skyUni.uWind.value.copy(WX.wind); skyUni.uRainbow.value = WX.rainbow; skyUni.uFlash.value = WX.flash;
+  // clear nights get the odd shooting star
+  if (world.night > .7 && WX.cloud < .3 && Math.random() < dt * .08) meteors.emit(1);
+}
+// Rain is streaks, because streaks stretch along their velocity. Each drop spawns a fixed
+// height above whatever ground is under it and lives exactly long enough to reach it.
+const rain = new Streaks({ n: MOBILE ? 520 : 1000, life: 1.04, size: .11, stretch: 2.4, alpha: .55,
+  c0: '#d9e6f2', c1: '#ffffff',
+  spawn: (p, v) => {
+    const x = cam.tgt.x + rnd(-44, 44), z = cam.tgt.z + rnd(-44, 44), g = groundY(x, z);
+    const wx = WX.wind.x * WX.windK * 13, wz = WX.wind.y * WX.windK * 13;
+    p.set(x - wx * .5, g + 27, z - wz * .5); v.set(wx, -26, wz);
+  } });
+const mist = new PSys({ n: 90, life: 6, rate: 0, gy: .12, drag: .6, a0: .07, wind: .6,
+  c0: '#c9d6e0', c1: '#dfe7ee', s0: 3, s1: 9,
+  spawn: (p, v) => { const x = cam.tgt.x + rnd(-40, 40), z = cam.tgt.z + rnd(-40, 40); p.set(x, groundY(x, z) + rnd(.5, 2.5), z); v.set(rnd(-.4, .4), rnd(.1, .4), rnd(-.4, .4)); } });
+const meteors = new Streaks({ n: 24, life: .75, size: .5, stretch: 6, alpha: .9, additive: true, c0: '#fff4dc', c1: '#ffffff',
+  spawn: (p, v) => {
+    const a = rnd(Math.PI * 2), el = rnd(.35, .8);   // somewhere high, streaking mostly sideways
+    p.set(camera.position.x + Math.cos(a) * Math.cos(el) * 620, camera.position.y + Math.sin(el) * 620, camera.position.z + Math.sin(a) * Math.cos(el) * 620);
+    const b = a + rnd(1.2, 2.0); v.set(Math.cos(b) * 520, -rnd(120, 260), Math.sin(b) * 520);
+  } });
+WX.W0 = waterUni.uW.value.map(v => v.z);   // resting wave steepness, so storms scale from it
 function count(list, T) { let n = 0; for (const e of list) if (e.alive && e instanceof T) n++; return n; }
 function nearest(list, pos, pred, maxD = 1e9) { let best = null, bd = maxD; for (const e of list) { if (!e.alive || !pred(e)) continue; const d = Math.hypot(e.pos.x - pos.x, e.pos.z - pos.z); if (d < bd) { bd = d; best = e; } } return best; }
 function purge(list) { for (let i = list.length - 1; i >= 0; i--) if (!list[i].alive) { list[i].dispose && list[i].dispose(); list.splice(i, 1); } }
@@ -996,7 +1169,7 @@ class LanternTree {
       }
       return;
     }
-    if (this.growth < 1) { this.growth = Math.min(1, this.growth + dt / GROW_T); this.applyScale(); }
+    if (this.growth < 1) { this.growth = Math.min(1, this.growth + dt * (1 + WX.wet * .9) / GROW_T); this.applyScale(); }   // rain grows trees
     const sw = Math.sin(world.clock * .8 + this.pos.x * .1) * .012 + Math.sin(world.clock * 1.9 + this.pos.z * .2) * .006;
     this.canopy.rotation.z = sw; this.canopy.rotation.x = sw * .7;
     const lit = this.growth >= 1 ? world.night : 0;
@@ -1575,7 +1748,8 @@ class Creature {
     this.lean = lerp(this.lean, clamp(turnAmt / (this.turn * dt + 1e-6), -1, 1) * this.moveK, Math.min(1, dt * 2.2));
     this.moveK = lerp(this.moveK, this.moving, Math.min(1, dt * 4));
     if (this.moveK > .02) {
-      const st = this.speed * this.moveK * (1 - this.nearMiss * .28) * dt;
+      const shelter = this.flying || this.aquatic ? 1 : 1 - WX.storm * .45;   // nothing hurries in a storm
+      const st = this.speed * this.moveK * (1 - this.nearMiss * .28) * shelter * dt;
       const nx = this.pos.x + Math.sin(this.heading) * st, nz = this.pos.z + Math.cos(this.heading) * st;
       const step = (h2, dist) => {
         const mx = this.pos.x + Math.sin(h2) * dist, mz = this.pos.z + Math.cos(h2) * dist;
@@ -1942,6 +2116,7 @@ class Drifter extends Creature {
   }
   think(dt) {
     this.moving = 1; this.orbit += dt * .6;
+    if (WX.storm > .5) { this.moving = .3; this.wander(); return; }   // grounded: nothing flies in that
     if (world.night > .6) {
       const gt = world.greatTree && world.greatTree.alive ? world.greatTree : null;
       const bc = gt || nearest(world.structures, this.pos, s => s instanceof Cairn && s.beacon, 200);
@@ -1967,7 +2142,8 @@ class Drifter extends Creature {
     }
   }
   pose(dt) {
-    const want = Math.max(groundY(this.pos.x, this.pos.z) + 11, world.greatTree && world.greatTree.alive && this.dist(world.greatTree.pos) < 60 ? world.greatTree.pos.y + world.greatTree.H * .72 : 0) + Math.sin(world.clock * .7 + this.phase) * 2;
+    let want = Math.max(groundY(this.pos.x, this.pos.z) + 11, world.greatTree && world.greatTree.alive && this.dist(world.greatTree.pos) < 60 ? world.greatTree.pos.y + world.greatTree.H * .72 : 0) + Math.sin(world.clock * .7 + this.phase) * 2;
+    want = lerp(want, groundY(this.pos.x, this.pos.z) + 3.2, smooth(.4, .85, WX.storm));   // down out of the wind
     this.alt = lerp(this.alt, want, Math.min(1, dt * 1.5));
     super.pose(dt);
     for (const w of this.wings) { const f = Math.sin(world.clock * 5.5 + this.phase + (w.sw > 0 ? 0 : .5)); w.root.rotation.z = f * .45 * w.sx; w.root.rotation.x = f * .12; }
@@ -2017,7 +2193,7 @@ class Ferry {
   }
   radius(a) { const f = (a / (Math.PI * 2)) * this.N, i = Math.floor(f) % this.N, j = (i + 1) % this.N; return lerp(this.R[i], this.R[j], f - i); }
   update(dt) {
-    const r = this.radius(this.a); this.a = (this.a + dt * 5 / r) % (Math.PI * 2);
+    const r = this.radius(this.a); this.a = (this.a + dt * 5 * (1 - WX.storm * .85) / r) % (Math.PI * 2);   // the ferry waits out a storm
     const nx = Math.cos(this.a) * this.radius(this.a), nz = Math.sin(this.a) * this.radius(this.a);
     const dx = nx - this.pos.x, dz = nz - this.pos.z; this.pos.set(nx, SEA, nz);
     this.g.position.set(nx, SEA - .5 + Math.sin(world.clock * 1.7) * .22, nz);
@@ -2290,7 +2466,8 @@ class Campfire {
     this.ob = obAdd(x, z, 2.1, this);
   }
   update(dt) {
-    const f = .78 + Math.sin(world.clock * 9.1) * .12 + Math.sin(world.clock * 23.7) * .06 + Math.sin(world.clock * 3.3) * .08;
+    const f = (.78 + Math.sin(world.clock * 9.1) * .12 + Math.sin(world.clock * 23.7) * .06 + Math.sin(world.clock * 3.3) * .08) * (1 - WX.rain * .55);
+    this.fire.rate = 95 * (1 - WX.rain * .6); this.embers.rate = 9 * (1 - WX.rain * .75);   // the fire gutters in the wet
     this.light.intensity = (1.6 + world.night * 2.4) * f;
     this.gl.scale.setScalar((7 + world.night * 7) * f);
   }
@@ -2650,7 +2827,7 @@ function updateMotes(dt) {
     mc[ix + 1] = (lerp(.78, .95, world.night) * fl + bright * .25) * boost;
     mc[ix + 2] = (lerp(.32, .85, world.night) * fl) * boost;
   }
-  for (const a of attractors) { if (a.o instanceof Bloom) a.o.charge += a.n * dt * .016; else if (a.o instanceof Spark) a.o.gathered = a.n; }
+  for (const a of attractors) { if (a.o instanceof Bloom) a.o.charge += a.n * dt * .016 * (1 + WX.wet * .6); else if (a.o instanceof Spark) a.o.gathered = a.n; }
   motesGeo.attributes.position.needsUpdate = true; motesGeo.attributes.color.needsUpdate = true;
 }
 
@@ -2803,6 +2980,7 @@ const SKY = {
 SKY.dusk = { top: new THREE.Color(0x2c3d78), mid: new THREE.Color(0xcf6f85), low: new THREE.Color(0xf3ab6a), fog: new THREE.Color(0xd99a76), hs: new THREE.Color(0xf0a070), hg: new THREE.Color(0x3a2a24), sun: new THREE.Color(0xff9c4a) };
 SKY.day = { top: new THREE.Color(0x2668bd), mid: new THREE.Color(0x8dbfe6), low: new THREE.Color(0xbdd6e7), fog: new THREE.Color(0x9dc0dd), hs: new THREE.Color(0xa0c8f0), hg: new THREE.Color(0x4a4634), sun: new THREE.Color(0xfff0cf) };
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
+const tmpG = new THREE.Color();
 function updateSky() {
   const f = (world.t / DAY) % 1, a = f * Math.PI * 2 - Math.PI / 2, e = Math.sin(a);
   world.sunE = e; world.night = smooth(.12, -.18, e);
@@ -2814,10 +2992,18 @@ function updateSky() {
   moon.intensity = clamp(-e * 1.3, 0, .4);
   const dayK = smooth(-.05, .35, e), duskK = 1 - Math.abs(clamp(e / .3, -1, 1));
   for (const k in tmpC) { tmpC[k].copy(SKY.night[k]).lerp(SKY.day[k], dayK); tmpC[k].lerp(SKY.dusk[k], duskK * .9); }
+  // overcast pulls every colour toward one flat grey; a storm darkens that grey
+  const oc = WX.cloud * (.55 + .35 * WX.storm), greyL = lerp(.14, 1, dayK) * (1 - .4 * WX.storm);
+  tmpG.setRGB(.44, .47, .53).multiplyScalar(greyL);
+  for (const k of ['top', 'mid', 'low', 'fog']) tmpC[k].lerp(tmpG, oc);
+  tmpC.hs.lerp(tmpG, oc * .8); tmpC.sun.lerp(tmpG, oc * .5);
   skyUni.uTop.value.copy(tmpC.top); skyUni.uMid.value.copy(tmpC.mid); skyUni.uLow.value.copy(tmpC.low);
-  skyUni.uSun.value.copy(sd); skyUni.uSunCol.value.copy(tmpC.sun); skyUni.uSunI.value = lerp(.25, 1, dayK);
-  scene.fog.color.copy(tmpC.fog); scene.fog.density = lerp(.0050, .0019, dayK) * (170 / W);
-  hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.34, .72, dayK);
+  mist.c0.copy(tmpC.fog); mist.c1.copy(tmpC.fog);
+  rain.mat.uniforms.uC0.value.copy(tmpC.fog).lerp(tmpG.setRGB(1, 1, 1), .45); rain.mat.uniforms.uC1.value.copy(tmpC.low).lerp(tmpG, .6);
+  skyUni.uSun.value.copy(sd); skyUni.uSunCol.value.copy(tmpC.sun); skyUni.uSunI.value = lerp(.25, 1, dayK) * (1 - oc * .8);
+  scene.fog.color.copy(tmpC.fog); scene.fog.density = lerp(.0050, .0019, dayK) * (170 / W) * (1 + WX.rain * .8 + WX.storm * .5);
+  hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.34, .72, dayK) * (1 - oc * .3) + WX.flash * 1.5;
+  sun.intensity *= 1 - oc * .8; sun.castShadow = sun.castShadow && sun.intensity > .2;
   sun.color.copy(tmpC.sun); bounce.intensity = lerp(.05, .22, dayK); fill.intensity = lerp(.12, .5, dayK);
   stars.material.uniforms.uOp.value = world.night; stars.material.uniforms.uT.value = world.clock; stars.rotation.y = world.clock * .004;
   M.lantern.emissiveIntensity = lerp(.4, 3.2, world.night);
@@ -2828,10 +3014,10 @@ function updateSky() {
   M.membrane.emissiveIntensity = lerp(.1, .8, world.night);
   waterMat.opacity = lerp(.72, .9, dayK); waterMat.color.copy(col('#2b7fa4')).lerp(col('#12304a'), world.night * .75);
   waterUni.uSky.value.copy(tmpC.mid);
-  foamUni.uOp.value = lerp(.55, 1, dayK);
+  foamUni.uOp.value = lerp(.55, 1, dayK) * (1 + WX.storm * .5);
   compMat.uniforms.uStr.value = lerp(.34, .95, world.night);
   compMat.uniforms.uVig.value = lerp(.4, .85, world.night);
-  renderer.toneMappingExposure = lerp(1.0, .92, world.night);
+  renderer.toneMappingExposure = lerp(1.0, .92, world.night) * (1 - oc * .12) + WX.flash * .35;
 }
 function eraName() {
   if (world.beacons >= 3) return 'The Lantern Age';
@@ -2982,7 +3168,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world };   // a handle to poke at from the console
+window.isle = { player, world, wx: WX };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -3180,8 +3366,9 @@ const perf = { ms: 16.7, worst: 0, acc: 0, n: 0 };
 function updateHUD() {
   const f = (world.t / DAY) % 1;
   const tod = f < .22 ? 'before dawn' : f < .3 ? 'dawn' : f < .68 ? 'day' : f < .78 ? 'dusk' : 'night';
+  const wx = WX.storm > .5 ? ', storm' : WX.rain > .3 ? ', rain' : WX.rainbow > .3 ? ', rainbow' : WX.cloud > .55 ? ', overcast' : WX.cloud > .25 ? ', hazy' : '';
   const C = world.creatures, Pl = world.plants, S = world.structures;
-  statsEl.innerHTML = `day ${world.day}, ${tod}<br>` +
+  statsEl.innerHTML = `day ${world.day}, ${tod}${wx}<br>` +
     `${count(Pl, LanternTree)} lantern trees, ${count(Pl, MossTuft)} moss, ${count(Pl, Bloom)} blooms<br>` +
     `${count(C, Grazer)} mossbacks, ${count(C, Weaver)} tinkers, ${count(C, Burrower)} mudlarks<br>` +
     `${count(C, Skimmer)} glimmerfins, ${count(C, Drifter)} kitewings, ${count(C, Hopper)} hoppers<br>` +
@@ -3197,7 +3384,7 @@ let last = performance.now(), booted = false;
 function frame(now) {
   requestAnimationFrame(frame);
   const raw = now - last;
-  const dt = Math.min(.05, raw / 1000); last = now; world.clock += dt;
+  const dt = clamp(raw / 1000, 0, .05); last = now; world.clock += dt;   // never negative: that ran a frame backwards
   syncSize();                              // costs two reads unless the viewport moved
   perf.ms = lerp(perf.ms, raw, .06); perf.acc += raw; perf.n++;
   if (perf.n > 30) { perf.worst = Math.max(perf.worst * .82, perf.acc / perf.n); perf.acc = 0; perf.n = 0; }
@@ -3220,6 +3407,7 @@ function frame(now) {
   camera.lookAt(cam.tgt);
   sky.position.copy(camera.position);
 
+  updateWeather(dt);
   updateSky();
   for (const e of world.plants) if (e.alive) e.update(dt);
   for (const e of world.structures) if (e.alive) e.update(dt);

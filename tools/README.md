@@ -224,6 +224,49 @@ light at night. The event log at the bottom only reports real chains, never flav
 
 ## Systems worth understanding before you change things
 
+### Weather
+
+Fronts come in off the sea every few minutes. `WX` is the whole thing: a small state machine
+(`clear → building → rain → storm? → clearing → clear`, with the occasional `haze` that never
+rains) and three smoothed numbers, `cloud`, `rain` and `storm`, each 0..1. Nothing else in the
+file asks what the weather *is*; it asks how cloudy, wet, dark or windy it is, and that is
+the pattern to keep — a new system should read those numbers, not the state name.
+
+What reads them:
+
+- **Sky.** The dome shader grew value-noise clouds projected onto a plane overhead, a
+  lightning `uFlash`, and a rainbow drawn as a 40–42° cone around the anti-solar point (red
+  outside, like the real one). Overcast pulls every palette colour toward one grey.
+- **Rain** is a `Streaks` system — the same velocity-stretched cards as the waterfall. Each drop
+  spawns a fixed height above whatever ground is under it and lives exactly long enough to
+  reach it, so rain does not fall through hills. Drops take the fog colour, so they do not
+  glare white at night. `mist` does the same.
+- **Wind** is one vector and a strength. Grass leans downwind and flutters harder as it
+  blows; campfire smoke and embers drift with it. The sea's wave steepness scales up in a
+  storm from `WX.W0`, the resting values.
+- **Lightning** is a jagged polyline aimed out in front of the camera (a bolt nobody sees is
+  just a flash), drawn as a thin `LineSegments` core with a stretched `Streaks` card laid along
+  each segment — one pixel of line is invisible on a phone, but a card pointed down the
+  segment becomes a ribbon that blooms and fades — plus a whole-sky flash through the
+  hemisphere light and exposure.
+  A strike on land drops a real `Spark` — the same object a tap does — so lightning can seed a
+  bloom through the existing chain, and the log reports it because it actually happened.
+- **The world.** Rain fills `WX.wet`, which drains over about a day: trees grow faster and
+  blooms charge faster while the ground is wet. Land creatures slow in a storm, kitewings
+  come down out of the wind, the ferry waits it out, the campfire gutters.
+- **The camera** tilts up from `CAM_POL` while a rainbow or a storm is up; the fixed pitch
+  otherwise puts the horizon at the top edge of the frame, and neither the bow nor the bolts
+  would ever be seen. Rainbows are only announced with the sun under about 40°, because above
+  that the bow is entirely below the horizon.
+- Clear nights get the odd shooting star, another `Streaks` instance.
+
+`isle.wx.force = 'storm'` from the console jumps the machine. The smoothed values lag the
+state by ten seconds or so; set them directly if you want the look now.
+
+One thing this turned up: the frame loop clamped `dt` only from above, and a rAF timestamp
+can trail the `performance.now()` that seeded `last`, so an early frame could run the whole
+sim backwards for one tick. It is clamped at zero now.
+
 ### Obstacle field
 Solid things register a footprint circle in a coarse spatial hash (`obAdd`/`obRemove`).
 Creatures use it three ways: rejecting waypoints, steering around things ahead
@@ -284,6 +327,7 @@ npm install                            # three r128 + the GLSL validator, dev-on
 npm run check:shader                   # compile the water shader for real
 npm run check:terrain                  # land area, walkable %, height distribution
 npm run check:sim                      # 6000 frames with no GPU, print sim stats
+node tools/headless.js index.html 2400 storm   # ...starting in that weather
 npm run check:model models/*.glb       # what is in a model, and can the game use it
 ```
 

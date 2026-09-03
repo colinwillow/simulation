@@ -17,13 +17,17 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('Lant
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
 eval(src);
 const N=+process.argv[3]||6000;
+// optional: node tools/headless.js index.html 3000 storm   -> start in that weather
+if(process.argv[4]) global.__wx.force=process.argv[4];
+let maxRain=0,maxStorm=0;
 const w=global.__w,C=global.__C,c=global.__count,obRad=global.__obRad;
 let worstOverlap=0, worstWho='', overlapFrames=0, stuckMax=0;
 const obs=new Set(); for(const [k,a] of global.__OB.map) for(const o of a) obs.add(o);
 for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
+  maxRain=Math.max(maxRain,global.__wx.rain); maxStorm=Math.max(maxStorm,global.__wx.storm);
   if(i%97===0){
     obs.clear(); for(const [k,a] of global.__OB.map) for(const o of a) obs.add(o);
     let bad=0;
@@ -49,4 +53,5 @@ console.log('player at',global.__p.pos.x.toFixed(1),global.__p.pos.y.toFixed(1),
 console.log('logs on the ground',c(w.structures,global.__C.Log),'| stumps',c(w.structures,global.__C.Stump));
 console.log('leviathans',c(w.creatures,C2.Leviathan),'walkers',c(w.creatures,C2.Walker),'hoppers',c(w.creatures,C2.Hopper),'greatTree',!!w.greatTree,'trailLen',(w.creatures.find(x=>x instanceof C2.Leviathan)||{trail:[]}).trail.length,'towerY',Math.max(0,...w.structures.filter(o=>o.alive&&o instanceof C2.Cairn).map(o=>o.y)).toFixed(1));
 console.log('frames',N,'| day',w.day,'cairns',w.cairns,'beacons',w.beacons,'trees',c(w.plants,C.LanternTree),'blooms',c(w.plants,C.Bloom),'grazers',c(w.creatures,C.Grazer),'tinkers',c(w.creatures,C.Weaver));
+const X=global.__wx; console.log('weather: now',X.state,'| fronts',X.fronts,'| strikes',X.strikes,'| sparks alive',w.sparks.filter(s=>s.alive).length,'| max rain',maxRain.toFixed(2),'storm',maxStorm.toFixed(2),'| wet',X.wet.toFixed(2),'| wind',X.windK.toFixed(2));
 console.log('ghost-frames excluded | obstacles',obs.size,'| worst penetration',worstOverlap.toFixed(2),worstWho,'| sampled frames with any overlap',overlapFrames,'/',Math.ceil(N/97),'| max stuck timer',stuckMax.toFixed(2));
