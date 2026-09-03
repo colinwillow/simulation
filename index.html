@@ -89,7 +89,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b8';
+const BUILD = 'b9';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1468,7 +1468,10 @@ function loadModel(url, cb) {
   loader.load(url, gltf => {
     e.root = gltf.scene; e.anims = gltf.animations;
     prepModel(e.root);
-    e.box = modelBounds(e.root);                        // unscaled: each user picks its own height
+    // Measure in the idle pose, not the bind pose. Mixamo exports keep the bind pose hips
+    // at the origin and the clips a hip-height above it, so a model normalised to its bind
+    // pose stands a hip-height in the air the moment it starts to idle.
+    e.box = idlePoseBounds(e.root, e.anims);              // unscaled: each user picks its own height
     e.strides = {};
     e.ready = true;
     for (const f of e.waiting) f(e);
@@ -1514,6 +1517,16 @@ function modelBounds(root) {
     for (let i = 0; i < n; i++) { o.boneTransform(i, v); box.expandByPoint(v.applyMatrix4(o.matrixWorld)); }
   });
   return skinned ? box : new THREE.Box3().setFromObject(root);
+}
+
+function idlePoseBounds(root, anims) {
+  const idle = pickClip(anims || [], 'idle', 'idle', 'walk|run');
+  if (!idle) return modelBounds(root);
+  const mx = new THREE.AnimationMixer(root); mx.clipAction(idle).play();
+  const box = new THREE.Box3();
+  for (const t of [.05, .4, .75]) { mx.setTime(t * idle.duration); box.union(modelBounds(root)); }   // a lifted foot must not set the floor
+  mx.stopAllAction();
+  return box;
 }
 
 // A SkinnedMesh cannot be plain-cloned: the copy keeps pointing at the original skeleton
@@ -1625,6 +1638,7 @@ class Creature {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
+    this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
     this.g = new THREE.Group(); this.body = new THREE.Group(); this.g.add(this.body); this.build(); scene.add(this.g);
     this.g.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
@@ -1649,8 +1663,8 @@ class Creature {
   animLegs(rate, amp = .55) {
     for (const l of this.legs) {
       const s = Math.sin(world.clock * rate + this.phase + l.off);
-      l.hip.rotation.x = s * amp * this.moveK;
-      l.knee.rotation.x = Math.max(0, -Math.sin(world.clock * rate + this.phase + l.off - .7)) * amp * 1.1 * this.moveK;
+      l.hip.rotation.x = s * amp * this.animK;
+      l.knee.rotation.x = Math.max(0, -Math.sin(world.clock * rate + this.phase + l.off - .7)) * amp * 1.1 * this.animK;
     }
   }
   terrainOK(x, z) { if (Math.abs(x) > W * .96 || Math.abs(z) > W * .96) return false; const h = height(x, z); if (this.flying) return true; if (this.aquatic) return h < SEA - 1.6; return h > SEA + .6 && h < 15.5 && slope(x, z) < 1.25; }
@@ -1729,7 +1743,24 @@ class Creature {
       }
     }
   }
-  pickWander() { for (let i = 0; i < 14; i++) { const a = rnd(Math.PI * 2), r = rnd(10, 36), x = this.pos.x + Math.cos(a) * r, z = this.pos.z + Math.sin(a) * r; if (this.valid(x, z)) return new THREE.Vector3(x, 0, z); } return null; }
+  abandon() { this.wp = null; this.target = null; }   // species with a longer memory override this
+  // nearest valid spot with clearance for this creature, closest ring first
+  findEscape() {
+    for (let r = 3; r <= 16; r += 2.5) for (let i = 0; i < 12; i++) {
+      const a = rnd(Math.PI * 2), x = this.pos.x + Math.cos(a) * r, z = this.pos.z + Math.sin(a) * r;
+      if (this.terrainOK(x, z) && obClear(x, z, this.rad + .4)) return { x, z };
+    }
+    return null;
+  }
+  pickWander() {
+    for (let i = 0; i < 14; i++) {
+      // while roaming away from a failure, only look in the half-plane behind it
+      const a = this.roamT > 0 ? this.avoidB + Math.PI + rnd(-.9, .9) : rnd(Math.PI * 2);
+      const r = rnd(10, 36), x = this.pos.x + Math.cos(a) * r, z = this.pos.z + Math.sin(a) * r;
+      if (this.valid(x, z)) return new THREE.Vector3(x, 0, z);
+    }
+    return null;
+  }
   wander() { if (!this.wp || Math.hypot(this.wp.x - this.pos.x, this.wp.z - this.pos.z) < 3) this.wp = this.pickWander(); if (this.wp) this.seek(this.wp); else this.heading += .8; }
   seek(p, w = 1) { const dx = p.x - this.pos.x, dz = p.z - this.pos.z, d = Math.hypot(dx, dz) || 1; this.steer.x += dx / d * w; this.steer.z += dz / d * w; }
   flee(p, w = 1) { this.seek(p, -w); }
@@ -1784,13 +1815,14 @@ class Creature {
     this.pos.y = base; this.g.position.y = base;
     if (!this.flying && !this.aquatic) { alignTo(this.g, this.rx, this.rz, .55); this.g.rotateY(this.heading); }
     else this.g.rotation.set(0, this.heading, 0);
-    this.body.position.y = Math.abs(Math.sin(world.clock * this.gait + this.phase)) * this.bob * this.moveK;
-    this.body.rotation.x = Math.sin(world.clock * this.gait + this.phase) * .06 * this.moveK;
+    this.body.position.y = Math.abs(Math.sin(world.clock * this.gait + this.phase)) * this.bob * this.animK;
+    this.body.rotation.x = Math.sin(world.clock * this.gait + this.phase) * .06 * this.animK;
     this.body.rotation.z = -this.lean * .12;
     if (this.legs.length) this.animLegs(this.gait);
   }
   update(dt) {
-    this.think(dt); this.locomote(dt);
+    if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); } else this.think(dt);
+    this.locomote(dt);
     if (this.ghost > 0) this.ghost -= dt;
     if (!this.flying) {
       const r = this.resolve(this.pos.x, this.pos.z);
@@ -1814,6 +1846,42 @@ class Creature {
           if (this.pinned > 2.5) { this.ghost = 1.8; this.pinned = 0; this.wp = null; }
         } else { this.pinned = 0; if (this.terrainOK(this.pos.x, this.pos.z)) this.lastGood.set(this.pos.x, 0, this.pos.z); }
       }
+    }
+    // A creature that wants to move and is not moving used to march on the spot — legs
+    // cycling, going nowhere, which reads as "stuck on a rock" even when the brain is
+    // fine. Animate from the ground actually covered instead, and count the stall so a
+    // species can notice it is getting nowhere and change its mind.
+    const covered = Math.hypot(this.pos.x - this.px0, this.pos.z - this.pz0); this.px0 = this.pos.x; this.pz0 = this.pos.z;
+    const v = dt > 0 ? covered / dt : 0;
+    this.animK = lerp(this.animK, clamp(v / (this.speed * .85), 0, 1), Math.min(1, dt * 8));
+    // Net ground covered per second, not per-frame speed: juddering against a rock has
+    // plenty of the latter and none of the former.
+    this.aT += dt;
+    if (this.aT >= 1) {
+      const net = Math.hypot(this.pos.x - this.ax, this.pos.z - this.az);
+      this.stall = this.moving > .5 && net < .6 ? this.stall + this.aT : 0;
+      this.ax = this.pos.x; this.az = this.pos.z; this.aT = 0;
+    }
+    // Last resort. The retreat and the ghost both assume there is somewhere to go; a
+    // creature pocketed between boulders on a cliff edge has nowhere, and one sat like that
+    // for three minutes with its legs going. Twelve seconds of wanting to move and covering
+    // no ground, and it scrambles to the nearest spot that is actually valid. Rare by design
+    // — world.escapes counts them, and a rising count means a real trap to go and find.
+    if (this.stall > 6 && this.roamT <= 0 && !this.flying && !this.aquatic) {
+      // Steering will never get round whatever this is. Drop the goal and walk away from it
+      // for a while, so the next goal is chosen from somewhere else. Scrambling out without
+      // this just put the creature straight back on the same path to the same pocket.
+      this.abandon(); this.avoidB = this.heading; this.roamT = 8; this.wp = null;
+    }
+    if (this.stall > 14 && !this.flying && !this.aquatic) {
+      const p = this.findEscape();
+      if (p) {
+        world.effects.push(new Burst(this.pos.x, this.pos.y + 1, this.pos.z, '#c9b48a', 6, .8));
+        this.pos.x = p.x; this.pos.z = p.z; this.lastGood.set(p.x, 0, p.z);
+        this.wp = null; this.target = null; this.stuck = 0; this.wedged = 0; this.pinned = 0;
+        world.escapes = (world.escapes || 0) + 1;
+      } else this.ghost = 3;
+      this.stall = 0;
     }
     const kR = Math.min(1, dt * (this.flying ? 20 : 10));
     this.rx = lerp(this.rx, this.pos.x, kR); this.rz = lerp(this.rz, this.pos.z, kR);
@@ -1940,10 +2008,19 @@ class Weaver extends Creature {
     }
     this.head.rotation.y = Math.sin(world.clock * .8 + this.phase) * .25;
   }
+  // A goal it could not reach — a log that fell against a boulder, a tree up a slope past
+  // terrainOK — is shunned for a minute. A claimed tree is unclaimed, because leaving it
+  // claimed starved every other tinker of it too.
+  abandon() {
+    if (this.tree) this.tree.claimed = false;
+    if (this.goal) { this.shun = this.goal; this.shunT = 60; }
+    this.tree = null; this.goal = null; this.wp = null; this.target = null;
+  }
   pickUp(log) { this.carry = log; log.carried = true; scene.remove(log.g); this.body.add(log.g); log.g.position.set(0, 3.15, 0); log.g.rotation.set(0, Math.PI / 2, .06); }
   think(dt) {
     this.timer -= dt; this.moving = 1;
     this.ignore = null;
+    if (this.shunT > 0) this.shunT -= dt; else this.shun = null;
     if (this.carry) {
       let c = nearest(world.structures, this.pos, s => s instanceof Cairn && !s.complete, 120);
       if (!c && count(world.structures, Cairn) < MAX.cairn) {
@@ -1953,8 +2030,9 @@ class Weaver extends Creature {
           logMsg(world.cairns === 1 ? 'A tinker set the first stone of a cairn on the hillside.' : 'The tinkers began another cairn.');
         }
       }
+      if (c === this.shun) c = null;
       if (c) {
-        this.ignore = c;
+        this.ignore = c; this.goal = c;
         if (this.dist(c.pos) < 3.4) {
           c.addLog(); this.body.remove(this.carry.g); this.carry.alive = false; this.carry = null;
           world.effects.push(new Burst(c.pos.x, c.pos.y + c.y, c.pos.z, '#ffd9a0', 6, .8)); this.state = 'seek';
@@ -1974,8 +2052,8 @@ class Weaver extends Creature {
       if (this.timer <= 0) { const l = nearest(world.structures, this.pos, s => s instanceof Log && !s.carried, 7); if (l) this.pickUp(l); this.state = 'seek'; this.tree = null; }
       return;
     }
-    const stray = nearest(world.structures, this.pos, s => s instanceof Log && !s.carried, 40);
-    if (stray) { if (this.dist(stray.pos) < 2.4) this.pickUp(stray); else this.seek(stray.pos, 1.4); return; }
+    const stray = nearest(world.structures, this.pos, s => s instanceof Log && !s.carried && s !== this.shun, 40);
+    if (stray) { this.goal = stray; if (this.dist(stray.pos) < 2.4) this.pickUp(stray); else this.seek(stray.pos, 1.4); return; }
     if (world.night > .74 && world.camp) {
       const d = this.dist(world.camp.pos);
       this.ignore = world.camp;
@@ -1985,7 +2063,7 @@ class Weaver extends Creature {
     if (world.night > .8) { this.moving = .3; this.wander(); return; }
     if (!this.tree || !this.tree.alive || this.tree.falling >= 0) {
       this.tree = null;
-      if (count(world.plants, LanternTree) > 10 && count(world.structures, Log) < 26) { this.tree = nearest(world.plants, this.pos, p => p instanceof LanternTree && p.growth >= 1 && !p.claimed, 80); if (this.tree) this.tree.claimed = true; }
+      if (count(world.plants, LanternTree) > 10 && count(world.structures, Log) < 26) { this.tree = nearest(world.plants, this.pos, p => p instanceof LanternTree && p.growth >= 1 && !p.claimed && p !== this.shun, 80); if (this.tree) { this.tree.claimed = true; this.goal = this.tree; } }
     }
     if (this.tree) { this.ignore = this.tree; if (this.dist(this.tree.pos) < 2.8) { this.state = 'chop'; this.timer = rnd(5, 7.5); } else this.seek(this.tree.pos, 1.4); }
     else this.wander();
@@ -3111,7 +3189,7 @@ addEventListener('dblclick', e => e.preventDefault(), { passive: false });
 addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });   // trackpad pinch
 
 // ---------- the wanderer: a body to move through the world with ----------
-const player = { pos: new THREE.Vector3(), heading: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1 };
+const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1 };
 // The rig: a real model stands in for the placeholder. RIG.height is the only
 // number worth touching — the model is measured at load and normalised to it, so
 // swapping in a differently-scaled export needs no other change.
@@ -3298,8 +3376,10 @@ function updatePlayer(dt) {
   } else { player.jump = 0; player.vy = 0; player.grounded = 0; }
   const g = player.g;
   g.position.copy(player.pos);
-  if (!player.fly && player.swim < .5) { alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.heading); }
-  else g.rotation.set(0, player.heading, 0);
+  // heading is where the stick points; faceH is where the body has got round to yet
+  { let d = player.heading - player.faceH; d = Math.atan2(Math.sin(d), Math.cos(d)); player.faceH += d * Math.min(1, dt * 9); }
+  if (!player.fly && player.swim < .5) { alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.faceH); }
+  else g.rotation.set(0, player.faceH, 0);
   const bobT = world.clock * 9;
   // A walk clip carries its own bounce. Without one — the placeholder, or a model exported
   // with no animation at all — the bob is the only thing keeping it from gliding.

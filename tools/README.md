@@ -107,10 +107,6 @@ only test worth trusting takes a minute: force `heading = 0` and `cam.az = Math.
 the follow cam sits while you walk forward) and look. Seeing the back means correct;
 seeing the face means the model walks backwards.
 
-**`yaw` was not optional for the static export.** The game treats +Z as forward. `alien_orange.glb` was modelled
-facing the other way — its eyes come out on -Z — so it needs `Math.PI` or it walks
-backwards. Check a new model before assuming: find which side its eye geometry sits on.
-
 Clip names are matched loosely by `pickClip`, because exporters decorate freely:
 `Armature|walk_fwd`, `idle.001`, `alien_walk_cycle_v2` and `Walking` all resolve. It tries
 exact, then case-insensitive, then a whole word inside the name, then a bare substring.
@@ -123,12 +119,9 @@ last, and only when nothing cleaner exists.
 Junk tracks are skipped outright: Blender leaves a one-frame `CINEMA_4D_Main` in these
 exports and Mixamo adds a `mixamo.com`, and no real cycle runs under a quarter second.
 
-**The current player has no animation at all.** `alien_orange.glb` ships with no armature,
-no clips and no blend shapes — the armature never made it out of Blender, so no amount of
-renaming helps — and it stands in one pose and slides. Everything degrades
-rather than breaking — no clips means no blending, no shapes means no blinking, and the
-placeholder's procedural bob comes back so it is not completely inert — but it wants an
-`idle` and a `walk_fwd` before it reads as alive.
+The alien's rigged export carries `idle` and `walk_fwd` on a Mixamo skeleton and needs
+`yaw: 0`. An earlier static export of the same model had no armature at all and faced the
+other way; `tools/model.js` tells the two apart in one line.
 
 ### The camera
 
@@ -373,6 +366,25 @@ ecology changes don't stall the world.
 - **`world.psys` is not all point sprites.** `Streaks` lives in the same list with a
   different material, so the old resize handler threw on `uScale` every time the window
   resized. It never showed up under test because `resize` never fires headless.
+- **Steering is not pathfinding, and a claim is forever.** A tinker claims the nearest
+  mature tree and steers straight at it. Behind a boulder cluster or up a slope past the
+  `terrainOK` limit, the base stuck-escape clears `wp` and `target` but never the species'
+  own `this.tree`, so it re-aimed every frame — one sat marching on the spot for 154 s in a
+  headless run — and the tree stayed claimed, so no other tinker could take it. Every
+  creature now has `stall` (seconds wanting to move and covering no ground); the tinker
+  six of them the base class calls `abandon()` — the tinker's override unclaims and shuns
+  the tree — and the creature roams *away* from the failed bearing for eight seconds before
+  it is allowed to want anything again. That last part is what matters: scrambling a
+  creature out of a pocket without it just sent it straight back down the same path. Only
+  if roaming fails too, at fourteen seconds, does it scramble to the nearest spot that is
+  actually valid (`findEscape`) with a puff of dust. `world.escapes` counts those; `headless.js`
+  prints it with the walking-in-place episodes and the three longest stalls. Longest went
+  from 190 s to 28 s; a number climbing back is a real trap to go and find.
+- **Legs animate from ground covered, not intent.** `animK` is measured speed; `moveK` is
+  still what locomotion uses. A blocked creature stands. It used to pantomime walking.
+- **Measure a rig in its idle pose.** Mixamo keeps the bind-pose hips at the origin and the
+  clips a hip-height above it, so a model normalised to its bind pose stood in the air the
+  moment it idled. `idlePoseBounds` samples the idle clip at three times and unions them.
 - **Test the harness too.** More than once the tests were wrong, not the code — a collision
   check that didn't know about `minObR`, a canvas stub missing `createImageData`, a missing
   `window` stub. If a result looks insane, suspect the measurement first.
