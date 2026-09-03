@@ -100,7 +100,14 @@ copy keeps pointing at the original skeleton and every instance moves as one. Th
 `RIG` configures the player: `url`, `height`, `idle`/`walk` clip names, `blinkL`/`blinkR`
 shape names, `lamp` (`null` derives it from the model's bounds), and `yaw`.
 
-**`yaw` is not optional.** The game treats +Z as forward. `alien_orange.glb` was modelled
+**`yaw` is not optional, and do not infer it from geometry.** The game treats +Z as
+forward. Twice now a bounding-box or centroid reading of where the eye mesh sits gave the
+wrong answer — the bind pose, the arms-out A-pose and the animated pose all disagree. The
+only test worth trusting takes a minute: force `heading = 0` and `cam.az = Math.PI` (where
+the follow cam sits while you walk forward) and look. Seeing the back means correct;
+seeing the face means the model walks backwards.
+
+**`yaw` was not optional for the static export.** The game treats +Z as forward. `alien_orange.glb` was modelled
 facing the other way — its eyes come out on -Z — so it needs `Math.PI` or it walks
 backwards. Check a new model before assuming: find which side its eye geometry sits on.
 
@@ -122,6 +129,17 @@ renaming helps — and it stands in one pose and slides. Everything degrades
 rather than breaking — no clips means no blending, no shapes means no blinking, and the
 placeholder's procedural bob comes back so it is not completely inert — but it wants an
 `idle` and a `walk_fwd` before it reads as alive.
+
+### The camera
+
+Pitch is fixed at `CAM_POL`. Looking up and down was never worth a whole stick axis, so
+the right stick only orbits now and its vertical axis is free for something else. `solveCam`
+still drops the boom below `CAM_POL` to clear a hill — that is collision, not the player
+aiming, and it is why a pitch reading moves a little while orbiting.
+
+There is a `BUILD` stamp in the HUD's perf line. Pages caches `index.html`, so a phone can
+sit on an old build while the repo has moved on; that once cost a whole round trip arguing
+about which way a model faced. Bump it with anything that changes behaviour.
 
 ### Creatures wearing models
 

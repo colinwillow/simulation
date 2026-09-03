@@ -86,6 +86,10 @@ const Q = {
 };
 
 const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
+// Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
+// repo has moved on — which once cost an afternoon arguing about which way a model faced.
+// Bump it with anything that changes behaviour.
+const BUILD = 'b7';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2837,8 +2841,12 @@ function eraName() {
 }
 
 // ---------- camera + input ----------
-const cam = { az: .7, pol: 1.05, r: 30, tgt: new THREE.Vector3(0, 6, 0), idle: 0 };
-const camS = { pol: 1.05, r: 30 };          // what the camera actually flies at
+// The shot's pitch is fixed. Looking up and down was never worth a whole stick axis, and
+// holding one angle keeps the island reading the way it was framed. solveCam still drops
+// the boom below this to clear a hill — that is collision, not the player aiming.
+const CAM_POL = 1.05;
+const cam = { az: .7, pol: CAM_POL, r: 30, tgt: new THREE.Vector3(0, 6, 0), idle: 0 };
+const camS = { pol: CAM_POL, r: 30 };       // what the camera actually flies at
 const _camWant = new THREE.Vector3();
 // Treat the terrain as a heightfield and march the boom: if the shot is blocked,
 // first climb (a drone lifting over a ridge), and only pull in if climbing can't clear it.
@@ -2890,7 +2898,7 @@ el.addEventListener('pointermove', e => {
   const dx = e.clientX - ptr.x, dy = e.clientY - ptr.y; ptr.x = e.clientX; ptr.y = e.clientY;
   if (Math.abs(dx) > 160 || Math.abs(dy) > 160) return;   // ignore impossible jumps
   if (Math.hypot(e.clientX - ptr.sx, e.clientY - ptr.sy) > 6) ptr.moved = true;
-  cam.az -= dx * .005; cam.pol = clamp(cam.pol - dy * .004, .28, 1.46);
+  cam.az -= dx * .005;                     // pitch is fixed at CAM_POL — orbit only
 });
 function endPtr(e) {
   pts.delete(e.pointerId);
@@ -2923,13 +2931,12 @@ const player = { pos: new THREE.Vector3(), heading: 0, fly: false, free: false, 
 // swapping in a differently-scaled export needs no other change.
 const RIG = {
   url: 'models/alien_orange.glb',
-  height: 2.3,       // world units, feet to crown — about a mossback's shoulder
+  height: 2.8,       // world units, feet to crown — head and shoulders over a mossback
   idle: 'idle',
   walk: 'walk_fwd',
-  // The game treats +Z as forward. Check a new export before trusting this: measure which
-  // side the eye geometry sits on, because it flips with how the model was rigged. The
-  // rigged re-export of this one faces +Z, so it needs no correction; the earlier static
-  // one did.
+  // The game treats +Z as forward and this model already faces +Z, so it needs no turn.
+  // The only test worth trusting: force heading 0 and the camera to az PI (which is where
+  // the follow cam sits while you walk forward) and look. Back visible means correct.
   yaw: 0,
   lamp: null,        // null = derive from the model's own bounds; [x,y,z] to place it by hand
   blinkL: 'eye_L_close',    // one shape per eye, so it can wink as well as blink
@@ -3063,7 +3070,7 @@ function updatePlayer(dt) {
   if (keys.a || keys.arrowleft) lx -= 1; if (keys.d || keys.arrowright) lx += 1;
   if (keys.w || keys.arrowup) ly -= 1; if (keys.s || keys.arrowdown) ly += 1;
   lx = clamp(lx, -1, 1); ly = clamp(ly, -1, 1);
-  if (rx || ry) { cam.az -= rx * dt * 2.2; cam.pol = clamp(cam.pol - ry * dt * 1.4, .16, 1.5); cam.idle = 0; }
+  if (rx || ry) { cam.az -= rx * dt * 2.2; cam.idle = 0; }   // ry is free for something else now
   const mag = Math.hypot(lx, ly);
   player.moving = lerp(player.moving, mag > .1 ? Math.min(1, mag) : 0, Math.min(1, dt * 9));
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
@@ -3197,7 +3204,7 @@ function frame(now) {
   if (perfEl && (world.clock * 3 | 0) !== perf.tick) {
     perf.tick = world.clock * 3 | 0;
     const inf = renderer.info.render;
-    perfEl.textContent = `${(1000 / perf.ms).toFixed(0)} fps  ${perf.ms.toFixed(1)}ms  ${inf.calls} calls  ${(inf.triangles / 1000 | 0)}k tris`;
+    perfEl.textContent = `${(1000 / perf.ms).toFixed(0)} fps  ${perf.ms.toFixed(1)}ms  ${inf.calls} calls  ${(inf.triangles / 1000 | 0)}k tris  ·  ${BUILD}`;
   }
   const prevDay = Math.floor(world.t / DAY); world.t += dt; const curDay = Math.floor(world.t / DAY);
   if (curDay > prevDay) { world.day++; if (world.day === 2) logMsg('Second sunrise. The island keeps its own time now.'); }
