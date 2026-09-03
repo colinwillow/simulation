@@ -1359,7 +1359,8 @@ function attachRig(parent, cfg, done) {
     inst.rotation.y = cfg.yaw || 0;
     parent.add(inst);
 
-    const idle = pickClip(e.anims, cfg.idle, 'idle'), walk = pickClip(e.anims, cfg.walk, 'walk|run');
+    const idle = pickClip(e.anims, cfg.idle, 'idle', 'walk|run');
+    const walk = pickClip(e.anims, cfg.walk, 'walk|run', 'idle');
     if (walk && e.strides[walk.name] === undefined) e.strides[walk.name] = measureStride(e.root, walk);
     const mixer = new THREE.AnimationMixer(inst);
     const acts = {};
@@ -1380,16 +1381,28 @@ function attachRig(parent, cfg, done) {
   });
 }
 
-// Find a clip without insisting on the exact name a previous export happened to use:
-// exact, then case-insensitive, then anything containing the word. Blender leaves a
-// one-frame 'CINEMA_4D_Main' track in these exports, and a Mixamo one is often called
-// 'mixamo.com' — both are junk, and a real cycle is never that short.
-function pickClip(anims, name, words) {
+// Find a clip without insisting on the exact name a previous export happened to use.
+// Exporters decorate freely — 'Armature|walk_fwd', 'idle.001', 'alien_walk_cycle_v2' —
+// so match on whole words inside the name, not on the whole string.
+//
+// `notWords` is what stops a transition clip winning both roles: 'idle_to_walk' contains
+// both, and a plain substring test hands it back as the idle *and* the walk. Names holding
+// the other state's word are considered last, and only if nothing cleaner exists.
+//
+// Junk tracks are skipped outright: Blender leaves a one-frame 'CINEMA_4D_Main' in these
+// exports and Mixamo adds a 'mixamo.com'. No real cycle runs under a quarter second.
+function pickClip(anims, name, words, notWords) {
   const real = anims.filter(a => a.duration > .25 && !/^(mixamo\.com|CINEMA_4D)/i.test(a.name));
-  const low = (name || '').toLowerCase(), re = new RegExp(words, 'i');
-  return real.find(a => a.name === name)
-      || real.find(a => a.name.toLowerCase() === low)
-      || real.find(a => re.test(a.name))
+  const low = (name || '').toLowerCase();
+  const has = new RegExp(words, 'i'), tok = new RegExp('^(' + words + ')$', 'i');
+  const no = notWords ? new RegExp(notWords, 'i') : null;
+  const parts = a => a.name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const clean = a => !no || !no.test(a.name);
+  return real.find(a => a.name === name)                                  // exact
+      || real.find(a => a.name.toLowerCase() === low)                     // same but for case
+      || real.find(a => clean(a) && parts(a).some(t => tok.test(t)))      // a whole word in the name
+      || real.find(a => clean(a) && has.test(a.name))                     // buried in a longer word
+      || real.find(a => has.test(a.name))                                 // last resort: take the transition
       || null;
 }
 
