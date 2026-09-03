@@ -191,6 +191,26 @@ for anything fast and directional; the stretching is what sells motion.
 
 ---
 
+## Mobile
+
+The page must not scale. iOS ignores `user-scalable=no`, so a pinch or a double tap zooms
+the *page* out from under the canvas and strands the render at a stale size inside a black
+frame. Three things hold it down, and all three are needed:
+
+- `touch-action:none` and `overscroll-behavior:none` on `html, body` — not just the canvas.
+- `preventDefault` on Safari's `gesturestart`/`gesturechange`/`gestureend`, on `dblclick`, and
+  on ctrl+wheel (that one is a trackpad pinch).
+- `syncSize()` — idempotent, and called from the frame loop as well as from `resize`,
+  `orientationchange` and `visualViewport`. Mobile browsers fire resize with transient
+  values mid-gesture and sometimes skip the last one, so events alone cannot be trusted.
+  Whatever they do, the next frame puts the canvas right.
+
+Camera zoom is clamped to `ZMIN`..`ZMAX`. ZMIN was 8, close enough for a pinch to bury the
+camera inside the wanderer; it is 14 now. A pinch step is also ratio-capped, because two
+fingers landing a frame apart could otherwise fling the zoom across its whole range at once.
+
+---
+
 ## Tools
 
 Three Node scripts in `tools/`. All were written because I shipped bugs that these would
@@ -236,6 +256,9 @@ ecology changes don't stall the world.
   with a geometry colour attribute.
 - **Bloom threshold is delicate.** Too low and ordinary daylight blooms, washing the whole
   scene to white. It's at 0.88 so only genuinely emissive things glow.
+- **`world.psys` is not all point sprites.** `Streaks` lives in the same list with a
+  different material, so the old resize handler threw on `uScale` every time the window
+  resized. It never showed up under test because `resize` never fires headless.
 - **Test the harness too.** More than once the tests were wrong, not the code — a collision
   check that didn't know about `minObR`, a canvas stub missing `createImageData`, a missing
   `window` stub. If a result looks insane, suspect the measurement first.
