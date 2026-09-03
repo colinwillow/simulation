@@ -13,7 +13,7 @@ noise-displaced primitives, with a clean seam for swapping in real models later.
 
 Open `index.html` in a browser. There is no build step and no package install.
 Three.js r128 still loads from cdnjs; the two glTF loaders and the Draco decoder live in
-`vendor/` (see **The wanderer's model** below), so keep the page on a server — `file://`
+`vendor/` (see **Models** below), so keep the page on a server — `file://`
 will not fetch the model. `python3 -m http.server` is enough, and GitHub Pages serves it
 as-is.
 
@@ -68,46 +68,60 @@ collision, terrain alignment, leg animation, render smoothing — is handled by 
 primitive assembly, and the creature keeps behaving identically. The wanderer already works
 this way — see below.
 
-### The wanderer's model
+### Models
 
-The player is `models/creature_green.glb`, a rigged Mixamo-skeleton creature with `idle`
-and `walk_fwd` clips and one blend shape per eye. Everything about the swap lives in the
-`RIG` object and `loadRig()`:
+Any GLB goes through one pipeline, in `loadModel` / `attachRig` (defined above the creatures,
+because creatures depend on them). A file is fetched, repaired and measured **once**; every
+user after that gets a clone sharing its geometry and materials.
 
-| Knob | Does |
-|---|---|
-| `RIG.url` | which GLB to load |
-| `RIG.height` | world units, feet to crown — the model is measured and scaled to this |
-| `RIG.idle` / `RIG.walk` | clip names to look for |
-| `RIG.blinkL` / `RIG.blinkR` | blend shape names for each eye |
-| `RIG.lamp` | `null` to float the lantern off the model's own bounds, or `[x,y,z]` |
-| `RIG.rateMin` / `rateMax` | bounds on walk playback speed |
-| `RIG.forceOpaque` | drop the Blender BLEND alpha mode that corrupts the draw order |
-| `RIG.ambientLift` | how much of its own colour a surface emits, so it never goes pure black |
+`MODEL` holds the repairs every Blender export so far has needed — `forceOpaque`,
+`ambientLift`, and the walk playback bounds. They are model-wide, not per-model.
 
-The primitive body is still built first and thrown away when the GLB lands, so the world is
-never headless while several MB is in flight. If the loaders are missing or the fetch fails,
-the placeholder simply stays — the game does not break.
+Three things are measured rather than hardcoded, so a re-export at another scale or tempo
+still drops in:
 
-Three things are measured at load rather than hardcoded, so a re-export at a different scale
-or tempo still drops in:
+- **Size.** `modelBounds()` walks every vertex through `boneTransform` when there is a
+  skeleton. `Box3.setFromObject` is *wrong* on a skinned mesh — it transforms the rest-pose
+  box by the world matrix and ignores the bind matrices, which on these exports (0.01
+  armature scale against 100x inverse binds) is off by about 100x. It falls back to
+  `setFromObject` for a static mesh, which has no `boneTransform` to walk. That same bad
+  box drives frustum culling, hence `frustumCulled = false`.
+- **Stride.** `measureStride()` samples how far a foot travels along z through the walk
+  cycle; two of those per cycle is the ground speed the clip was authored for. Returned in
+  model units and cached per file, so six creatures do not each pay for it.
+- **Lantern position**, outboard of the widest point, so it does not hang through a face.
 
-- **Size.** `skinnedBounds()` walks every vertex through `boneTransform`. `Box3.setFromObject`
-  is *wrong* on a skinned mesh — it transforms the rest-pose box by the world matrix and
-  ignores the bind matrices, which on this export (0.01 armature scale against 100x inverse
-  binds) is off by about 100x. That same wrong box is what three culls against, which is why
-  the meshes are `frustumCulled = false`.
-- **Stride.** `measureStride()` samples how far a foot travels along z through the walk cycle;
-  two of those per cycle is the ground speed the clip was authored for. Playback rate is
-  `speed / that`, so the feet stay planted instead of skating.
-- **Lantern position.** Placed just outboard of the widest point at crown height, so it does
-  not hang through the creature's face.
+`cloneModel()` matters for creatures: a `SkinnedMesh` cannot be plain-cloned, because the
+copy keeps pointing at the original skeleton and every instance moves as one. That is what
+`vendor/three/SkeletonUtils.js` is for.
 
-**The walk cycle does not match the wanderer's speed.** This clip is authored for about
-1.4 units/s; the wanderer runs at 17 (`updatePlayer`, the `17` in `const sp = ...`). Playback
-is clamped at `RIG.rateMax` because past ~2.6x a walk reads as a cartoon, so at full tilt the
-feet skate. Three ways out, none of them done: slow the wanderer down, add a run cycle and
-blend on speed, or accept it.
+### The wanderer
+
+`RIG` configures the player: `url`, `height`, `idle`/`walk` clip names, `blinkL`/`blinkR`
+shape names, `lamp` (`null` derives it from the model's bounds), and `yaw`.
+
+**`yaw` is not optional.** The game treats +Z as forward. `alien_orange.glb` was modelled
+facing the other way — its eyes come out on -Z — so it needs `Math.PI` or it walks
+backwards. Check a new model before assuming: find which side its eye geometry sits on.
+
+**The current player has no animation at all.** `alien_orange.glb` ships with no armature,
+no clips and no blend shapes, so it stands in one pose and slides. Everything degrades
+rather than breaking — no clips means no blending, no shapes means no blinking, and the
+placeholder's procedural bob comes back so it is not completely inert — but it wants an
+`idle` and a `walk_fwd` before it reads as alive.
+
+### Creatures wearing models
+
+`CREATURE_RIGS` maps a class name to a model config. The class keeps its entire brain; only
+what you see changes. The primitive `build()` still runs and stays as the fallback — the
+model hides it on arrival, so a failed fetch leaves a working creature. Each instance gets
+its own mixer, driven by its actual travelled speed, and its `bob` is zeroed because the
+clip carries its own.
+
+Moving `creature_green.glb` to another species is one key in that map. It is on
+`Burrower` (mudlark, six of them) rather than `Grazer` (thirteen to twenty) because each
+instance costs a mixer stepping 174 channels every frame, and that adds up faster than the
+draw calls do.
 
 ### Draco
 
@@ -128,7 +142,7 @@ then sets `depthWrite = false`. The material is also `doubleSided`. With no dept
 closed double-sided body draws its own back faces and innards over its front in whatever
 order the index buffer happens to run — hence the patchwork.
 
-`RIG.forceOpaque` clears it at load (`transparent = false`, `depthWrite = true`). Fix it at
+`MODEL.forceOpaque` clears it at load, for every model (`transparent = false`, `depthWrite = true`). Fix it at
 source instead where you can: in Blender, **Material Properties → Settings → Blend Mode →
 Opaque**. Turn the flag off only for a model that genuinely needs to blend.
 
@@ -149,7 +163,7 @@ floating — which is roughly what a physically-lit dark object does against a v
 backdrop. The island's own creatures never show it because they are painted in much lighter
 flat colours.
 
-`RIG.ambientLift` (0.45) has each surface emit a fraction of its own colour: the textured
+`MODEL.ambientLift` (0.45) has each surface emit a fraction of its own colour: the textured
 body through `emissiveMap`, the flat eye materials through their `color`. So shadowed sides
 bottom out at a dim version of themselves instead of black. Keep it well under the 0.88 bloom
 threshold, or the creature starts to glow at night.
@@ -282,7 +296,7 @@ ecology changes don't stall the world.
 - **`headless.js` cannot see the model.** It stubs WebGL and never defines `GLTFLoader`, so
   the rig load is skipped and the placeholder stands in. Anything about the model itself has
   to be checked in a real browser.
-- **Skinned meshes lie about their size.** See **The wanderer's model** above; it costs you
+- **Skinned meshes lie about their size.** See **Models** above; it costs you
   both a wrong scale and wrong frustum culling.
 
 ---

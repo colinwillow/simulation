@@ -64,6 +64,7 @@
      nothing to break if a CDN path moves. vendor/ is copied verbatim from three r128. -->
 <script src="vendor/three/GLTFLoader.js"></script>
 <script src="vendor/three/DRACOLoader.js"></script>
+<script src="vendor/three/SkeletonUtils.js"></script>
 <script>
 (() => {
 // ============================================================
@@ -1268,6 +1269,157 @@ class Cairn {
 }
 
 // ---------- creatures ----------
+// ---------- models ----------
+// Every GLB out of Blender so far has needed the same two repairs, so they live here
+// rather than on any one model. alphaMode BLEND arrives on fully opaque materials and
+// costs depth writing, which lets a double-sided body draw its own back faces over its
+// front. And a dark surface with no light on it goes to pure black, which reads as the
+// body vanishing; emitting a fraction of its own colour gives it a floor. Keep the lift
+// well under the 0.88 bloom threshold or models start to glow at night.
+const MODEL = { forceOpaque: true, ambientLift: .45, rateMin: .6, rateMax: 2.6 };
+// One cache per URL. The GLB is fetched once, prepared once, measured once; every user
+// after that gets a clone that shares the geometry and materials. Measuring is the
+// expensive part (every vertex through boneTransform), so it must not happen per creature.
+const MODELS = {};
+function loadModel(url, cb) {
+  let e = MODELS[url];
+  if (e) { if (e.ready) cb(e); else if (!e.failed) e.waiting.push(cb); return; }
+  if (!THREE.GLTFLoader) return;                        // no loader: callers keep their placeholder
+  e = MODELS[url] = { ready: false, failed: false, waiting: [cb] };
+  const draco = new THREE.DRACOLoader(); draco.setDecoderPath('vendor/draco/');
+  const loader = new THREE.GLTFLoader(); loader.setDRACOLoader(draco);
+  loader.load(url, gltf => {
+    e.root = gltf.scene; e.anims = gltf.animations;
+    prepModel(e.root);
+    e.box = modelBounds(e.root);                        // unscaled: each user picks its own height
+    e.strides = {};
+    e.ready = true;
+    for (const f of e.waiting) f(e);
+    e.waiting.length = 0;
+  }, undefined, err => { e.failed = true; e.waiting.length = 0; console.warn('model failed, keeping placeholder:', url, err); });
+}
+
+function prepModel(root) {
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    o.castShadow = true; o.receiveShadow = true;
+    // three culls against a bounding sphere computed the same wrong way as the box below,
+    // so a skinned model winks out at screen edges. These are a handful of meshes.
+    o.frustumCulled = false;
+    for (const m of [].concat(o.material)) {
+      if (!m) continue;
+      if (MODEL.forceOpaque && m.transparent) {
+        m.transparent = false; m.depthWrite = true; m.alphaTest = 0; m.needsUpdate = true;
+      }
+      if (MODEL.ambientLift > 0 && m.emissive) {
+        // With a map the lift follows the texture; flat materials follow their colour.
+        if (m.map) { m.emissiveMap = m.map; m.emissive.setScalar(MODEL.ambientLift); }
+        else m.emissive.copy(m.color).multiplyScalar(MODEL.ambientLift);
+        m.needsUpdate = true;
+      }
+    }
+  });
+}
+
+// Box3.setFromObject is wrong on a skinned mesh: it transforms the rest-pose geometry box
+// by the world matrix and ignores the bind matrices, which on these exports (0.01 armature
+// scale against 100x inverse binds) is off by about 100x. Walk the vertices instead — but
+// only when there is a skeleton, because a static mesh has no boneTransform to walk.
+function modelBounds(root) {
+  const box = new THREE.Box3(), v = new THREE.Vector3();
+  root.updateMatrixWorld(true);
+  let skinned = false;
+  root.traverse(o => {
+    if (!o.isSkinnedMesh) return;
+    skinned = true;
+    o.skeleton.update();
+    const n = o.geometry.attributes.position.count;
+    for (let i = 0; i < n; i++) { o.boneTransform(i, v); box.expandByPoint(v.applyMatrix4(o.matrixWorld)); }
+  });
+  return skinned ? box : new THREE.Box3().setFromObject(root);
+}
+
+// A SkinnedMesh cannot be plain-cloned: the copy keeps pointing at the original skeleton
+// and every instance would move as one. SkeletonUtils rebinds it; geometry stays shared.
+function cloneModel(root) {
+  const skinned = THREE.SkeletonUtils && root.getObjectByProperty('isSkinnedMesh', true);
+  return skinned ? THREE.SkeletonUtils.clone(root) : root.clone(true);
+}
+
+// Attach an instance of a model under `parent`, normalised to cfg.height with its feet at
+// y=0, and wire up whatever of idle/walk/blink the file actually has. Calls back with a
+// handle, or never, if the model cannot be loaded — callers keep their placeholder.
+function attachRig(parent, cfg, done) {
+  loadModel(cfg.url, e => {
+    const inst = cloneModel(e.root);
+    const h = e.box.max.y - e.box.min.y;
+    const s = h > 1e-4 ? cfg.height / h : 1;
+    inst.scale.setScalar(s);
+    inst.position.y = -e.box.min.y * s;
+    inst.rotation.y = cfg.yaw || 0;
+    parent.add(inst);
+
+    const find = n => e.anims.find(a => a.name === n);
+    // Blender left a one-frame 'CINEMA_4D_Main' track in these exports; never play it.
+    const idle = find(cfg.idle) || e.anims.find(a => a.duration > .5);
+    const walk = find(cfg.walk);
+    if (walk && e.strides[walk.name] === undefined) e.strides[walk.name] = measureStride(e.root, walk);
+    const mixer = new THREE.AnimationMixer(inst);
+    const acts = {};
+    if (idle) { acts.idle = mixer.clipAction(idle); acts.idle.play(); }
+    if (walk) { acts.walk = mixer.clipAction(walk); acts.walk.play(); acts.walk.setEffectiveWeight(0); }
+
+    const morphs = [];
+    inst.traverse(o => {
+      const d = o.morphTargetDictionary;
+      if (d && o.morphTargetInfluences && d[cfg.blinkL] !== undefined)
+        morphs.push({ inf: o.morphTargetInfluences, l: d[cfg.blinkL], r: d[cfg.blinkR] });
+    });
+    done({
+      root: inst, mixer, acts, box: e.box, scale: s,
+      walkSpeed: walk ? e.strides[walk.name] * s : 0,
+      blink: morphs.length ? { t: 1.5 + Math.random() * 3, p: -1, which: 3, morphs } : null,
+    });
+  });
+}
+
+// Blend idle against walk by how fast the thing is actually travelling, run the walk cycle
+// at the speed it was authored for, and blink. Shared by the wanderer and the creatures.
+function stepRig(r, dt, speed, grounded) {
+  if (!r || !r.mixer) return;
+  const a = r.acts, ref = r.walkSpeed || 3;
+  const w = grounded ? clamp(speed / ref, 0, 1) : 0;
+  if (a.walk) { a.walk.setEffectiveWeight(w); a.walk.timeScale = clamp(speed / ref, MODEL.rateMin, MODEL.rateMax); }
+  if (a.idle) a.idle.setEffectiveWeight(1 - w);
+  r.mixer.update(dt);
+  // After the mixer: the clips do not touch the eye shapes, but writing first would still
+  // be overwritten by a future clip that does.
+  const b = r.blink; if (!b) return;
+  if (b.p >= 0) {
+    b.p += dt / .13;
+    const v = b.p >= 1 ? 0 : Math.sin(b.p * Math.PI);
+    const vl = (b.which & 1) ? v : 0, vr = (b.which & 2) ? v : 0;
+    for (const t of b.morphs) { t.inf[t.l] = vl; t.inf[t.r] = vr; }
+    if (b.p >= 1) { b.p = -1; b.t = 1.8 + Math.random() * 4.5; }
+  } else if ((b.t -= dt) <= 0) {
+    b.p = 0;
+    b.which = Math.random() < .12 ? (Math.random() < .5 ? 1 : 2) : 3;   // an occasional wink
+  }
+}
+
+// A species named here trades its primitive body for a model. The class keeps its whole
+// brain — this only changes what you see. Move the green creature to another species by
+// moving this key; the rest of the wiring is generic.
+const CREATURE_RIGS = {
+  Burrower: {
+    url: 'models/creature_green.glb',
+    height: 1.6,          // a mudlark's own build, roughly
+    idle: 'idle', walk: 'walk_fwd',
+    blinkL: 'eye_L_close', blinkR: 'eye_R_close',
+    yaw: 0,               // this one was modelled facing +Z, which is already forward
+  },
+};
+
 class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
@@ -1276,6 +1428,13 @@ class Creature {
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
     this.g = new THREE.Group(); this.body = new THREE.Group(); this.g.add(this.body); this.build(); scene.add(this.g);
     this.g.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+    const rc = CREATURE_RIGS[this.constructor.name];
+    if (rc) attachRig(this.g, rc, r => {
+      if (!this.alive) { this.g.remove(r.root); return; }   // died while the GLB was in flight
+      this.rig = r;
+      this.body.visible = false;   // primitives stay as the fallback if the model never lands
+      this.bob = 0;                // the clip carries its own bounce now
+    });
   }
   build() {}
   addLeg(x, z, len, mat, r = .17) {
@@ -1458,6 +1617,11 @@ class Creature {
     const kR = Math.min(1, dt * (this.flying ? 20 : 10));
     this.rx = lerp(this.rx, this.pos.x, kR); this.rz = lerp(this.rz, this.pos.z, kR);
     this.pose(dt);
+    if (this.rig) {
+      const px = this.px2 === undefined ? this.rx : this.px2, pz = this.pz2 === undefined ? this.rz : this.pz2;
+      this.px2 = this.rx; this.pz2 = this.rz;
+      stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic);
+    }
   }
   dispose() { scene.remove(this.g); }
 }
@@ -2735,28 +2899,21 @@ const player = { pos: new THREE.Vector3(), heading: 0, fly: false, free: false, 
 // number worth touching — the model is measured at load and normalised to it, so
 // swapping in a differently-scaled export needs no other change.
 const RIG = {
-  url: 'models/creature_green.glb',
+  url: 'models/alien_orange.glb',
   height: 2.3,       // world units, feet to crown — about a mossback's shoulder
   idle: 'idle',
   walk: 'walk_fwd',
+  // Blender exports Z-up and this one was modelled facing away, so its eyes come out on
+  // -Z while the game's heading treats +Z as forward. Without this it walks backwards.
+  yaw: Math.PI,
   lamp: null,        // null = derive from the model's own bounds; [x,y,z] to place it by hand
   blinkL: 'eye_L_close',    // one shape per eye, so it can wink as well as blink
   blinkR: 'eye_R_close',
-  // Playback rate is derived from the clip's own stride (see measureStride), not
-  // guessed. These bound it: past about 2.6x a walk cycle reads as a cartoon.
-  rateMin: .6, rateMax: 2.6,
   // Blender writes alphaMode BLEND whenever the material's blend mode is not Opaque,
   // even with a fully opaque texture. three then turns off depth writing, and a
   // double-sided model renders its own back faces and innards over its front in
   // whatever order they happen to be drawn — it looks like a corrupt texture. Set
   // this false only for a model that genuinely needs to blend.
-  forceOpaque: true,
-  // A dark-albedo creature backlit against bright water reads as a black cut-out — which
-  // is roughly correct, and looks like the body vanished and left the eyes behind. The
-  // island's own creatures dodge it by being painted in much lighter colours. This emits a
-  // fraction of each surface's own colour so nothing ever falls to pure black. Keep it
-  // well under the 0.88 bloom threshold or the creature starts to glow.
-  ambientLift: .45,
 };
 (() => {
   const g = new THREE.Group();
@@ -2785,7 +2942,7 @@ const RIG = {
   g.add(lamp);
   g.traverse(m => { if (m.isMesh) m.castShadow = true; });
   scene.add(g);
-  Object.assign(player, { g, ph, legs, lamp, gl, light, rig: null, mixer: null, acts: null, blink: null, speed: 0 });
+  Object.assign(player, { g, ph, legs, lamp, gl, light, rig: null, rigH: null, mixer: null, acts: null, blink: null, speed: 0 });
   const sp = world.spawn || { x: 0, z: 0 };
   player.pos.set(sp.x, Math.max(height(sp.x, sp.z), SEA), sp.z);
   g.position.copy(player.pos);
@@ -2795,87 +2952,29 @@ const RIG = {
 world.player = player;
 window.isle = { player, world };   // a handle to poke at from the console
 
-// True bounds of a skinned mesh. Box3.setFromObject is wrong here: it transforms the
-// rest-pose geometry box by the world matrix and ignores the bind matrices entirely,
-// which on this export (0.01 armature scale, 100x inverse binds) is off by ~100x.
-function skinnedBounds(root) {
-  const box = new THREE.Box3(), v = new THREE.Vector3();
-  root.updateMatrixWorld(true);
-  root.traverse(o => {
-    if (!o.isSkinnedMesh) return;
-    o.skeleton.update();
-    const n = o.geometry.attributes.position.count;
-    for (let i = 0; i < n; i++) { o.boneTransform(i, v); box.expandByPoint(v.applyMatrix4(o.matrixWorld)); }
-  });
-  return box;
-}
-
 function loadRig(g) {
-  if (!THREE.GLTFLoader) return;                       // no loader, keep the placeholder
-  const draco = new THREE.DRACOLoader(); draco.setDecoderPath('vendor/draco/');
-  const loader = new THREE.GLTFLoader(); loader.setDRACOLoader(draco);
-  loader.load(RIG.url, gltf => {
-    const rig = gltf.scene;
-    // Measure in the bind pose, then normalise: height to RIG.height, feet to y=0.
-    const box = skinnedBounds(rig);
-    const h = box.max.y - box.min.y;
-    const s = h > 1e-4 ? RIG.height / h : 1;
-    rig.scale.setScalar(s);
-    rig.position.y = -box.min.y * s;
-    const morphs = [];
-    rig.traverse(o => {
-      if (!o.isMesh) return;
-      o.castShadow = true; o.receiveShadow = true;
-      for (const m of [].concat(o.material)) {
-        if (!m) continue;
-        if (RIG.forceOpaque && m.transparent) {
-          m.transparent = false; m.depthWrite = true; m.alphaTest = 0; m.needsUpdate = true;
-        }
-        if (RIG.ambientLift > 0 && m.emissive) {
-          // With a map the lift follows the texture; the flat eye materials follow their colour.
-          if (m.map) { m.emissiveMap = m.map; m.emissive.setScalar(RIG.ambientLift); }
-          else m.emissive.copy(m.color).multiplyScalar(RIG.ambientLift);
-          m.needsUpdate = true;
-        }
-      }
-      // The bind-pose box above is why: three's culling sphere is computed the same
-      // wrong way, so the creature would wink out at screen edges. It is one model.
-      o.frustumCulled = false;
-      const d = o.morphTargetDictionary;
-      if (d && o.morphTargetInfluences) morphs.push({ inf: o.morphTargetInfluences, l: d[RIG.blinkL], r: d[RIG.blinkR] });
-    });
+  attachRig(g, RIG, r => {
     g.remove(player.ph); disposeTree(player.ph);
     player.ph = null; player.legs = [];               // no primitive legs left to swing
-    g.add(rig); player.rig = rig;
+    player.rigH = r;                                   // what stepRig runs on
+    player.rig = r.root; player.mixer = r.mixer; player.acts = r.acts;
+    player.blink = r.blink; player.walkSpeed = r.walkSpeed;
     // Float the lantern clear of the silhouette rather than through the creature's face:
     // just outboard of its widest point, at crown height, a little behind.
     player.lamp.position.fromArray(RIG.lamp || [
-      (box.max.x - box.min.x) * s * .62,
+      (r.box.max.x - r.box.min.x) * r.scale * .62,
       RIG.height * 1.02,
-      -(box.max.z - box.min.z) * s * .22,
+      -(r.box.max.z - r.box.min.z) * r.scale * .22,
     ]);
-    const find = n => gltf.animations.find(a => a.name === n);
-    // Blender leaves a one-frame 'CINEMA_4D_Main' track in this export; never play it.
-    const idle = find(RIG.idle) || gltf.animations.find(a => a.duration > .5);
-    const walk = find(RIG.walk);
-    // Measure before the real mixer exists, so nothing fights over the bones.
-    player.walkSpeed = walk ? measureStride(rig, walk, s) : 0;
-    const mixer = new THREE.AnimationMixer(rig);
-    const acts = {};
-    if (idle) { acts.idle = mixer.clipAction(idle); acts.idle.play(); }
-    if (walk) { acts.walk = mixer.clipAction(walk); acts.walk.play(); acts.walk.setEffectiveWeight(0); }
-    player.mixer = mixer; player.acts = acts;
-    player.blink = { t: 1.5 + Math.random() * 3, p: -1, which: 3, morphs };
     logMsg('The wanderer takes shape.');
-  }, undefined, err => console.warn('rig load failed, keeping placeholder:', err));
+  });
 }
 
-// Materials only. The geometry in G is a shared pool — every tree and creature draws
-// from it, so disposing it here would take the island with it.
-// How fast the ground would have to move for this walk cycle to look planted.
-// A foot's travel along z while it is on the ground is one stride; a cycle is two of
-// them. Deriving it means a re-export at a different scale or tempo still looks right.
-function measureStride(rig, clip, scale) {
+// How fast the ground would have to move for this walk cycle to look planted, in the
+// model's own units — callers multiply by their instance scale. A foot's travel along z
+// while it is on the ground is one stride; a cycle is two of them. Deriving it means a
+// re-export at a different scale or tempo still looks right.
+function measureStride(rig, clip) {
   const feet = [];
   rig.traverse(o => { if (o.isBone && /foot|ankle/i.test(o.name) && !/toe/i.test(o.name)) feet.push(o); });
   if (!feet.length || !clip.duration) return 0;
@@ -2895,7 +2994,7 @@ function measureStride(rig, clip, scale) {
   }
   mx.stopAllAction();
   let sum = 0; for (let k = 0; k < feet.length; k++) sum += hi[k] - lo[k];
-  const stride = sum / feet.length * scale;      // one step, in world units
+  const stride = sum / feet.length;              // one step, in model units
   return 2 * stride / clip.duration;             // two steps to the cycle
 }
 
@@ -2984,8 +3083,10 @@ function updatePlayer(dt) {
   if (!player.fly && player.swim < .5) { alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.heading); }
   else g.rotation.set(0, player.heading, 0);
   const bobT = world.clock * 9;
-  // The placeholder needs a fake bob; the rig has one baked into its clips.
-  const bob = player.rig ? 0 : Math.abs(Math.sin(bobT)) * .12 * player.moving;
+  // A walk clip carries its own bounce. Without one — the placeholder, or a model exported
+  // with no animation at all — the bob is the only thing keeping it from gliding.
+  const animated = player.acts && player.acts.walk;
+  const bob = animated ? 0 : Math.abs(Math.sin(bobT)) * .12 * player.moving;
   g.position.y += bob + (player.fly ? Math.sin(world.clock * 1.6) * .25 : 0);
   player.speed = dt > 0 ? Math.hypot(player.pos.x - _prevP.x, player.pos.z - _prevP.z) / dt : 0;
   updateRig(dt);
@@ -3004,33 +3105,9 @@ function updatePlayer(dt) {
 // Blend idle against walk by how fast the creature is actually travelling, and run the
 // walk cycle at the speed it was authored for so the feet do not skate.
 function updateRig(dt) {
-  const m = player.mixer; if (!m) return;
-  const a = player.acts;
-  const grounded = !player.fly && player.swim < .5 && player.grounded;
-  // Blend in over the first stride's worth of speed, so a nudge does not snap to a full walk.
-  const ref = player.walkSpeed || 3;
-  const w = grounded ? clamp(player.speed / ref, 0, 1) : 0;
-  if (a.walk) {
-    a.walk.setEffectiveWeight(w);
-    a.walk.timeScale = clamp(player.speed / ref, RIG.rateMin, RIG.rateMax);
-  }
-  if (a.idle) a.idle.setEffectiveWeight(1 - w);
-  m.update(dt);
-
-  // Blink after the mixer: the clips do not touch the eye shapes, but writing the
-  // influences first would still be overwritten by a future clip that does.
-  const b = player.blink; if (!b) return;
-  if (b.p >= 0) {
-    b.p += dt / .13;
-    const v = b.p >= 1 ? 0 : Math.sin(b.p * Math.PI);
-    const vl = (b.which & 1) ? v : 0, vr = (b.which & 2) ? v : 0;
-    for (const t of b.morphs) { t.inf[t.l] = vl; t.inf[t.r] = vr; }
-    if (b.p >= 1) { b.p = -1; b.t = 1.8 + Math.random() * 4.5; }
-  } else if ((b.t -= dt) <= 0) {
-    b.p = 0;
-    b.which = Math.random() < .12 ? (Math.random() < .5 ? 1 : 2) : 3;   // an occasional wink
-  }
+  stepRig(player.rigH, dt, player.speed, !player.fly && player.swim < .5 && player.grounded);
 }
+
 const ray = new THREE.Raycaster();
 function tap(cx, cy) {
   ray.setFromCamera({ x: cx / innerWidth * 2 - 1, y: -(cy / innerHeight) * 2 + 1 }, camera);
