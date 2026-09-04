@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b16';
+const BUILD = 'b17';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -3316,6 +3316,13 @@ addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive
 // MAX is the top speed; ACC is how fast velocity closes on it and DRAG how fast it bleeds
 // off with no input. Air numbers are deliberately tiny: once he is off the ground the jump
 // is committed and he keeps whatever he took off with.
+// The player never asked the obstacle field anything, so every trunk, boulder and cairn was
+// scenery you walked through. minOb is the size floor: a footprint smaller than this is
+// ignored, which leaves blooms (.75) walk-through while stumps (.95), boulders (1.1), trees
+// (1.25 / 2.1), mounds, the campfire, cairns and the great tree all stop you. Grass and moss
+// register no footprint at all, so they were never in question. stepOver lets a jump clear
+// the low things — a mound or a stump — but never a trunk.
+const OB_PLAYER = { minOb: .9, stepOver: 1.5, stepHeight: 1.8 };
 const MOVE = {
   max: 17, acc: 62, drag: 46,          // ground
   airAcc: 11, airDrag: 1.2,            // in the air
@@ -3516,6 +3523,15 @@ function updatePlayer(dt) {
     player.pos.z = clamp(player.pos.z + (player.vz + player.pushZ) * dt, -W * .97, W * .97);
     player.pushX = lerp(player.pushX, 0, Math.min(1, dt * 9)); player.pushZ = lerp(player.pushZ, 0, Math.min(1, dt * 9));
     player.wmag = 0;                      // consumed; refilled next frame if the stick is held
+    {
+      const rp = resolvePlayer(player.pos.x, player.pos.z, player.pos.y - player.gy);
+      player.pos.x = rp.x; player.pos.z = rp.z;
+      if (rp.nx || rp.nz) {   // stop pushing into what just stopped you, but keep sliding along it
+        const l = Math.hypot(rp.nx, rp.nz) || 1, ux = rp.nx / l, uz = rp.nz / l;
+        const into = player.vx * ux + player.vz * uz;
+        if (into < 0) { player.vx -= ux * into; player.vz -= uz * into; }
+      }
+    }
     const h = height(player.pos.x, player.pos.z);
     // Deep water under you is not the same as being in it. Keyed off the terrain alone, a
     // jump off a cliff went into the swim — slow, flat — while still ten units in the air.
@@ -3598,6 +3614,26 @@ const fairyTrail = new PSys({
     v.set(rnd(-.25, .25), rnd(-.15, .35), rnd(-.25, .25)).addScaledVector(fairy.vel, -.09);
   },
 });
+// Same hard push-out the creatures use: correct only the radial overlap, so motion along
+// the surface survives and you slide round a trunk instead of sticking to it.
+function resolvePlayer(x, z, airborne) {
+  let nx = 0, nz = 0;
+  for (let pass = 0; pass < 3; pass++) {
+    obNear(x, z, player.rad + 6, o => {
+      if (o.r < OB_PLAYER.minOb) return;
+      if (o.r < OB_PLAYER.stepOver && airborne > OB_PLAYER.stepHeight) return;
+      const r = o.r + player.rad;
+      let dx = x - o.x, dz = z - o.z, d = Math.hypot(dx, dz);
+      if (d < r) {
+        if (d < 1e-3) { dx = 1; dz = 0; d = 1; }
+        x = o.x + dx / d * r; z = o.z + dz / d * r;
+        nx += dx / d; nz += dz / d;
+      }
+    });
+  }
+  return { x, z, nx, nz };
+}
+
 function updateFairy(dt) {
   const p = player, f = fairy;
   f.t += dt;

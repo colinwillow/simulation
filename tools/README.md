@@ -339,6 +339,18 @@ Solid things register a footprint circle in a coarse spatial hash (`obAdd`/`obRe
 Creatures use it three ways: rejecting waypoints, steering around things ahead
 (with committed side-choice so they don't oscillate), and hard push-out if they end up inside.
 
+The player queries it too, through `resolvePlayer`, which is the same hard push-out — it
+corrects only the radial overlap, so motion along the surface survives and you slide round
+a trunk rather than sticking to it, and the inward part of the velocity is cancelled so you
+stop pushing into what just stopped you. `OB_PLAYER.minOb` (.9) is the size floor: below it
+a footprint is ignored. That leaves blooms (.75) walk-through while stumps (.95), boulders
+(1.1), trees (1.25 / 2.1), mounds (1.4), the campfire (2.1), cairns (3.5) and the great tree
+(6.5) all stop you. Grass and moss register no footprint at all, so they were never in
+question. `stepOver`/`stepHeight` let a jump clear the low things and never a trunk.
+
+Measured by charging each one: big tree stops at 3.3 from centre against a predicted 3.3,
+sapling 2.45 against 2.5, campfire 3.3, great tree 7.7, and a bloom is reached at 0.1.
+
 Escape hatches exist because a wedged creature stalls the ecology: a creature that can't be
 pushed clear retreats toward its last known good position, and one that stays pinned for
 2.5s briefly "ghosts" through. `minObR` lets big creatures ignore small footprints —
