@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b14';
+const BUILD = 'b15';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1835,9 +1835,17 @@ class Creature {
     const pl = world.player;
     if (pl && !this.flying && !pl.free) {
       const dx = this.pos.x - pl.pos.x, dz = this.pos.z - pl.pos.z, d2 = dx * dx + dz * dz, r = this.rad + 1.7;
-      if (d2 < r * r && d2 > 1e-6) { const d = Math.sqrt(d2);
-        this.pos.x += dx / d * (r - d) * .3; this.pos.z += dz / d * (r - d) * .3;
-        this.steer.x += dx / d * 1.7; this.steer.z += dz / d * 1.7; }
+      if (d2 < r * r && d2 > 1e-6) {
+        const d = Math.sqrt(d2), over = r - d;
+        // Share the overlap by footprint area. A hopper is brushed aside; a grovewalker is
+        // three times the player's radius and shoves back nearly all of it. Before this the
+        // push was a flat .3 whoever it was, so the biggest creature on the island had no
+        // more weight than the smallest.
+        const mine = this.rad * this.rad, yours = pl.rad * pl.rad, k = yours / (mine + yours);
+        this.pos.x += dx / d * over * k * .6; this.pos.z += dz / d * over * k * .6;
+        pl.pushX -= dx / d * over * (1 - k) * 5; pl.pushZ -= dz / d * over * (1 - k) * 5;
+        this.steer.x += dx / d * 1.7 * k; this.steer.z += dz / d * 1.7 * k;
+      }
     }
     for (const o of world.creatures) {
       if (o === this || !o.alive || o.flying !== this.flying || o.aquatic !== this.aquatic) continue;
@@ -3295,7 +3303,15 @@ addEventListener('dblclick', e => e.preventDefault(), { passive: false });
 addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });   // trackpad pinch
 
 // ---------- the wanderer: a body to move through the world with ----------
-const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1, leadT: 0, landT: 0, airT: 0 };
+// MAX is the top speed; ACC is how fast velocity closes on it and DRAG how fast it bleeds
+// off with no input. Air numbers are deliberately tiny: once he is off the ground the jump
+// is committed and he keeps whatever he took off with.
+const MOVE = {
+  max: 17, acc: 62, drag: 46,          // ground
+  airAcc: 11, airDrag: 1.2,            // in the air
+  swimMax: 9, swimAcc: 20, swimDrag: 13,
+};
+const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1, leadT: 0, landT: 0, airT: 0, vx: 0, vz: 0, pushX: 0, pushZ: 0 };
 // The rig: a real model stands in for the placeholder. RIG.height is the only
 // number worth touching — the model is measured at load and normalised to it, so
 // swapping in a differently-scaled export needs no other change.
@@ -3344,11 +3360,12 @@ const RIG = {
   g.add(ph);
   // The lantern is the wanderer's, not the body's — it survives the swap, because
   // the night lighting and the mote attractor both key off it.
+  // The lantern is its own creature now, so it lives in the scene rather than on the body.
   const lamp = new THREE.Group(); lamp.position.set(.66, 2.75, .12);
-  lamp.add(mesh(G.sph, M.lantern, .23, .3, .23, 0, 0, 0));
+  lamp.add(mesh(G.sph, M.lantern, .19, .24, .19, 0, 0, 0));
   const gl = glow('#ffc276', 7, .75); lamp.add(gl);
   const light = new THREE.PointLight(0xffb468, 2.2, 34, 2); light.position.set(0, .15, 0); lamp.add(light);
-  g.add(lamp);
+  scene.add(lamp);
   g.traverse(m => { if (m.isMesh) m.castShadow = true; });
   scene.add(g);
   Object.assign(player, { g, ph, legs, lamp, gl, light, rig: null, rigH: null, mixer: null, acts: null, blink: null, speed: 0 });
@@ -3370,7 +3387,7 @@ function loadRig(g) {
     player.blink = r.blink; player.walkSpeed = r.walkSpeed;
     // Float the lantern clear of the silhouette rather than through the creature's face:
     // just outboard of its widest point, at crown height, a little behind.
-    player.lamp.position.fromArray(RIG.lamp || [
+    fairy.off.fromArray(RIG.lamp || [
       (r.box.max.x - r.box.min.x) * r.scale * .62,
       RIG.height * 1.02,
       -(r.box.max.z - r.box.min.z) * r.scale * .22,
@@ -3439,7 +3456,7 @@ addEventListener('keydown', e => { keys[e.key.toLowerCase()] = 1; if (e.key === 
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
 const flyB = document.getElementById('flyB'), freeB = document.getElementById('freeB');
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
-freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; });
+freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
 const _prevP = new THREE.Vector3();
 function updatePlayer(dt) {
   _prevP.copy(player.pos);
@@ -3470,13 +3487,25 @@ function updatePlayer(dt) {
     } else {
       let dx = sa * ly + ca * lx, dz = ca * ly - sa * lx;
       const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
-      const sp = (player.swim > .5 ? 9 : 17) * dt * Math.min(1, mag);
-      player.pos.x = clamp(player.pos.x + dx * sp, -W * .97, W * .97);
-      player.pos.z = clamp(player.pos.z + dz * sp, -W * .97, W * .97);
+      player.wx = dx; player.wz = dz; player.wmag = Math.min(1, mag);
       player.heading = Math.atan2(dx, dz);
     }
   }
   if (!player.fly) {
+    // Steer velocity toward what the stick asks for, at acc while pushing and drag while
+    // letting go. Turning is the same move, so a hard reversal costs the same as a stop.
+    const inW = player.swim > .5, onG = player.grounded && !inW;
+    const max = inW ? MOVE.swimMax : MOVE.max;
+    const want = player.wmag > .1 ? max * player.wmag : 0;
+    const tvx = want ? player.wx * want : 0, tvz = want ? player.wz * want : 0;
+    const rate = want ? (inW ? MOVE.swimAcc : onG ? MOVE.acc : MOVE.airAcc)
+                      : (inW ? MOVE.swimDrag : onG ? MOVE.drag : MOVE.airDrag);
+    const ax = tvx - player.vx, az = tvz - player.vz, al = Math.hypot(ax, az);
+    if (al > 1e-4) { const step = Math.min(al, rate * dt); player.vx += ax / al * step; player.vz += az / al * step; }
+    player.pos.x = clamp(player.pos.x + (player.vx + player.pushX) * dt, -W * .97, W * .97);
+    player.pos.z = clamp(player.pos.z + (player.vz + player.pushZ) * dt, -W * .97, W * .97);
+    player.pushX = lerp(player.pushX, 0, Math.min(1, dt * 9)); player.pushZ = lerp(player.pushZ, 0, Math.min(1, dt * 9));
+    player.wmag = 0;                      // consumed; refilled next frame if the stick is held
     const h = height(player.pos.x, player.pos.z);
     // Deep water under you is not the same as being in it. Keyed off the terrain alone, a
     // jump off a cliff went into the swim — slow, flat — while still ten units in the air.
@@ -3491,7 +3520,11 @@ function updatePlayer(dt) {
     const target = lerp(Math.max(h, wy), Math.max(h, wy - depth), player.swim);
     player.gy = lerp(player.gy, target, Math.min(1, dt * (player.swim > .5 ? 6 : 14)));   // ground snaps; water bobs
     const canLead = RIG.jumpLead > 0 && player.rigH && player.rigH.acts.jumpStart;
-    if (player.jump && player.grounded && player.swim < .5 && player.leadT <= 0) {
+    // In the water there is nothing to crouch against, so a surface leap goes straight up
+    // with less push — enough to break out and land back in, or onto a bank.
+    if (player.jump && player.swim > .5 && player.pos.y > waveY(player.pos.x, player.pos.z) - 1.6) {
+      player.vy = 15; player.grounded = 0; player.hang = 1;
+    } else if (player.jump && player.grounded && player.swim < .5 && player.leadT <= 0) {
       if (canLead) player.leadT = RIG.jumpLead;             // crouch first, launch when it lands
       else { player.vy = 25; player.grounded = 0; player.hang = 1; }
     }
@@ -3502,9 +3535,10 @@ function updatePlayer(dt) {
     player.pos.y += player.vy * dt;
     if (player.pos.y <= player.gy) { player.pos.y = player.gy; player.vy = 0; player.grounded = 1; }
     if (player.grounded && !wasGrounded && player.airT > .12 && player.swim < .5) player.landT = .55;   // touched down after a real jump
+    if (player.landT > 0 && player.speed > 7) player.landT = 0;   // running landings roll into the run instead
     player.airT = player.grounded ? 0 : player.airT + dt;
     if (player.landT > 0) player.landT -= dt;
-  } else { player.jump = 0; player.vy = 0; player.grounded = 0; player.leadT = 0; player.landT = 0; }
+  } else { player.jump = 0; player.vy = 0; player.grounded = 0; player.leadT = 0; player.landT = 0; player.vx = player.vz = 0; player.wmag = 0; }
   const g = player.g;
   g.position.copy(player.pos);
   // heading is where the stick points; faceH is where the body has got round to yet
@@ -3539,11 +3573,58 @@ function updatePlayer(dt) {
 
 // Blend idle against walk by how fast the creature is actually travelling, and run the
 // walk cycle at the speed it was authored for so the feet do not skate.
+// A light that tracked the body exactly read as a prop bolted to his shoulder. This one is
+// a creature: it is pulled toward a spot beside him by a spring, so it lags when he sets
+// off and overshoots when he stops; it drifts on its own noise; and now and then it darts.
+const fairy = {
+  pos: new THREE.Vector3(), vel: new THREE.Vector3(), off: new THREE.Vector3(.8, 2.4, -.3),
+  t: rnd(100), dart: rnd(2, 5), want: new THREE.Vector3(),
+};
+const fairyTrail = new PSys({
+  n: MOBILE ? 90 : 170, life: 1.5, rate: 26, gy: .18, drag: 1.6, additive: true, a0: .85,
+  c0: '#ffe6a8', c1: '#ffb45a', s0: .5, s1: .02,
+  spawn: (p, v) => {
+    p.copy(fairy.pos).add(new THREE.Vector3(rnd(-.13, .13), rnd(-.13, .13), rnd(-.13, .13)));
+    v.set(rnd(-.25, .25), rnd(-.15, .35), rnd(-.25, .25)).addScaledVector(fairy.vel, -.09);
+  },
+});
+function updateFairy(dt) {
+  const p = player, f = fairy;
+  f.t += dt;
+  // the anchor: beside and above him, on his left or right as he turns
+  const c = Math.cos(p.faceH), sn = Math.sin(p.faceH);
+  f.want.set(
+    p.pos.x + f.off.x * c + f.off.z * sn + Math.sin(f.t * .7) * 1.1 + Math.sin(f.t * 1.63) * .35,
+    p.pos.y + f.off.y + Math.sin(f.t * 1.9) * .38 + Math.sin(f.t * .53) * .5,
+    p.pos.z - f.off.x * sn + f.off.z * c + Math.cos(f.t * .61) * 1.1 + Math.cos(f.t * 1.31) * .3);
+  // a soft spring with heavy damping: it never quite catches up, and drifts past on a stop
+  // stiffer than it looks: the damping below is what makes it lag, not a weak spring
+  const k = p.free ? 26 : 11;
+  f.vel.x += (f.want.x - f.pos.x) * k * dt;
+  f.vel.y += (f.want.y - f.pos.y) * k * dt;
+  f.vel.z += (f.want.z - f.pos.z) * k * dt;
+  f.vel.multiplyScalar(Math.max(0, 1 - 4.2 * dt));
+  if ((f.dart -= dt) <= 0) {   // the sudden little flit that makes it read as alive
+    f.dart = rnd(1.6, 4.5);
+    f.vel.x += rnd(-2.6, 2.6); f.vel.y += rnd(-1, 2.6); f.vel.z += rnd(-2.6, 2.6);
+  }
+  f.pos.addScaledVector(f.vel, dt);
+  // a leash, so a dart during a sprint can never strand it half a field away
+  const away = f.pos.distanceTo(f.want);
+  if (away > 5.5) { f.pos.lerp(f.want, 1 - 5.5 / away); f.vel.multiplyScalar(.5); }
+  const fl = groundY(f.pos.x, f.pos.z) + .5; if (f.pos.y < fl) { f.pos.y = fl; f.vel.y = Math.abs(f.vel.y) * .4; }
+  p.lamp.position.copy(f.pos);
+  p.lamp.visible = !p.free;
+  fairyTrail.rate = p.free ? 0 : 18 + Math.min(34, f.vel.length() * 3.4);
+}
+
 function updateRig(dt) {
   const p = player;
   stepRig(p.rigH, dt, p.speed, !p.fly && p.swim < .5 && p.grounded, {
     swim: p.swim, air: !p.fly && !p.grounded && p.leadT <= 0 && p.swim < .5,
-    start: p.leadT > 0, landK: p.landT > 0 ? smooth(0, .12, p.landT) : 0,
+    // The landing clip is planted, so at speed it slides. Fade it out as the ground speed
+    // rises and let the run carry the landing instead. A proper roll clip would be better.
+    start: p.leadT > 0, landK: p.landT > 0 ? smooth(0, .12, p.landT) * clamp(1 - p.speed / 7, 0, 1) : 0,
   });
 }
 
@@ -3618,6 +3699,7 @@ function frame(now) {
   if (curDay > prevDay) { world.day++; if (world.day === 2) logMsg('Second sunrise. The island keeps its own time now.'); }
 
   updatePlayer(dt);
+  updateFairy(dt);
   if (!player.free) cam.tgt.lerp(_camWant.set(player.pos.x, player.pos.y + 3.4, player.pos.z), Math.min(1, dt * 7));
   cam.idle += dt; if (cam.idle > 6 && player.moving < .05) cam.az += dt * .03;
   solveCam(dt);

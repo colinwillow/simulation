@@ -146,6 +146,38 @@ The alien's rigged export carries `idle` and `walk_fwd` on a Mixamo skeleton and
 `yaw: 0`. An earlier static export of the same model had no armature at all and faced the
 other way; `tools/model.js` tells the two apart in one line.
 
+### Movement
+
+`MOVE` holds the whole feel. The wanderer carries a velocity now: `acc` closes it on what
+the stick asks for, `drag` bleeds it off when the stick is let go, and the air numbers are
+deliberately tiny — once he is off the ground the jump is committed and he keeps whatever
+he took off with. Measured: 0 to 17 u/s in about six frames, back to 0 in seven, and a
+jump taken at full speed lands at full speed. Before this, position was set directly from
+the stick, so movement was instantly on or off and a jump had no arc to it.
+
+The landing clip is planted, so it slid whenever he touched down moving. `landK` now fades
+with ground speed and the run carries the landing instead; over 7 u/s it is skipped
+outright. A real roll clip would be better than either.
+
+A jump while swimming leaps straight up out of the water — there is nothing to crouch
+against, so it skips the initiate and uses a smaller impulse.
+
+**Weight.** `separate()` shares the overlap by footprint area rather than pushing every
+creature with the same flat factor, and the player is pushed back by the remainder. A
+grovewalker (radius 2.6 against the player's 1.2) now shoves back nearly all of it and
+barely moves; a hopper is brushed aside. Measured push-back: grovewalker 8.1, mossback 7.0,
+hopper 5.1, with the creatures moving 1.4, 5.5 and 18.6 units respectively.
+
+### The fairy
+
+The lantern is a creature, not a prop bolted to his shoulder. It lives in the scene rather
+than on the body, and `updateFairy` pulls it toward a spot beside him with a soft spring
+under heavy damping, so it lags when he sets off and drifts past when he stops. On top of
+that it wanders on its own noise, darts now and then, and trails sparks from a `PSys` whose
+rate rises with its own speed. A leash keeps it within 5.5 units of its anchor, because a
+dart during a sprint could otherwise strand it half a field away. It trails 2.7–4 units
+behind at rest and 4–7 while running.
+
 ### The camera
 
 Pitch is fixed at `CAM_POL`. Looking up and down was never worth a whole stick axis, so
