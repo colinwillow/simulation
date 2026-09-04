@@ -289,6 +289,20 @@ Filling it in as you explore is the reason the terrain and the markers are separ
 a third canvas painted with a soft circle at the player each frame, composited over the
 terrain image with `destination-in`, is the whole of it. Nothing else has to change.
 
+The big map is looked at through `MAP.view` — a centre in world coordinates and a span in
+world units — so pinching and dragging move the view and the marker pass follows for free.
+**Zooming does not re-render the terrain, and should not.** The mesh is one vertex every two
+units, so sampling `height()` finer would draw ridges the ground does not have; magnifying
+the image is exactly the interpolation the mesh already does between its own vertices, so it
+is the faithful thing. Measured, the finer render is not even cheap: `height()` costs about
+two microseconds, so a 256-square window is 131 ms. Detail instead comes from `MAP.lod`
+showing more of the world — every grown lantern tree past 1.9x, blooms past 3x.
+
+A tap on open ground drops a waypoint and a tap back on it takes it away; the tolerance is
+26 screen pixels converted into world units, so it stays a thumb's width at any zoom. In the
+world it is a beam you can see over a ridge, a bobbing pulse and a ring at its foot, and a
+line of motes running from the player to it — the beam says where, the motes say which way.
+
 ### The camera
 
 Pitch is fixed at `CAM_POL`. Looking up and down was never worth a whole stick axis, so

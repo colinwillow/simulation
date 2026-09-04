@@ -36,11 +36,16 @@
   @keyframes fade{0%{opacity:0;transform:translateY(4px)}6%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
   #hint{position:fixed;right:16px;bottom:14px;font-size:12px;opacity:.5;pointer-events:none;text-align:right;line-height:1.5}
   #mapv{position:fixed;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;justify-content:center;
-    background:rgba(6,10,18,.82);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+    background:radial-gradient(ellipse at 50% 46%,rgba(6,10,18,.34),rgba(4,8,14,.72) 78%);
+    -webkit-backdrop-filter:blur(2px) saturate(.75);backdrop-filter:blur(2px) saturate(.75)}
   #mapv h2{margin:0 0 10px;font-size:19px;font-weight:normal;letter-spacing:.06em;opacity:.95}
   #mapv h2 span{font-style:italic;font-size:13px;opacity:.6;letter-spacing:.02em;margin-left:8px}
-  #mapwrap{position:relative;width:min(92vw,62vh);aspect-ratio:1;border-radius:3px;overflow:hidden;
-    border:1px solid rgba(240,228,200,.28);box-shadow:0 10px 44px rgba(0,0,0,.6),inset 0 0 60px rgba(0,0,0,.45)}
+  #mapwrap{position:relative;width:min(92vw,62vh);aspect-ratio:1;border-radius:3px;overflow:hidden;touch-action:none;
+    border:1px solid rgba(240,228,200,.3);box-shadow:0 10px 44px rgba(0,0,0,.62),inset 0 0 60px rgba(0,0,0,.4)}
+  #mapclose{position:fixed;right:calc(15px + env(safe-area-inset-right));top:calc(13px + env(safe-area-inset-top));z-index:7}
+  #mapzoom{position:absolute;left:7px;bottom:7px;font-size:10px;letter-spacing:.08em;opacity:.82;
+    font-family:ui-monospace,Menlo,Consolas,monospace;pointer-events:none;
+    background:rgba(6,10,18,.55);border-radius:9px;padding:3px 8px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
   #mapc{display:block;width:100%;height:100%}
   #maplg{margin-top:12px;font-size:11px;line-height:1.9;opacity:.8;display:flex;flex-wrap:wrap;gap:4px 14px;
     justify-content:center;max-width:min(92vw,62vh);font-family:ui-monospace,Menlo,Consolas,monospace}
@@ -115,8 +120,9 @@
   <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
   <div id="btns" hidden><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
 </div>
-<div id="mapv" hidden><h2>Lantern Isle<span id="mapera"></span></h2><div id="mapwrap"><canvas id="mapc"></canvas></div>
-<div id="maplg"></div><div id="mapfoot">tap anywhere to close</div></div>
+<div id="mapv" hidden><h2>Lantern Isle<span id="mapera"></span></h2>
+<div id="mapwrap"><canvas id="mapc"></canvas><div id="mapzoom"></div></div><button id="mapclose" class="tog icon">close</button>
+<div id="maplg"></div><div id="mapfoot">pinch to zoom &middot; drag to pan &middot; tap to set a waypoint</div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <!-- Loaders are vendored, not CDN: the model is Draco-compressed, so GLTFLoader needs a
      DRACOLoader and its decoder. Keeping them in-repo means no extra origin to trust and
@@ -148,7 +154,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b31';
+const BUILD = 'b32';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -4147,7 +4153,49 @@ const flyB = document.getElementById('flyB'), freeB = document.getElementById('f
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
 const mapB = null;   // the minimap is the way in now
 document.getElementById('mini').addEventListener('click', e => { e.stopPropagation(); toggleMap(true); });
-document.getElementById('mapv').addEventListener('pointerdown', () => toggleMap(false));
+document.getElementById('mapclose').addEventListener('click', e => { e.stopPropagation(); toggleMap(false); });
+// The map takes its own pointers: two of them pinch, one drags, and a short one that went
+// nowhere is a tap. A tap on open ground drops a waypoint, a tap back on the waypoint takes
+// it away. Anything outside the map closes the panel.
+{
+  const wrap = document.getElementById('mapwrap'), pts = new Map();
+  let pinch0 = 1, span0 = 0, moved = 0, t0 = 0, lx = 0, ly = 0;
+  const worldAt = (cx, cy) => { const r = wrap.getBoundingClientRect();
+    return { x: MAP.view.cx + ((cx - r.left) / r.width - .5) * MAP.view.span,
+             z: MAP.view.cz + ((cy - r.top) / r.height - .5) * MAP.view.span, w: r.width }; };
+  wrap.addEventListener('pointerdown', e => {
+    e.stopPropagation(); e.preventDefault();
+    wrap.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) { t0 = performance.now(); moved = 0; lx = e.clientX; ly = e.clientY; }
+    else if (pts.size === 2) { const a = [...pts.values()]; pinch0 = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1; span0 = MAP.view.span; }
+  });
+  wrap.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const r = wrap.getBoundingClientRect();
+    if (pts.size >= 2) {
+      const a = [...pts.values()], d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1;
+      MAP.view.span = span0 * (pinch0 / d); moved = 99;
+    } else {
+      const dx = e.clientX - lx, dy = e.clientY - ly; lx = e.clientX; ly = e.clientY;
+      moved += Math.hypot(dx, dy);
+      MAP.view.cx -= dx / r.width * MAP.view.span; MAP.view.cz -= dy / r.height * MAP.view.span;
+    }
+    clampView();
+  });
+  const end = e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (pts.size === 0 && moved < 9 && performance.now() - t0 < 340) {
+      const w = worldAt(e.clientX, e.clientY), tol = 26 / w.w * MAP.view.span;
+      if (MAP.way && Math.hypot(MAP.way.x - w.x, MAP.way.z - w.z) < tol) setWaypoint(null); else setWaypoint(w);
+      clampView();
+    }
+  };
+  wrap.addEventListener('pointerup', end); wrap.addEventListener('pointercancel', end); wrap.addEventListener('lostpointercapture', end);
+  wrap.addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); MAP.view.span *= 1 + e.deltaY * .0016; clampView(); }, { passive: false });
+  document.getElementById('mapv').addEventListener('pointerdown', e => { if (!wrap.contains(e.target)) toggleMap(false); });
+}
 // Three clusters, each folded away by default or on a tap: the island's numbers behind its
 // own title, the debug controls behind one chip, and the notes behind theirs. What is left
 // on screen is the map, whatever the ship offers you, and the sticks.
@@ -4458,6 +4506,71 @@ if (window.visualViewport) {
 
 // ---------- HUD ----------
 const statsEl = document.getElementById('stats'), eraEl = document.getElementById('era'), perfEl = document.getElementById('perf');
+// ---------- waypoints ----------
+// A mark you drop on the map and then walk to. It has to be findable from the ground, so it
+// is a beam you can see over a ridge, a bobbing pulse at its foot, a ring on the grass, and
+// a line of motes running from you to it — the beam says where, the motes say which way.
+const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 44 };
+function buildWaypoint() {
+  const g = new THREE.Group(); g.visible = false; scene.add(g); WAY.g = g;
+  const uni = { uT: { value: 0 }, uC: { value: col('#7fd8ff') } }; WAY.uni = uni;
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(.7, 1.5, 34, 14, 1, true),
+    new THREE.ShaderMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, uniforms: uni,
+      vertexShader: 'varying float vY; void main(){ vY = uv.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: 'uniform float uT; uniform vec3 uC; varying float vY;\n' +
+        'void main(){ float fade = pow(1.0 - vY, 1.7);\n' +
+        '  float run = 0.55 + 0.45 * sin(vY * 9.0 - uT * 2.6);\n' +
+        '  gl_FragColor = vec4(uC, fade * run * 0.72); }' }));
+  beam.position.y = 17; beam.frustumCulled = false; g.add(beam);
+  const mark = new THREE.Mesh(new THREE.OctahedronGeometry(.62, 0),
+    new THREE.MeshBasicMaterial({ color: col('#bff0ff'), transparent: true, opacity: .95 }));
+  mark.position.y = 2.4; g.add(mark); WAY.mark = mark;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(2.2, .09, 6, 32),
+    new THREE.MeshBasicMaterial({ color: col('#7fd8ff'), transparent: true, opacity: .6 }));
+  ring.rotation.x = Math.PI / 2; ring.position.y = .25; g.add(ring); WAY.ring = ring;
+  g.add(WAY.glow = glow('#8fe0ff', 7, .42));  WAY.glow.position.y = 2.4;
+  const gm = new THREE.BufferGeometry();
+  gm.setAttribute('position', new THREE.BufferAttribute(new Float32Array(WAY.N * 3), 3));
+  WAY.trail = new THREE.Points(gm, new THREE.PointsMaterial({ map: glowTex, color: col('#9fe6ff'),
+    size: 1.5, sizeAttenuation: true, transparent: true, opacity: .75, blending: THREE.AdditiveBlending, depthWrite: false }));
+  WAY.trail.frustumCulled = false; scene.add(WAY.trail);
+}
+function setWaypoint(w) {
+  if (!WAY.g) buildWaypoint();
+  MAP.way = w ? { x: w.x, z: w.z } : null;
+  WAY.at = MAP.way;
+  WAY.g.visible = !!MAP.way; WAY.trail.visible = !!MAP.way;
+  if (MAP.way) {
+    WAY.g.position.set(MAP.way.x, groundY(MAP.way.x, MAP.way.z), MAP.way.z);
+    world.effects.push(new Burst(MAP.way.x, WAY.g.position.y + 1.4, MAP.way.z, '#9fe6ff', 10, 1.2));
+    logMsg('A mark on the map, and a light on the ground to match.');
+  }
+}
+function updateWaypoint(dt) {
+  if (!WAY.g || !WAY.at) return;
+  const t = WAY.t += dt, p = player.pos;
+  WAY.uni.uT.value = t;
+  WAY.mark.position.y = 2.4 + Math.sin(t * 2.2) * .38;
+  WAY.mark.rotation.y = t * .9; WAY.mark.rotation.x = Math.sin(t * .7) * .25;
+  const pulse = .5 + .5 * Math.sin(t * 2.2);
+  WAY.ring.scale.setScalar(1 + pulse * .5);
+  WAY.ring.material.opacity = .55 * (1 - pulse * .7);
+  WAY.glow.scale.setScalar(5 + pulse * 3 + world.night * 4);
+  // the motes run from him to the mark, so the line reads as a direction and not a fence
+  const a = WAY.trail.geometry.attributes.position, n = WAY.N;
+  const dx = WAY.at.x - p.x, dz = WAY.at.z - p.z, d = Math.hypot(dx, dz);
+  const near = Math.min(1, d / 8);
+  for (let i = 0; i < n; i++) {
+    const f = ((i / n) + t * .22) % 1, k = 2.5 + f * Math.max(0, d - 4.5);
+    const x = p.x + dx / (d || 1) * k, z = p.z + dz / (d || 1) * k;
+    a.array[i * 3] = x; a.array[i * 3 + 1] = groundY(x, z) + .7 + Math.sin(f * 6.283 + t) * .18; a.array[i * 3 + 2] = z;
+  }
+  a.needsUpdate = true;
+  WAY.trail.material.opacity = .75 * near;
+  WAY.trail.visible = d > 5;
+}
+
 // ---------- the map ----------
 // Drawn from the terrain's own vertex colours and heights rather than re-sampled or drawn
 // by hand, so it is the island you are standing on and cannot drift out of step with it.
@@ -4466,6 +4579,12 @@ const statsEl = document.getElementById('stats'), eraEl = document.getElementByI
 // terrain and the markers are kept in separate passes.
 const MAP = {
   open: false, img: null, N: 0,
+  // What the big map is looking at: a centre in world coordinates and how many world units
+  // fit across it. The minimap always uses the whole island; only the big one moves.
+  // The terrain mesh is 2 units a vertex, so magnifying the image is exactly the
+  // interpolation the ground itself does — there is no finer terrain to render. Detail
+  // comes from showing more things instead, which `lod` picks out.
+  view: { cx: 0, cz: 0, span: 0 }, lod: 0, way: null,
   sea0: col('#5b93ad'), sea1: col('#12314a'),   // shallows and deep water
   light: { x: -.62, z: -.68 },                  // relief lit from the north-west, as maps are
 };
@@ -4521,10 +4640,17 @@ function mapMarks() {
   add(world.isle, 'isle', 'floating isle');
   for (const st of world.structures) if (st.alive && st instanceof Cairn) out.push({ x: st.pos.x, z: st.pos.z, k: st.beacon ? 'beacon' : 'cairn', label: st.beacon ? 'beacon' : null });
   if (world.ship) out.push({ x: world.ship.pos.x, z: world.ship.pos.z, k: 'ship', label: 'ship', flying: world.ship.state !== 'landed', heading: world.ship.heading });
+  // zoomed in, the map starts naming the things you would actually walk between
+  if (MAP.lod > 1.9) for (const p of world.plants) {
+    if (p === world.greatTree || !p.alive) continue;
+    if (p instanceof LanternTree && p.growth > .6) out.push({ x: p.pos.x, z: p.pos.z, k: 'tree2' });
+    else if (MAP.lod > 3 && p instanceof Bloom && p.size > .5) out.push({ x: p.pos.x, z: p.pos.z, k: 'bloom' });
+  }
+  if (MAP.way) out.push({ x: MAP.way.x, z: MAP.way.z, k: 'way', label: 'waypoint' });
   return out;
 }
 const MAP_KEY = {
-  you: ['#ffe9b0', 'you'], ship: ['#ff8a3c', 'ship'], tree: ['#8fe6a8', 'Elderwillow'],
+  you: ['#ffe9b0', 'you'], way: ['#7fd8ff', 'waypoint'], ship: ['#ff8a3c', 'ship'], tree: ['#8fe6a8', 'Elderwillow'],
   camp: ['#ffb45a', 'camp'], cave: ['#9fd6ff', 'cave'], isle: ['#c9a6ff', 'floating isle'],
   beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'],
 };
@@ -4538,16 +4664,23 @@ function drawMini(dt) {
   if (!MAP.img) buildMapImage();
   drawMapTo(document.getElementById('mini'), true);
 }
+const MAP_DIM = { tree2: ['#4e9c62', 1.7], bloom: ['#e878b8', 1.4] };
 function drawMapTo(cv, mini) {
   if (!cv || !MAP.img) return;
   const wpx = cv.clientWidth * Q.dpr | 0, hpx = cv.clientHeight * Q.dpr | 0;
   if (!wpx || !hpx) return;
   if (cv.width !== wpx || cv.height !== hpx) { cv.width = wpx; cv.height = hpx; }
   const g = cv.getContext('2d'), S = Q.dpr;
+  const V = mini ? { cx: 0, cz: 0, span: 2 * W } : MAP.view;
+  const zoom = 2 * W / V.span;
   g.clearRect(0, 0, wpx, hpx);
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-  g.drawImage(MAP.img, 0, 0, wpx, hpx);
-  const px = (x, z) => [(x + W) / (2 * W) * wpx, (z + W) / (2 * W) * hpx];
+  {   // the window of the island image this view is looking at
+    const N = MAP.N, u = N / (2 * W);
+    const sx = (V.cx - V.span / 2 + W) * u, sy = (V.cz - V.span / 2 + W) * u, sw = V.span * u;
+    g.drawImage(MAP.img, sx, sy, sw, sw, 0, 0, wpx, hpx);
+  }
+  const px = (x, z) => [(x - V.cx) / V.span * wpx + wpx / 2, (z - V.cz) / V.span * hpx + hpx / 2];
   const K = mini ? .62 : 1;
   const dot = (x, z, hex, r, ring) => {
     const [a, b] = px(x, z);
@@ -4565,10 +4698,24 @@ function drawMapTo(cv, mini) {
   };
   g.font = (10 * S) + 'px ui-monospace,Menlo,Consolas,monospace'; g.textAlign = 'center'; g.textBaseline = 'top';
   for (const m of mapMarks()) {
+    if (MAP_DIM[m.k]) {   // the crowd: a plain speck, no shadow, no ring, no label
+      const [hx, rr] = MAP_DIM[m.k], [a2, b2] = px(m.x, m.z);
+      g.globalAlpha = .8; g.fillStyle = hx;
+      g.beginPath(); g.arc(a2, b2, rr * S * K, 0, 6.283); g.fill(); g.globalAlpha = 1;
+      continue;
+    }
     const [hex] = MAP_KEY[m.k] || ['#ffffff'];
     let a, b;
     if (m.k === 'ship') { arrow(m.x, m.z, m.heading || 0, hex, 6); [a, b] = px(m.x, m.z);
       if (m.flying) { g.beginPath(); g.arc(a, b, 10 * S * K, 0, 6.283); g.strokeStyle = hex; g.globalAlpha = .5; g.lineWidth = 1.2 * S; g.stroke(); g.globalAlpha = 1; } }
+    else if (m.k === 'way') {
+      [a, b] = px(m.x, m.z);
+      const r0 = 4.5 * S * K, pu = (world.clock * 1.6) % 1;
+      g.strokeStyle = hex; g.lineWidth = 1.6 * S * K; g.shadowColor = 'rgba(0,0,0,.8)'; g.shadowBlur = 5 * S;
+      g.beginPath(); g.arc(a, b, r0, 0, 6.283); g.stroke();
+      g.globalAlpha = 1 - pu; g.beginPath(); g.arc(a, b, r0 * (1 + pu * .9), 0, 6.283); g.stroke(); g.globalAlpha = 1;
+      g.beginPath(); g.arc(a, b, 1.5 * S * K, 0, 6.283); g.fillStyle = hex; g.fill(); g.shadowBlur = 0;
+    }
     else [a, b] = dot(m.x, m.z, hex, m.k === 'cairn' ? 2.4 : m.k === 'tree' ? 4.5 : 3.4, m.k === 'beacon' || m.k === 'isle');
     if (m.label && !mini) { g.fillStyle = 'rgba(246,238,222,.82)'; g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 4 * S;
       g.fillText(m.label, a, b + 7 * S); g.shadowBlur = 0; }
@@ -4580,17 +4727,31 @@ function buildLegend() {
   const el = document.getElementById('maplg'); if (!el || el.childElementCount) return;
   el.innerHTML = Object.keys(MAP_KEY).map(k => `<span><i style="background:${MAP_KEY[k][0]}"></i>${MAP_KEY[k][1]}</span>`).join('');
 }
+function clampView() {
+  const V = MAP.view;
+  V.span = clamp(V.span, 2 * W / 6, 2 * W);
+  const lim = Math.max(0, W - V.span / 2);
+  V.cx = clamp(V.cx, -lim, lim); V.cz = clamp(V.cz, -lim, lim);
+  MAP.lod = 2 * W / V.span;
+  const z = document.getElementById('mapzoom');
+  if (z) z.textContent = MAP.lod.toFixed(1) + '\u00d7' + (MAP.way
+    ? '  \u00b7  waypoint ' + Math.round(Math.hypot(MAP.way.x - player.pos.x, MAP.way.z - player.pos.z)) + 'm' : '');
+}
 function toggleMap(on) {
   const v = document.getElementById('mapv');
   MAP.open = on === undefined ? !MAP.open : !!on;
   if (MAP.open && !MAP.img) { const t0 = performance.now(); buildMapImage(); console.info('map built in ' + (performance.now() - t0).toFixed(0) + ' ms'); }
-  if (MAP.open) { buildLegend(); document.getElementById('mapera').textContent = eraName(); stick.L.x = stick.L.y = stick.R.x = stick.R.y = 0; }
+  if (MAP.open) {
+    buildLegend(); document.getElementById('mapera').textContent = eraName();
+    stick.L.x = stick.L.y = stick.R.x = stick.R.y = 0;
+    if (!MAP.view.span) { MAP.view.span = 2 * W; MAP.view.cx = MAP.view.cz = 0; clampView(); }
+  }
   v.hidden = !MAP.open;
   mapB && mapB.classList.toggle('on', MAP.open);
   if (MAP.open) drawMap();
 }
 
-isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap;   // MAP is a const above, so this cannot move any earlier
+isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap; isle.way = WAY; isle.setWaypoint = setWaypoint; isle.clampView = clampView;   // MAP is a const above, so this cannot move any earlier
 
 // What a tap on the right stick would do right now, if anything. Whatever is within reach
 // writes itself here each frame and the stick reads it, so adding the next interaction —
@@ -4691,7 +4852,8 @@ function frame(now) {
   for (let i = 0; i < world.psys.length; i++) world.psys[i].update(dt);
   if (world.chasmGlow) world.chasmGlow.scale.setScalar(14 + Math.sin(world.clock * 1.4) * 3 + world.night * 10);
   updateMotes(dt);
-  if (MAP.open) drawMap();
+  updateWaypoint(dt);
+  if (MAP.open) { clampView(); drawMap(); }
   drawMini(dt); showAct();
   weatherLeavings(dt); cullFar(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
