@@ -148,7 +148,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b30';
+const BUILD = 'b31';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2949,7 +2949,7 @@ const PILOT = {
   bank: .55, nose: .26, noseV: .012,            // lean from the yaw rate, and from the stick rather than from the
                                                 // acceleration, so a bigger engine cannot rear the nose up further
   gearUpAt: 9, gearDownAt: 14,                  // above the ground, on the way up and on the way down
-  camR: 27, camPol: 1.22, camLag: 2.6,          // the chase view: further back, flatter, and behind by a beat
+  camR: 27, camPol: 1.34, camLag: 2.6,          // the chase view: further back, lower still, and behind by a beat
   waterAlt: 1.4,                                // over water it hovers this far above the swell; there is nothing to land on
 };
 class Ship {
@@ -3053,6 +3053,7 @@ class Ship {
     if (this.state !== 'landed' || !this.bones || !world.player || world.player.aboard) return;
     const p = world.player;
     p.aboard = true; p.g.visible = false; p.lamp.visible = false; p.vx = p.vz = 0; p.wmag = 0; p.fly = false;
+    cam.rWalk = cam.r;                                 // the chase view takes cam.r over; give it back on the way out
     this.begin('piloted'); this.grounded = true; this.power = 0; this.spool = 0; this.vel.set(0, 0, 0); this.yawRate = 0;
     this.heading = this.face; obRemove(this.ob); this.ob = null;
     logMsg('He climbs in. Hold up to lift off.');
@@ -3882,8 +3883,13 @@ function eraName() {
 // The shot's pitch is fixed. Looking up and down was never worth a whole stick axis, and
 // holding one angle keeps the island reading the way it was framed. solveCam still drops
 // the boom below this to clear a hill — that is collision, not the player aiming.
-const CAM_POL = 1.05;
-const cam = { az: .7, pol: CAM_POL, pol0: CAM_POL, r: 24, tgt: new THREE.Vector3(0, 6, 0), idle: 0 };   // pol0: the pitch before the weather leans it
+// Polar angle from straight up, so a bigger number is a lower camera. 1.05 put the lens
+// thirty degrees above the horizon and fifteen units over his head: you saw the ground he
+// stood on and very little of what was ahead. 1.28 is seventeen degrees above the horizon
+// and nine over his head, which puts the treeline and the sky in frame without the boom
+// getting any shorter — sin(pol)*r barely moves, so he stays the same size on screen.
+const CAM_POL = 1.28;
+const cam = { az: .7, pol: CAM_POL, pol0: CAM_POL, r: 20, tgt: new THREE.Vector3(0, 6, 0), idle: 0, rWalk: 0 };   // pol0: the pitch before the weather leans it
 const camS = { pol: CAM_POL, r: 24 };       // what the camera actually flies at
 const _camWant = new THREE.Vector3(), _holeP = new THREE.Vector3(), _holeV = new THREE.Vector3();
 // Treat the terrain as a heightfield and march the boom: if the shot is blocked,
@@ -4648,6 +4654,10 @@ function frame(now) {
   } else {
     if (!player.free) cam.tgt.lerp(_camWant.set(player.pos.x, player.pos.y + 3.4, player.pos.z), Math.min(1, dt * 7));
     cam.pol0 = lerp(cam.pol0, CAM_POL, Math.min(1, dt * 2));
+    if (cam.rWalk) {   // ease back to the zoom he had before he boarded, then leave it alone
+      cam.r = lerp(cam.r, cam.rWalk, Math.min(1, dt * 2));
+      if (Math.abs(cam.r - cam.rWalk) < .3) { cam.r = cam.rWalk; cam.rWalk = 0; }
+    }
     cam.idle += dt; if (cam.idle > 6 && player.moving < .05) cam.az += dt * .03;
   }
   solveCam(dt);

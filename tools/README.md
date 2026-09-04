@@ -296,7 +296,19 @@ the right stick only orbits now and its vertical axis is free for something else
 still drops the boom below `CAM_POL` to clear a hill — that is collision, not the player
 aiming, and it is why a pitch reading moves a little while orbiting.
 
-The resting distance is 24. The boom only avoids the heightfield, so anything else between
+`CAM_POL` is the polar angle from straight up, so **a bigger number is a lower camera**. It
+was 1.05: thirty degrees above the horizon and fifteen units over his head, which framed the
+ground he stood on and almost nothing ahead of him. It is 1.28 — seventeen degrees above the
+horizon, nine units over his head — and the boom did not get shorter to do it, because
+`sin(pol) * r` barely moves between the two, so he stays the same size on screen while the
+treeline and the sky come into frame. Walking a few hundred units of rolling ground, the
+solver never has to intervene and the lens keeps seven to nine units of clearance, so the
+lower angle costs nothing in stability. The chase view is lower again at `PILOT.camPol`.
+
+The resting distance is 20, and the chase view **borrows `cam.r` and gives it back**: it was
+overwriting the zoom and never restoring it, so stepping out of the ship left you pulled
+right back with whatever pinch you had set gone for good. `cam.rWalk` remembers it at the
+moment of boarding. The boom only avoids the heightfield, so anything else between
 the lens and the wanderer — a tree, a boulder, the canopy — used to just block him. Now a
 screen-door hole is punched through any surface that is both closer to the camera than he
 is and inside a circle around him on screen. It lives in the shared `MeshStandardMaterial`
