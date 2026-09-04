@@ -218,6 +218,23 @@ of the trees, flying one lap of the island at whatever altitude clears the terra
 great tree, and settling back on its pad. Its collider leaves with it and returns with it;
 the hatch only answers the player while it is landed.
 
+You can fly it. Walk up with the hatch open and a `board` button appears (or press B); the
+wanderer vanishes into the hull, the hatch shuts, and the camera swings to a chase view
+behind and above. Left stick is thrust and turn, right stick is climb and strafe (it stops
+orbiting the camera while you are aboard); on a keyboard W S A D, Space/Shift, Q/E.
+`PILOT` holds the feel, and everything in it is an acceleration or a rate — nothing sets a
+speed directly — because weight was the brief. Lift-off is a sequence: hold climb and the
+jets spool for 2.5 s with the hull trembling and the plume growing, then it unsticks and
+climbs slowly; the gear folds itself once it is 9 units up. Thrust is an acceleration
+against drag, so it reaches 12 u/s after two seconds, 23 after five, 31 after ten, and
+coasts for seconds when you let go. Turning builds a yaw rate that the hull banks from and
+that carries on for a beat after the stick centres; the side jets fire and the outside
+nozzle swings out with it. Landing is a settle: the gear drops itself under 14 units, the
+frame the feet reach the ground it is down and the hull dips on its legs, the jets take two
+seconds to die, and only then does `leave` appear. Over water there is nothing to land on,
+so it hovers above the swell. `npm run check:ship pilot` flies all of that under node and
+prints the timings.
+
 ### The camera
 
 Pitch is fixed at `CAM_POL`. Looking up and down was never worth a whole stick axis, so

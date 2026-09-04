@@ -28,7 +28,7 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('Lant
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;global.__SHIP=SHIP;global.__h2=height;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;global.__SHIP=SHIP;global.__h2=height;global.__stick=stick;global.__keys=keys;global.__PILOT=PILOT;global.__gY=groundY;global.__cam=cam;'+src.slice(cut);
 eval(src);
 const N=+process.argv[3]||6000;
 // optional: node tools/headless.js index.html 3000 storm   -> start in that weather
@@ -84,6 +84,45 @@ const P=global.__p; P.pos.x=S.pos.x+30; P.pos.z=S.pos.z; S.next=0;
 if(process.argv[3]==='tree' && W2.greatTree){ const g=W2.greatTree, a0=Math.atan2(S.pad.z,S.pad.x);   // 34 units out along the departure line, under the climb-out
   g.pos.x=S.pad.x+Math.cos(a0)*34; g.pos.z=S.pad.z+Math.sin(a0)*34; g.pos.y=S.pad.y; console.log('great tree moved under the climb-out: top at',(g.pos.y+g.H*1.05).toFixed(1),'| pad at',S.pad.y.toFixed(1)); }
 const step=()=>{ const f=cbs.shift(); global.__t+=33; f(global.__t); };
+// `node tools/sortie.js index.html pilot` — fly it by hand instead: board, spool, lift, run,
+// turn, coast, come down, get out. Reports the timings that make it feel heavy.
+if(process.argv[3]==='pilot'){
+  const ST=global.__stick, K=global.__keys, PL=global.__PILOT;
+  const hold=(sec,fn)=>{ const n=Math.round(sec/.033); for(let i=0;i<n;i++){ fn&&fn(); step(); } };
+  const sp=()=>Math.hypot(S.vel.x,S.vel.z), alt=()=>S.pos.y-global.__gY(S.pos.x,S.pos.z), rec=[];   // above ground, or above the water where there is no ground
+  P.pos.x=S.pos.x+5; P.pos.z=S.pos.z; hold(4);            // walk up: the hatch opens
+  const openBefore=S.open; S.board();
+  const out={hatchOpenAtBoard:+openBefore.toFixed(2), boarded:P.aboard===true, state0:S.state, playerHidden:!P.g.visible, colliderGone:!S.ob};
+  // hold climb: watch the spool come up and the moment it unsticks
+  let tSpool=null,tUp=null,tt=0;
+  hold(6,()=>{ ST.R.y=-1; tt+=.033; if(tSpool===null&&S.spool>=1) tSpool=tt; if(tUp===null&&!S.grounded) tUp=tt; if(tt<3&&(Math.round(tt*30)%15===0)) rec.push({t:+tt.toFixed(1),spool:+S.spool.toFixed(2),trembleY:+S.trem.y.toFixed(3),plume:+S.jets.L.rate.toFixed(0)}); });
+  out.spoolFullAt=tSpool&&+tSpool.toFixed(1); out.unstuckAt=tUp&&+tUp.toFixed(1); out.altAfter6sOfClimb=+alt().toFixed(1); out.climbRate=+S.vel.y.toFixed(1); out.gearAt6s=+S.sm.gear.toFixed(2);
+  hold(4,()=>{ ST.R.y=-1; }); out.altAfter10s=+alt().toFixed(1); out.gearAt10s=+S.sm.gear.toFixed(2);
+  ST.R.y=0;
+  // point at the middle of the island so the run does not leave the map, and note the chase view
+  S.heading=Math.atan2(-S.pos.x,-S.pos.z); hold(1); const CM=global.__cam; out.chaseCam={r:+CM.r.toFixed(1),pitchBase:+CM.pol0.toFixed(2),pitch:+CM.pol.toFixed(2),wanted:PL.camPol};
+  // full forward: speed at 2, 5, 10 seconds, then let go and see how long it takes to slow
+  const spd=[]; let el=0; hold(10,()=>{ ST.L.y=-1; el+=.033; for(const m of [2,5,10]) if(Math.abs(el-m)<.02) spd.push({t:m,speed:+sp().toFixed(1),nose:+S.nose.toFixed(3),throttleJoint:+S.sm.throttle.toFixed(2)}); });
+  out.acceleration=spd; ST.L.y=0;
+  const v0=sp(); let tHalf=null; el=0; hold(8,()=>{ el+=.033; if(tHalf===null&&sp()<v0*.5) tHalf=el; }); out.coast={from:+v0.toFixed(1),halfSpeedAfter:tHalf&&+tHalf.toFixed(1),after8s:+sp().toFixed(1)};
+  // a turn: the yaw rate builds and the hull banks with it, and it keeps swinging when released
+  const yr=[]; el=0; hold(3,()=>{ ST.L.x=1; el+=.033; for(const m of [.5,1.5,3]) if(Math.abs(el-m)<.02) yr.push({t:m,yawRate:+S.yawRate.toFixed(2),roll:+S.roll.toFixed(2),Rout:+(b.back_jet_R.rotation.y).toFixed(2),sideR:+S.jets.sR.rate.toFixed(0),sideL:+S.jets.sL.rate.toFixed(0)}); });
+  ST.L.x=0; const yr0=S.yawRate; hold(1.5); out.turn={ramp:yr,afterRelease1_5s:+S.yawRate.toFixed(2),wasBeforeRelease:+yr0.toFixed(2)};
+  // come down: push down until it lands, note when the gear drops
+  let gearCmdAlt=null, gearDownAlt=null, tDown=0, atTouch=null;
+  for(let i=0;i<1200;i++){ ST.R.y=1; step(); tDown+=.033;
+    if(gearCmdAlt===null&&S.ctl.gear===0) gearCmdAlt=+alt().toFixed(1);
+    if(gearDownAlt===null&&S.sm.gear<.1) gearDownAlt=+alt().toFixed(1);
+    if(S.grounded){ ST.R.y=0; atTouch={sagKick:+S.sagV.toFixed(2),power:+S.power.toFixed(2),gear:+S.sm.gear.toFixed(2),couldLeaveYet:S.spool<=.02}; break; } }
+  out.landing=Object.assign({touchedDownAfter:+tDown.toFixed(1),gearCommandedDownAtAlt:gearCmdAlt,gearFullyDownAtAlt:gearDownAlt,onGround:S.grounded},atTouch||{});
+  let tCool=0; hold(6,()=>{ if(S.spool>.02) tCool+=.033; }); out.jetsOffAfter=+tCool.toFixed(1);
+  const canLeave=S.grounded&&S.power<.15; S.leave();
+  out.leave={couldLeave:canLeave,aboard:P.aboard,playerVisible:P.g.visible,shipState:S.state,colliderBack:!!S.ob,playerDistFromShip:+Math.hypot(P.pos.x-S.pos.x,P.pos.z-S.pos.z).toFixed(1),playerOnGround:+(P.pos.y-global.__gY(P.pos.x,P.pos.z)).toFixed(2)};
+  hold(3); out.hatchAfterLeave=+S.open.toFixed(2); out.nextSortieIn=+(S.next-W2.clock).toFixed(0);
+  console.log('spool-up trace:',JSON.stringify(rec));
+  console.log(JSON.stringify(out,null,1));
+  process.exit(0);
+}
 const log=[]; let t0=W2.clock, frames=0, minClr=1e9, minIsle=1e9, minGT=1e9, plume=null;
 while(frames<9000){ step(); frames++;
   if(S.state!=='landed'){ const h=H(S.pos.x,S.pos.z); minClr=Math.min(minClr,S.pos.y-h);
