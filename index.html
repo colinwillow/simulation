@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b19';
+const BUILD = 'b20';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1539,7 +1539,7 @@ function loadModel(url, cb) {
     // at the origin and the clips a hip-height above it, so a model normalised to its bind
     // pose stands a hip-height in the air the moment it starts to idle.
     e.box = idlePoseBounds(e.root, e.anims);              // unscaled: each user picks its own height
-    e.strides = {};
+    e.strides = {}; e.floors = {};
     e.ready = true;
     for (const f of e.waiting) f(e);
     e.waiting.length = 0;
@@ -1596,6 +1596,29 @@ function idlePoseBounds(root, anims) {
   return box;
 }
 
+// Clips out of a shared library are not all authored on the same floor. In this set the
+// idle and the walk keyframe the hips a hip-height above the origin and the run does not,
+// so a rig normalised off the idle pose alone drops through the ground the moment the run
+// takes any weight — which is how six mudlarks came to spend their lives underground.
+// Measure each clip's own floor once; stepRig lifts the root by the blend of them.
+function clipFloor(root, clip) {
+  const mx = new THREE.AnimationMixer(root), v = new THREE.Vector3();
+  mx.clipAction(clip).play();
+  let lo = Infinity;
+  for (const t of [.1, .45, .8]) {
+    mx.setTime(t * clip.duration);
+    root.updateMatrixWorld(true);
+    root.traverse(m => {
+      if (!m.isSkinnedMesh) return;
+      m.skeleton.update();
+      const n = m.geometry.attributes.position.count, st = Math.max(1, n / 900 | 0);
+      for (let i = 0; i < n; i += st) { m.boneTransform(i, v); v.applyMatrix4(m.matrixWorld); if (v.y < lo) lo = v.y; }
+    });
+  }
+  mx.stopAllAction();
+  return lo;
+}
+
 // A SkinnedMesh cannot be plain-cloned: the copy keeps pointing at the original skeleton
 // and every instance would move as one. SkeletonUtils rebinds it; geometry stays shared.
 function cloneModel(root) {
@@ -1633,6 +1656,14 @@ function attachRig(parent, cfg, done) {
       jumpLand: pickClip(jump, cfg.jumpLand, 'land|landing|down|end|touch', 'init|initiate|start|air'),
     };
     for (const k of ['walk', 'run']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
+    // each clip's own floor, relative to the pose the rig was normalised on, in model units
+    for (const k in clips) { const cl = clips[k]; if (cl && e.floors[cl.name] === undefined) e.floors[cl.name] = clipFloor(e.root, cl); }
+    const refF = clips.idle ? e.floors[clips.idle.name] : clips.walk ? e.floors[clips.walk.name] : 0;
+    const lift = {};
+    // Only ever correct a clip authored *below* the reference. A clip whose floor sits
+    // higher is usually a pose that genuinely leaves the ground — swimming, mid-air — and
+    // pulling those down would push him under the water he is meant to be floating on.
+    for (const k in clips) if (clips[k]) { const d = e.floors[clips[k].name] - refF; lift[k] = isFinite(d) ? Math.min(0, d) : 0; }
     const mixer = new THREE.AnimationMixer(inst);
     const acts = {};
     for (const k in clips) {
@@ -1650,7 +1681,7 @@ function attachRig(parent, cfg, done) {
         morphs.push({ inf: o.morphTargetInfluences, l: d[cfg.blinkL], r: d[cfg.blinkR] });
     });
     done({
-      root: inst, mixer, acts, box: e.box, scale: s,
+      root: inst, mixer, acts, box: e.box, scale: s, lift, baseY: inst.position.y,
       walkSpeed: walk ? e.strides[walk.name] * s : 0,
       runSpeed: run ? e.strides[run.name] * s : 0,
       w: {},                                              // smoothed weight per action
@@ -1699,7 +1730,10 @@ function stepRig(r, dt, speed, grounded, ctx) {
   const top = c.top || ref * 3 || 6;
   const frac = clamp(speed / top, 0, 1);
   const loco = grounded ? smooth(MODEL.moveAt, MODEL.moveFull, frac) : 0;
-  const runMix = a.run ? smooth(MODEL.runAt, MODEL.runFull, frac) : 0;
+  // A creature's `speed` is its cruise, not its sprint, so the wanderer's thresholds put
+  // every rigged animal in a permanent full run the moment it moved. They pass their own.
+  const rA = c.runAt !== undefined ? c.runAt : MODEL.runAt, rF = c.runFull !== undefined ? c.runFull : MODEL.runFull;
+  const runMix = a.run ? smooth(rA, rF, frac) : 0;
   want.idle = (1 - loco); want.walk = loco * (1 - runMix); want.run = loco * runMix;
   // water: tread <-> swim forward
   const sw = clamp(speed / 6, 0, 1);
@@ -1722,6 +1756,14 @@ function stepRig(r, dt, speed, grounded, ctx) {
     if ((k === 'jumpStart' || k === 'jumpLand') && t > .5 && prev <= .5) a[k].reset().play();
     const nw = lerp(prev, t, Math.min(1, dt / .1));
     r.w[k] = nw; a[k].setEffectiveWeight(nw);
+  }
+  // Hold the feet on the ground through the blend: shift the root by the weighted mean of
+  // the clips' own floors. With one consistently authored set every lift is zero and this
+  // does nothing at all.
+  if (r.lift) {
+    let d = 0, tw = 0;
+    for (const k in r.w) { const wt = r.w[k]; if (wt > 1e-4 && r.lift[k] !== undefined) { d += r.lift[k] * wt; tw += wt; } }
+    r.root.position.y = r.baseY - (tw > 1e-4 ? d / tw : 0) * r.scale;
   }
   r.mixer.update(dt);
   // After the mixer: the clips do not touch the eye shapes, but writing first would still
@@ -2016,7 +2058,7 @@ class Creature {
     if (this.rig) {
       const px = this.px2 === undefined ? this.rx : this.px2, pz = this.pz2 === undefined ? this.rz : this.pz2;
       this.px2 = this.rx; this.pz2 = this.rz;
-      stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic, { top: this.speed });
+      stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic, { top: this.speed * 1.45, runAt: .78, runFull: .98 });
     }
   }
   dispose() { scene.remove(this.g); }
