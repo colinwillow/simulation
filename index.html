@@ -54,6 +54,19 @@
     transition:border-color .18s,box-shadow .18s}
   #sticks .stick.act{border-color:rgba(255,206,150,.42);
     box-shadow:inset 0 0 30px rgba(255,196,128,.14),0 0 18px rgba(255,180,110,.10)}
+  /* something within reach: the stick is the prompt, so there is nothing else to put on screen */
+  #sticks .stick.hot{border-color:rgba(255,214,150,.8);
+    box-shadow:inset 0 0 34px rgba(255,196,128,.3),0 0 30px rgba(255,186,110,.34);
+    animation:hotpulse 1.7s ease-in-out infinite}
+  @keyframes hotpulse{0%,100%{box-shadow:inset 0 0 34px rgba(255,196,128,.26),0 0 22px rgba(255,186,110,.24)}
+    50%{box-shadow:inset 0 0 38px rgba(255,204,140,.4),0 0 40px rgba(255,190,120,.46)}}
+  #sticks .stick.hot .knob{background:radial-gradient(circle at 38% 32%,rgba(255,246,226,.7),rgba(255,198,120,.42) 58%,rgba(214,132,54,.24));
+    border-color:rgba(255,232,196,.6);box-shadow:0 0 22px rgba(255,190,110,.6),inset 0 1px 3px rgba(255,255,255,.4)}
+  #sticks .ico{position:absolute;left:50%;top:50%;width:38px;height:38px;margin:-19px 0 0 -19px;
+    pointer-events:none;opacity:0;transform:scale(.6);transition:opacity .22s,transform .22s;
+    filter:drop-shadow(0 1px 4px rgba(0,0,0,.7))}
+  #sticks .stick.hot .ico{opacity:1;transform:scale(1)}
+  #sticks .stick.hot .lbl{opacity:.9;color:#ffe6b8}
   #stkL{left:calc(20px + env(safe-area-inset-left))} #stkR{right:calc(20px + env(safe-area-inset-right))}
   #sticks .knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;
     border-radius:50%;pointer-events:none;
@@ -91,11 +104,14 @@
 <div id="hint">left stick walks · right stick looks · scroll or pinch to zoom<br>WASD / arrows also work · tap the ground to drop a spark</div>
 <div id="sticks">
   <div class="stick" id="stkL"><div class="knob"></div><div class="lbl">MOVE</div></div>
-  <div class="stick" id="stkR"><div class="knob"></div><div class="lbl">LOOK</div></div>
+  <div class="stick" id="stkR"><div class="knob"><svg class="ico" id="stkRIco" viewBox="0 0 40 40" fill="none">
+    <ellipse cx="20" cy="24" rx="16" ry="6.2" fill="#ffdca8" opacity=".92"/>
+    <path d="M9.5 22.5a10.5 9 0 0 1 21 0z" fill="#ffeecb"/>
+    <ellipse cx="20" cy="24" rx="16" ry="6.2" stroke="#7a4a18" stroke-opacity=".5"/>
+  </svg></div><div class="lbl">LOOK</div></div>
 </div>
 <div id="ui">
   <canvas id="mini" title="open the map"></canvas>
-  <button id="shipB" class="tog" hidden>board</button>
   <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
   <div id="btns" hidden><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
 </div>
@@ -132,7 +148,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b29';
+const BUILD = 'b30';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2898,7 +2914,7 @@ class Hopper extends Creature {
 const SHIP = {
   url: 'models/alien_ship_orange.glb',
   span: 6.9,        // widest measurement in world units; the model is authored at about one
-  near: 13,         // walk inside this and the hatch opens
+  near: 8,          // close enough to touch it: the hatch opens and the stick offers it
   hatch: -.95,      // signed rotation about hatch_pivot's own x, which is the hinge. Negative
                     // lifts the canopy: measured on the 2317 vertices the hatch owns, -.95
                     // raises them 1.1 to 1.35 and +.95 drops them 1.45 down through the floor.
@@ -3213,7 +3229,8 @@ class Ship {
     const want = !flying && playerNear < SHIP.near ? 1 : 0;
     const canBoard = !flying && this.open > .5 && playerNear < SHIP.near && !(p && p.aboard);
     const canLeave = pil && this.grounded && this.spool <= .02;
-    if (shipB) { const show = canBoard || canLeave; if (shipB.hidden === show) shipB.hidden = !show; const lbl = canLeave ? 'leave' : 'board'; if (shipB.textContent !== lbl) shipB.textContent = lbl; }
+    if (canBoard) offerAct({ icon: 'ship', label: 'BOARD', run: () => this.board() });
+    else if (canLeave) offerAct({ icon: 'ship', label: 'LEAVE', run: () => this.leave() });
     this.open = lerp(this.open, want, Math.min(1, dt * (want ? 2.2 : 1.5)));
     if (b.hatch_pivot) b.hatch_pivot.rotation.x = this.hatch0 + smooth(0, 1, this.open) * SHIP.hatch;
     if (this.lights) this.lights.material.size = 1.3 * (.5 + world.night * .9 + this.open * .5 + this.air * .6);
@@ -4111,7 +4128,12 @@ function bindStick(el, out, onTap) {
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
 }
 bindStick(document.getElementById('stkL'), stick.L);
-bindStick(document.getElementById('stkR'), stick.R, () => { player.jump = 1; });
+// A tap is the interact button when there is something to interact with, and the jump
+// otherwise. On foot with nothing in reach it behaves exactly as it always did.
+bindStick(document.getElementById('stkR'), stick.R, () => {
+  if (ACT.now) { const a = ACT.now; ACT.now = null; showAct(); a.run(); }
+  else if (!player.aboard) player.jump = 1;
+});
 const keys = {};
 addEventListener('keydown', e => { keys[e.key.toLowerCase()] = 1; if (e.key === ' ') { player.jump = 1; e.preventDefault(); } });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
@@ -4132,8 +4154,7 @@ const fold = (btn, panel, startOpen) => {
 fold('hudHead', 'hudBody', false);
 fold('ctlT', 'btns', false);
 fold('logT', 'log', true);
-const shipB = document.getElementById('shipB'), hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
-shipB.addEventListener('click', () => { const sh = world.ship; if (!sh) return; if (player.aboard) sh.leave(); else sh.board(); });
+const hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
 addEventListener('keydown', e => { if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
 const _prevP = new THREE.Vector3();
@@ -4565,6 +4586,20 @@ function toggleMap(on) {
 
 isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap;   // MAP is a const above, so this cannot move any earlier
 
+// What a tap on the right stick would do right now, if anything. Whatever is within reach
+// writes itself here each frame and the stick reads it, so adding the next interaction —
+// picking a mudlark up, say — is one more writer and nothing else has to change.
+const ACT = { now: null, shown: null };
+function offerAct(a) { ACT.now = a; }
+function showAct() {
+  const a = ACT.now, key = a ? a.icon + '|' + a.label : '';
+  if (key === ACT.shown) return;
+  ACT.shown = key;
+  const st = document.getElementById('stkR'), lbl = st.querySelector('.lbl');
+  st.classList.toggle('hot', !!a);
+  lbl.textContent = a ? a.label : 'LOOK';
+}
+
 const perf = { ms: 16.7, worst: 0, acc: 0, n: 0 };
 function updateHUD() {
   const f = (world.t / DAY) % 1;
@@ -4635,6 +4670,7 @@ function frame(now) {
 
   updateWeather(dt);
   updateSky();
+  ACT.now = null;                          // whatever is in reach re-offers itself below
   for (const e of world.plants) if (e.alive) e.update(dt);
   for (const e of world.structures) if (e.alive) e.update(dt);
   for (const e of world.creatures) if (e.alive) e.update(dt);
@@ -4646,7 +4682,7 @@ function frame(now) {
   if (world.chasmGlow) world.chasmGlow.scale.setScalar(14 + Math.sin(world.clock * 1.4) * 3 + world.night * 10);
   updateMotes(dt);
   if (MAP.open) drawMap();
-  drawMini(dt);
+  drawMini(dt); showAct();
   weatherLeavings(dt); cullFar(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 

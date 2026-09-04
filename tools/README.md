@@ -256,6 +256,19 @@ redraws ten times a second and opens the full map when tapped.
 a cycle on the map panel and then again on the button column, so there is now a global
 `[hidden]{display:none!important}` and it cannot happen to the next one.
 
+### Interacting
+
+There is no interact button on screen. Whatever is within reach writes itself to `ACT` each
+frame — an icon, a label and something to run — and the right stick reads it: it lights,
+pulses, wears the thing it would act on, and its label changes from LOOK to BOARD. A tap
+runs it; a tap with nothing in reach is the jump it always was. `ACT.now` is cleared at the
+top of the frame before anything can offer, and `showAct()` touches the DOM only when the
+offer actually changes.
+
+Adding the next one — picking a mudlark up — is one more `offerAct` call from whatever is
+near, and nothing else changes. The ship offers itself only inside `SHIP.near`, which is 8
+units: close enough that the hatch swinging open is the same signal as the stick lighting.
+
 ### The map
 
 `map` on the HUD, or `m`. Drawn from the terrain's own vertex colours and heights rather
