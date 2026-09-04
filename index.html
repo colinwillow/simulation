@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b17';
+const BUILD = 'b18';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1088,8 +1088,11 @@ function alignTo(obj, x, z, blend = .55) { const n = normalAt(x, z); const up = 
 const OB = { cell: 14, map: new Map() };
 let obStamp = 0;
 function obRad(o) { return o.owner && o.owner.growth !== undefined ? o.r * (.12 + .88 * o.owner.growth) : o.r; }
-function obAdd(x, z, r, owner) {
-  const o = { x, z, r, owner, _cells: [], _s: -1 }, c = OB.cell;
+// `top` is the world Y of the highest point of the thing. Default Infinity: a trunk, a
+// cliff, a cairn — something you go round. Anything that gives a real number is a shape
+// you can be above, and once your feet clear it the collider stops existing for you.
+function obAdd(x, z, r, owner, top = Infinity) {
+  const o = { x, z, r, owner, top, _cells: [], _s: -1 }, c = OB.cell;
   for (let cx = Math.floor((x - r) / c); cx <= Math.floor((x + r) / c); cx++)
     for (let cz = Math.floor((z - r) / c); cz <= Math.floor((z + r) / c); cz++) {
       const k = cx + ',' + cz; let a = OB.map.get(k); if (!a) { a = []; OB.map.set(k, a); }
@@ -1350,7 +1353,7 @@ class Stump {
     }
     for (const m of mergeBin(bin)) this.g.add(m);
     scene.add(this.g);
-    this.ob = obAdd(x, z, elder ? 1.5 : .95, this);
+    this.ob = obAdd(x, z, elder ? 1.5 : .95, this, this.pos.y + h + .35);   // splinters and all
   }
   update() {} dispose() { obRemove(this.ob); scene.remove(this.g); }
 }
@@ -1423,7 +1426,7 @@ class Mound {
     for (let i = 0; i < 5; i++) { const b = mesh(pick(G.blob), M.mound, rnd(.9, 1.9), rnd(.35, .75), rnd(.9, 1.9), rnd(-.9, .9), rnd(0, .25), rnd(-.9, .9)); b.rotation.set(rnd(1), rnd(3), rnd(1)); b.castShadow = true; this.g.add(b); }
     this.g.add(mesh(G.sph, M.soil, .55, .3, .55, 0, .2, 0));
     scene.add(this.g); this.t = rnd(16, 26);
-    this.ob = obAdd(x, z, 1.4, this);
+    this.ob = obAdd(x, z, 1.4, this, this.pos.y + 1.05);
   }
   update(dt) {
     this.t -= dt;
@@ -2665,7 +2668,7 @@ class Campfire {
       spawn: (p, v) => { const a = rnd(Math.PI * 2), r = rnd(0, .5); p.set(x + Math.cos(a) * r, base + 1.2, z + Math.sin(a) * r); v.set(Math.cos(a) * rnd(.4, 1.6), rnd(2.6, 5), Math.sin(a) * rnd(.4, 1.6)); } });
     this.gl = glow('#ff9436', 11, .7); this.gl.position.set(0, 1.2, 0); this.g.add(this.gl);
     this.light = new THREE.PointLight(0xff8a34, 2.4, 46, 2); this.light.position.set(0, 1.6, 0); this.g.add(this.light);
-    this.ob = obAdd(x, z, 2.1, this);
+    this.ob = obAdd(x, z, 2.1, this, this.pos.y + 2.3);   // you can leap the fire, not walk through it
   }
   update(dt) {
     const f = (.78 + Math.sin(world.clock * 9.1) * .12 + Math.sin(world.clock * 23.7) * .06 + Math.sin(world.clock * 3.3) * .08) * (1 - WX.rain * .55);
@@ -2989,7 +2992,9 @@ function updateMotes(dt) {
   for (const s of world.structures) if (s.alive && s instanceof Cairn && s.beacon) attractors.push({ x: s.pos.x, y: s.pos.y + s.y + 2.2, z: s.pos.z, w: .3 + world.night * 2.6, r: 130, o: s });
   if (world.greatTree && world.greatTree.alive) { const g = world.greatTree; attractors.push({ x: g.pos.x, y: g.pos.y + g.H * .8, z: g.pos.z, w: .5 + world.night * 3.2, r: 170, o: g }); }
   for (const s of world.sparks) if (s.alive) attractors.push({ x: s.pos.x, y: s.pos.y, z: s.pos.z, w: 3.2, r: 80, o: s });
-  if (world.player && !world.player.free && !world.player.fly) attractors.push({ x: world.player.pos.x, y: world.player.pos.y + 2.8, z: world.player.pos.z, w: .35 + world.night * 1.5, r: 46, o: world.player });
+  // The lamp is the fairy's now, not a point above his head. `out` marks it as the one
+  // attractor that circulates what it catches rather than holding it (see below).
+  if (world.player && !world.player.free && !world.player.fly) attractors.push({ x: fairy.pos.x, y: fairy.pos.y, z: fairy.pos.z, w: .35 + world.night * 1.5, r: 46, o: world.player, out: true });
   for (const c of world.creatures) if (c.alive && c instanceof Drifter) attractors.push({ x: c.pos.x, y: c.pos.y, z: c.pos.z, w: .35, r: 20, o: c });
   for (const a of attractors) a.n = 0;
   const t = world.clock;
@@ -3008,9 +3013,23 @@ function updateMotes(dt) {
     let bright = 0;
     if (best) {
       const dx = best.x - x, dy = best.y - y, dz = best.z - z, d = Math.sqrt(dx * dx + dy * dy + dz * dz) + .01;
-      const pull = d < 4 ? -.5 : best.w * 1.4; ax += dx / d * pull; ay += dy / d * pull; az += dz / d * pull;
-      if (d < 4.5) { best.n++; bright = 1 - d / 4.5; }
-      if (d < 9) { ax += -dz / d * 1.6; az += dx / d * 1.6; }
+      if (best.out && d < 8) {
+        // The old field had a stable point at four units, so whatever the lamp swept up
+        // parked there for good: a ring of specks that hung beside you and never moved.
+        // Steer the velocity instead of pushing on it. Each mote circles the light and
+        // breathes in and out on its own clock, so the pool is always streaming.
+        const dh = Math.hypot(dx, dz) + .01, rx = dx / dh, rz = dz / dh;
+        const want = 3 + Math.sin(t * .55 + mseed[i] * 1.7) * 2.2;
+        const radial = clamp((d - want) * .9, -2.4, 2.4), orb = 3.4;
+        ax += (-rz * orb + rx * radial - vx) * 3.2;
+        az += (rx * orb + rz * radial - vz) * 3.2;
+        ay += Math.sin(t * .8 + mseed[i]) * 1.2 - vy * .6;
+      } else {
+        const pull = d < 4 ? -.5 : best.w * 1.4; ax += dx / d * pull; ay += dy / d * pull; az += dz / d * pull;
+        if (d < 9) { ax += -dz / d * 1.6; az += dx / d * 1.6; }
+      }
+      const br = best.out ? 7 : 4.5;   // the fairy lights the whole swirl, not just its middle
+      if (d < br) { best.n++; bright = 1 - d / br; }
     }
     ax += Math.sin(t * .6 + mseed[i]) * .9 + (fbm(x * .02 + t * .03, z * .02, 2) - .5) * 3;
     az += Math.cos(t * .5 + mseed[i] * 1.3) * .9 + (fbm(z * .02, x * .02 - t * .03, 2) - .5) * 3;
@@ -3038,10 +3057,12 @@ function scatterDecor() {
   const bin = [];
   for (let i = 0; i < 200; i++) {
     const p = randomLand(.4, 44, 3, 40); if (!p) continue;
-    const s = rnd(.5, 3.4), y = height(p.x, p.z);
-    const r = mesh(pick(G.rock), Math.random() < .5 ? M.stone : M.stone2, s * rnd(.8, 1.5), s * rnd(.45, 1), s * rnd(.8, 1.5), p.x, y - s * .18, p.z);
+    const s = rnd(.5, 3.4), y = height(p.x, p.z), sy = s * rnd(.45, 1);
+    const r = mesh(pick(G.rock), Math.random() < .5 ? M.stone : M.stone2, s * rnd(.8, 1.5), sy, s * rnd(.8, 1.5), p.x, y - s * .18, p.z);
     r.rotation.set(rnd(3), rnd(3), rnd(3)); collect(bin, r);
-    if (y > .4) obAdd(p.x, p.z, s * 1.15, null);
+    // the boulder geometry is a unit icosahedron, so sy is its half-height: a rock is only
+    // as tall as it looks, and you clear a knee-high one instead of running into a wall
+    if (y > .4) obAdd(p.x, p.z, s * 1.15, null, y - s * .18 + sy * 1.25);
     if (y > 2 && Math.random() < .5) { const m = mesh(pick(G.blob), M.moss, s * .5, s * .18, s * .5, p.x + rnd(-.5, .5), y + s * .25, p.z + rnd(-.5, .5)); m.rotation.set(rnd(1), rnd(3), rnd(1)); collect(bin, m); }
   }
   for (let i = 0; i < 430; i++) {                          // reeds along the waterline
@@ -3057,7 +3078,7 @@ function scatterDecor() {
     const p = randomLand(.2, 1.6, 2, 40); if (!p) continue;
     const d = mesh(pick(G.trunk), M.wood, .3, rnd(2, 4), .3, p.x, height(p.x, p.z) + .2, p.z);
     d.rotation.set(Math.PI / 2 + rnd(-.2, .2), rnd(3), rnd(3)); collect(bin, d);
-    obAdd(p.x, p.z, 1.1, null);
+    obAdd(p.x, p.z, 1.1, null, height(p.x, p.z) + .7);   // it is lying down; step over it
   }
   const grp = new THREE.Group();
   for (const m of mergeBin(bin)) grp.add(m);
@@ -3320,9 +3341,11 @@ addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive
 // scenery you walked through. minOb is the size floor: a footprint smaller than this is
 // ignored, which leaves blooms (.75) walk-through while stumps (.95), boulders (1.1), trees
 // (1.25 / 2.1), mounds, the campfire, cairns and the great tree all stop you. Grass and moss
-// register no footprint at all, so they were never in question. stepOver lets a jump clear
-// the low things — a mound or a stump — but never a trunk.
-const OB_PLAYER = { minOb: .9, stepOver: 1.5, stepHeight: 1.8 };
+// register no footprint at all, so they were never in question. The second test is height:
+// every obstacle knows the world Y of its top, and once your feet are within `step` of it
+// the collider stops existing — so you walk over driftwood, clear a boulder or the campfire
+// with a jump, and go round a trunk, a cairn or a cliff whatever you do.
+const OB_PLAYER = { minOb: .9, step: .5 };   // ignore pebbles, and anything your feet are already over
 const MOVE = {
   max: 17, acc: 62, drag: 46,          // ground
   airAcc: 11, airDrag: 1.2,            // in the air
@@ -3393,7 +3416,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, MOVE, MODEL, RIG };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, MOVE, MODEL, RIG, OB, OB_PLAYER, obNear };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -3524,7 +3547,7 @@ function updatePlayer(dt) {
     player.pushX = lerp(player.pushX, 0, Math.min(1, dt * 9)); player.pushZ = lerp(player.pushZ, 0, Math.min(1, dt * 9));
     player.wmag = 0;                      // consumed; refilled next frame if the stick is held
     {
-      const rp = resolvePlayer(player.pos.x, player.pos.z, player.pos.y - player.gy);
+      const rp = resolvePlayer(player.pos.x, player.pos.z, player.pos.y);
       player.pos.x = rp.x; player.pos.z = rp.z;
       if (rp.nx || rp.nz) {   // stop pushing into what just stopped you, but keep sliding along it
         const l = Math.hypot(rp.nx, rp.nz) || 1, ux = rp.nx / l, uz = rp.nz / l;
@@ -3616,12 +3639,12 @@ const fairyTrail = new PSys({
 });
 // Same hard push-out the creatures use: correct only the radial overlap, so motion along
 // the surface survives and you slide round a trunk instead of sticking to it.
-function resolvePlayer(x, z, airborne) {
+function resolvePlayer(x, z, feetY) {
   let nx = 0, nz = 0;
   for (let pass = 0; pass < 3; pass++) {
     obNear(x, z, player.rad + 6, o => {
       if (o.r < OB_PLAYER.minOb) return;
-      if (o.r < OB_PLAYER.stepOver && airborne > OB_PLAYER.stepHeight) return;
+      if (feetY + OB_PLAYER.step > o.top) return;   // over the top of it: nothing to hit
       const r = o.r + player.rad;
       let dx = x - o.x, dz = z - o.z, d = Math.hypot(dx, dz);
       if (d < r) {
@@ -3676,7 +3699,7 @@ function updateFairy(dt) {
   fairyTrail.rate = p.free ? 0 : 18 + Math.min(34, f.vel.length() * 3.4);
 }
 
-isle.fairy = fairy;   // defined after the handle, so attached here
+isle.fairy = fairy; isle.stick = stick; isle.cam = cam;   // all defined after the handle, so attached here
 
 function updateRig(dt) {
   const p = player;
