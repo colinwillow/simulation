@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b23';
+const BUILD = 'b24';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2832,7 +2832,9 @@ const SHIP = {
   url: 'models/alien_ship_orange.glb',
   span: 6.9,        // widest measurement in world units; the model is authored at about one
   near: 13,         // walk inside this and the hatch opens
-  hatch: .95,       // radians about hatch_pivot's own x, which is the hinge
+  hatch: -.95,      // signed rotation about hatch_pivot's own x, which is the hinge. Negative
+                    // lifts the canopy: measured on the 2317 vertices the hatch owns, -.95
+                    // raises them 1.1 to 1.35 and +.95 drops them 1.45 down through the floor.
   rad: 2.7,         // what you bump into
 };
 class Ship {
