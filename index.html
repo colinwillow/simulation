@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b20';
+const BUILD = 'b21';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1601,10 +1601,10 @@ function idlePoseBounds(root, anims) {
 // so a rig normalised off the idle pose alone drops through the ground the moment the run
 // takes any weight — which is how six mudlarks came to spend their lives underground.
 // Measure each clip's own floor once; stepRig lifts the root by the blend of them.
-function clipFloor(root, clip) {
+function clipSpan(root, clip) {
   const mx = new THREE.AnimationMixer(root), v = new THREE.Vector3();
   mx.clipAction(clip).play();
-  let lo = Infinity;
+  let lo = Infinity, hi = -Infinity;
   for (const t of [.1, .45, .8]) {
     mx.setTime(t * clip.duration);
     root.updateMatrixWorld(true);
@@ -1612,11 +1612,11 @@ function clipFloor(root, clip) {
       if (!m.isSkinnedMesh) return;
       m.skeleton.update();
       const n = m.geometry.attributes.position.count, st = Math.max(1, n / 900 | 0);
-      for (let i = 0; i < n; i += st) { m.boneTransform(i, v); v.applyMatrix4(m.matrixWorld); if (v.y < lo) lo = v.y; }
+      for (let i = 0; i < n; i += st) { m.boneTransform(i, v); v.applyMatrix4(m.matrixWorld); if (v.y < lo) lo = v.y; if (v.y > hi) hi = v.y; }
     });
   }
   mx.stopAllAction();
-  return lo;
+  return { lo, hi };
 }
 
 // A SkinnedMesh cannot be plain-cloned: the copy keeps pointing at the original skeleton
@@ -1657,13 +1657,14 @@ function attachRig(parent, cfg, done) {
     };
     for (const k of ['walk', 'run']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
     // each clip's own floor, relative to the pose the rig was normalised on, in model units
-    for (const k in clips) { const cl = clips[k]; if (cl && e.floors[cl.name] === undefined) e.floors[cl.name] = clipFloor(e.root, cl); }
-    const refF = clips.idle ? e.floors[clips.idle.name] : clips.walk ? e.floors[clips.walk.name] : 0;
+    for (const k in clips) { const cl = clips[k]; if (cl && e.floors[cl.name] === undefined) e.floors[cl.name] = clipSpan(e.root, cl); }
+    const refF = (clips.idle ? e.floors[clips.idle.name] : clips.walk ? e.floors[clips.walk.name] : { lo: 0 }).lo;
     const lift = {};
     // Only ever correct a clip authored *below* the reference. A clip whose floor sits
     // higher is usually a pose that genuinely leaves the ground — swimming, mid-air — and
     // pulling those down would push him under the water he is meant to be floating on.
-    for (const k in clips) if (clips[k]) { const d = e.floors[clips[k].name] - refF; lift[k] = isFinite(d) ? Math.min(0, d) : 0; }
+    const span = {};
+    for (const k in clips) if (clips[k]) { const sp = e.floors[clips[k].name]; span[k] = sp; const d = sp.lo - refF; lift[k] = isFinite(d) ? Math.min(0, d) : 0; }
     const mixer = new THREE.AnimationMixer(inst);
     const acts = {};
     for (const k in clips) {
@@ -1681,7 +1682,7 @@ function attachRig(parent, cfg, done) {
         morphs.push({ inf: o.morphTargetInfluences, l: d[cfg.blinkL], r: d[cfg.blinkR] });
     });
     done({
-      root: inst, mixer, acts, box: e.box, scale: s, lift, baseY: inst.position.y,
+      root: inst, mixer, acts, box: e.box, scale: s, lift, span, baseY: inst.position.y,
       walkSpeed: walk ? e.strides[walk.name] * s : 0,
       runSpeed: run ? e.strides[run.name] * s : 0,
       w: {},                                              // smoothed weight per action
@@ -3388,6 +3389,11 @@ addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive
 // the collider stops existing — so you walk over driftwood, clear a boulder or the campfire
 // with a jump, and go round a trunk, a cairn or a cliff whatever you do.
 const OB_PLAYER = { minOb: .9, step: .5 };   // ignore pebbles, and anything your feet are already over
+// Where the waterline should cut him, as a fraction of the height the posed body actually
+// occupies: treading he is upright and cut about halfway, swimming he is flat and mostly
+// under with his back out. Read off the clips at load rather than guessed, because the
+// number that matters is a property of the animation, not of the character.
+const SWIM = { tread: .52, fwd: .64 };
 const MOVE = {
   max: 17, acc: 62, drag: 46,          // ground
   airAcc: 11, airDrag: 1.2,            // in the air
@@ -3458,7 +3464,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, MOVE, MODEL, RIG, OB, OB_PLAYER, obNear };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -3607,9 +3613,17 @@ function updatePlayer(dt) {
     const wy = waveY(player.pos.x, player.pos.z);
     const inWater = h < SEA - .3 && player.pos.y < wy + .5;
     player.swim = lerp(player.swim, inWater ? 1 : 0, Math.min(1, dt * 4));
-    // Feet sit below the surface by a depth that depends on what he is doing: treading
-    // water he hangs chest-deep, swimming forward he flattens out near the top.
-    const depth = lerp(1.35, .55, player.moving);
+    // How far the root sits under the surface. The swim clip lays him almost flat — his
+    // body occupies 1.46 units where the idle occupies 2.83 — so a depth tuned for the
+    // upright tread left him riding on the top of the water with a hand's width under him.
+    // Derive it from each clip's own posed extent instead, so he sits in the water at the
+    // fraction above whatever the animation happens to do.
+    const sp = player.rigH && player.rigH.span, rg = player.rigH;
+    let depth = lerp(1.35, .55, player.moving);   // the primitive body's fallback
+    if (sp && sp.swim && sp.swimIdle) {
+      const sink = (b, frac) => rg.baseY + (b.lo + (b.hi - b.lo) * frac) * rg.scale;
+      depth = lerp(sink(sp.swimIdle, SWIM.tread), sink(sp.swim, SWIM.fwd), player.moving);
+    }
     // Over deep water the dry target is the surface itself — not flat SEA — so he falls onto
     // the actual swell and the swim picks up from there rather than hovering above a trough.
     const target = lerp(Math.max(h, wy), Math.max(h, wy - depth), player.swim);
