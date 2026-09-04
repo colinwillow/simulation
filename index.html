@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b18';
+const BUILD = 'b19';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -3432,6 +3432,10 @@ function loadRig(g) {
       RIG.height * 1.02,
       -(r.box.max.z - r.box.min.z) * r.scale * .22,
     ]);
+    // A slim model put the anchor barely off his shoulder, so the spring held the lamp
+    // against his head and the push-out below did all the work. Sit it properly outboard.
+    { const h = Math.hypot(fairy.off.x, fairy.off.z) || 1;
+      if (h < FAIRY.rest) { fairy.off.x *= FAIRY.rest / h; fairy.off.z *= FAIRY.rest / h; } }
     logMsg('The wanderer takes shape.');
   });
 }
@@ -3616,8 +3620,6 @@ function updatePlayer(dt) {
   const hasJump = player.rigH && player.rigH.acts.jumpAir;
   const squash = hasJump ? 1 : player.grounded ? 1 - (player.land || 0) * .16 : 1 + player.hang * .07;
   g.scale.set(2 - squash, squash, 2 - squash);
-  player.light.intensity = 1.1 + world.night * 3.2;
-  player.gl.scale.setScalar(4 + world.night * 6);
 }
 
 // Blend idle against walk by how fast the creature is actually travelling, and run the
@@ -3625,9 +3627,21 @@ function updatePlayer(dt) {
 // A light that tracked the body exactly read as a prop bolted to his shoulder. This one is
 // a creature: it is pulled toward a spot beside him by a spring, so it lags when he sets
 // off and overshoots when he stops; it drifts on its own noise; and now and then it darts.
+// A lantern is a hard thing to hold next to a face. The light falls off with the square of
+// the distance, so a pass at one unit is four times the light of a pass at two, and at night
+// the lamp is already at its brightest and the bloom at its most eager — which is how it
+// came to swallow him whole. Three things keep it civil: it rests further out, it veers off
+// before it can reach him, and whatever closeness it still manages, it pays for in output.
+const FAIRY = {
+  rest: 2.3,      // how far out the spring's anchor sits, measured on the ground plane
+  space: 1.7,     // it can never be nearer than this to the body
+  veer: 3.2,      // and it starts turning away from here in
+  veerK: 30,      // how hard
+  dimAt: 1.4, dimTo: 3.0, dimTo0: .16,   // full output beyond dimTo, a sixth of it at dimAt
+};
 const fairy = {
-  pos: new THREE.Vector3(), vel: new THREE.Vector3(), off: new THREE.Vector3(.8, 2.4, -.3),
-  t: rnd(100), dart: rnd(2, 5), want: new THREE.Vector3(),
+  pos: new THREE.Vector3(), vel: new THREE.Vector3(), off: new THREE.Vector3(2.2, 2.4, -.5),   // replaced from the rig's own bounds once it loads
+  t: rnd(100), dart: rnd(2, 5), want: new THREE.Vector3(), lit: 1,
 };
 const fairyTrail = new PSys({
   n: MOBILE ? 90 : 170, life: 1.5, rate: 26, gy: .18, drag: 1.6, additive: true, a0: .85,
@@ -3678,16 +3692,23 @@ function updateFairy(dt) {
     f.vel.x += rnd(-2.6, 2.6); f.vel.y += rnd(-1, 2.6); f.vel.z += rnd(-2.6, 2.6);
   }
   f.pos.addScaledVector(f.vel, dt);
-  // It is a physical little thing, so it does not pass through him. Push it out of a
-  // capsule around the body: a radius in xz, over the height he actually occupies.
+  // It is a physical little thing, so it does not pass through him — but a hard boundary on
+  // its own just parks it against the surface. Steering off first is what reads as alive:
+  // it curves away from the body well before it arrives, and the push-out is only there to
+  // catch a dart that beat the turn.
   {
     const dx = f.pos.x - p.pos.x, dz = f.pos.z - p.pos.z, d = Math.hypot(dx, dz);
-    if (f.pos.y > p.pos.y - .2 && f.pos.y < p.pos.y + RIG.height * 1.05 && d < 1.15) {
-      if (d > 1e-3) {
-        f.pos.x = p.pos.x + dx / d * 1.15; f.pos.z = p.pos.z + dz / d * 1.15;
-        const inward = (f.vel.x * dx + f.vel.z * dz) / d;   // cancel only the part heading into him
-        if (inward < 0) { f.vel.x -= dx / d * inward; f.vel.z -= dz / d * inward; }
-      } else f.pos.x += 1.15;
+    const ux = d > 1e-3 ? dx / d : 1, uz = d > 1e-3 ? dz / d : 0;
+    if (f.pos.y > p.pos.y - .2 && f.pos.y < p.pos.y + RIG.height * 1.05) {
+      if (d < FAIRY.veer) {
+        const k = 1 - d / FAIRY.veer;
+        f.vel.x += ux * k * k * FAIRY.veerK * dt; f.vel.z += uz * k * k * FAIRY.veerK * dt;
+      }
+      if (d < FAIRY.space) {
+        f.pos.x = p.pos.x + ux * FAIRY.space; f.pos.z = p.pos.z + uz * FAIRY.space;
+        const inward = f.vel.x * ux + f.vel.z * uz;   // cancel only the part heading into him
+        if (inward < 0) { f.vel.x -= ux * inward; f.vel.z -= uz * inward; }
+      }
     }
   }
   // a leash, so a dart during a sprint can never strand it half a field away
@@ -3696,6 +3717,15 @@ function updateFairy(dt) {
   const fl = groundY(f.pos.x, f.pos.z) + .5; if (f.pos.y < fl) { f.pos.y = fl; f.vel.y = Math.abs(f.vel.y) * .4; }
   p.lamp.position.copy(f.pos);
   p.lamp.visible = !p.free;
+  // Distance to the body itself — the standing line from his feet to the top of his head,
+  // not to a point — and the lamp gives up output as it closes on him. The glow card shrinks
+  // with it: at ten units across it was wider than he is, and that is what blew out.
+  const cy = clamp(f.pos.y, p.pos.y, p.pos.y + RIG.height);
+  const near = Math.hypot(f.pos.x - p.pos.x, f.pos.y - cy, f.pos.z - p.pos.z);
+  f.lit = FAIRY.dimTo0 + (1 - FAIRY.dimTo0) * smooth(FAIRY.dimAt, FAIRY.dimTo, near);
+  p.light.intensity = (1.1 + world.night * 3.2) * f.lit;
+  p.gl.scale.setScalar((4 + world.night * 6) * (.45 + .55 * f.lit));
+  p.gl.material.opacity = .75 * (.4 + .6 * f.lit);
   fairyTrail.rate = p.free ? 0 : 18 + Math.min(34, f.vel.length() * 3.4);
 }
 
