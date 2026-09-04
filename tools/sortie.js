@@ -104,9 +104,20 @@ if(process.argv[3]==='pilot'){
   // full forward: speed at 2, 5, 10 seconds, then let go and see how long it takes to slow
   const spd=[]; let el=0; hold(10,()=>{ ST.L.y=-1; el+=.033; for(const m of [2,5,10]) if(Math.abs(el-m)<.02) spd.push({t:m,speed:+sp().toFixed(1),nose:+S.nose.toFixed(3),throttleJoint:+S.sm.throttle.toFixed(2)}); });
   out.acceleration=spd; ST.L.y=0;
-  const v0=sp(); let tHalf=null; el=0; hold(8,()=>{ el+=.033; if(tHalf===null&&sp()<v0*.5) tHalf=el; }); out.coast={from:+v0.toFixed(1),halfSpeedAfter:tHalf&&+tHalf.toFixed(1),after8s:+sp().toFixed(1)};
+  // At the new top speed a ten second run leaves the map, and the world edge bounces the
+  // ship at -0.3 of its speed, which reads as drag it does not have. Put it back over the
+  // middle first, and say plainly whether it reached the edge anyway.
+  S.g.position.x=0; S.g.position.z=0; S.pos.x=0; S.pos.z=0;
+  const v0=sp(); let tHalf=null, hitEdge=false; el=0;
+  hold(8,()=>{ el+=.033; if(tHalf===null&&sp()<v0*.5) tHalf=el; if(Math.abs(S.pos.x)>232||Math.abs(S.pos.z)>232) hitEdge=true; });
+  out.coast={from:+v0.toFixed(1),halfSpeedAfter:tHalf&&+tHalf.toFixed(1),after8s:+sp().toFixed(1),hitWorldEdge:hitEdge};
   // a turn: the yaw rate builds and the hull banks with it, and it keeps swinging when released
-  const yr=[]; el=0; hold(3,()=>{ ST.L.x=1; el+=.033; for(const m of [.5,1.5,3]) if(Math.abs(el-m)<.02) yr.push({t:m,yawRate:+S.yawRate.toFixed(2),roll:+S.roll.toFixed(2),Rout:+(b.back_jet_R.rotation.y).toFixed(2),sideR:+S.jets.sR.rate.toFixed(0),sideL:+S.jets.sL.rate.toFixed(0)}); });
+  // stick hard LEFT: the heading must rise, the hull must roll left (negative), the LEFT
+  // nozzle must swing out and the LEFT side jet must fire.
+  const h0=S.heading; const yr=[]; el=0;
+  hold(3,()=>{ ST.L.x=-1; el+=.033; for(const m of [.5,1.5,3]) if(Math.abs(el-m)<.02) yr.push({t:m,yawRate:+S.yawRate.toFixed(2),roll:+S.roll.toFixed(2),Lout:+(b.back_jet_L.rotation.y).toFixed(2),Rout:+(b.back_jet_R.rotation.y).toFixed(2),sideL:+S.jets.sL.rate.toFixed(0),sideR:+S.jets.sR.rate.toFixed(0)}); });
+  let dh=S.heading-h0; dh=Math.atan2(Math.sin(dh),Math.cos(dh));
+  out.stickLeft={headingChange:+dh.toFixed(2),turnedLeft:dh>0,rolledLeft:S.roll<0,leftNozzleOut:b.back_jet_L.rotation.y<-.05,rightNozzleStill:Math.abs(b.back_jet_R.rotation.y)<.05,leftJetFiring:S.jets.sL.rate>0,rightJetOff:S.jets.sR.rate===0};
   ST.L.x=0; const yr0=S.yawRate; hold(1.5); out.turn={ramp:yr,afterRelease1_5s:+S.yawRate.toFixed(2),wasBeforeRelease:+yr0.toFixed(2)};
   // come down: push down until it lands, note when the gear drops
   let gearCmdAlt=null, gearDownAlt=null, tDown=0, atTouch=null;

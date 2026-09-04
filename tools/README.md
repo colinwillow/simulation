@@ -208,7 +208,12 @@ the rim, with the ankle counter-folded so the pad stays flat. None of it is gues
 bone names.
 
 `Ship` keeps a small control set — throttle, yaw, pitch, strafe, gear — and a smoothed
-shadow of it that the joints actually follow, so nothing ever snaps. The outside nozzle
+shadow of it that the joints actually follow, so nothing ever snaps. **Heading increases
+toward +X, which is the ship's own left**, so a left stick has to raise it; it was lowering
+it, and the bank and the nozzles — which are read off the yaw rate and the stick — followed
+the wrong turn perfectly consistently. That is the trap: every part agreed with every other
+part, and all of them were mirrored. `tools/sortie.js pilot` now asserts the whole chain from
+one stick input, which is the only way to catch a fault that is self-consistent. The outside nozzle
 swings out through a turn, both follow the nose through a climb, the hull banks and noses
 with them, the side jets fire on strafe-toward and turn-away, and four `PSys` emitters read
 their position and axis off the flame bones every frame so the exhaust follows the
@@ -234,6 +239,22 @@ frame the feet reach the ground it is down and the hull dips on its legs, the je
 seconds to die, and only then does `leave` appear. Over water there is nothing to land on,
 so it hovers above the swell. `npm run check:ship pilot` flies all of that under node and
 prints the timings.
+
+### The interface
+
+Three clusters, each folded away by default or on a tap, so what is on screen while you play
+is the map, whatever the ship is offering you, and the sticks. The island's own title is the
+button for its numbers; one `···` chip holds the debug controls; `notes` holds the log. The
+`fold()` helper is four lines and every panel goes through it.
+
+The minimap, top right, is the full map at a tenth the size — the same `drawMapTo` with the
+labels dropped and the glyphs scaled by `K`, rather than a second thing to keep in step. It
+redraws ten times a second and opens the full map when tapped.
+
+**An id rule that sets `display` beats the UA stylesheet's `[hidden]`**, so a panel styled
+`#btns{display:flex}` can never hide however carefully the JS sets the attribute. That cost
+a cycle on the map panel and then again on the button column, so there is now a global
+`[hidden]{display:none!important}` and it cannot happen to the next one.
 
 ### The map
 

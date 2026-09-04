@@ -19,6 +19,9 @@
     touch-action:none;overscroll-behavior:none;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
     -webkit-user-select:none;user-select:none}
   canvas{display:block;touch-action:none}
+  /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
+     could never hide. This has now cost two of them; make it impossible for the next one. */
+  [hidden]{display:none!important}
   #scrim{position:fixed;left:0;right:0;top:0;height:300px;z-index:1;pointer-events:none;
     background:linear-gradient(rgba(4,8,16,.62),rgba(4,8,16,.28) 55%,rgba(4,8,16,0))}
   #scrimB{position:fixed;left:0;right:0;bottom:0;height:190px;z-index:1;pointer-events:none;
@@ -32,7 +35,6 @@
   #log div{animation:fade 11s forwards}
   @keyframes fade{0%{opacity:0;transform:translateY(4px)}6%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
   #hint{position:fixed;right:16px;bottom:14px;font-size:12px;opacity:.5;pointer-events:none;text-align:right;line-height:1.5}
-  #mapv[hidden]{display:none}
   #mapv{position:fixed;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;justify-content:center;
     background:rgba(6,10,18,.82);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
   #mapv h2{margin:0 0 10px;font-size:19px;font-weight:normal;letter-spacing:.06em;opacity:.95}
@@ -62,24 +64,41 @@
   #sticks .stick.act .knob{box-shadow:0 0 20px rgba(255,186,110,.55),inset 0 1px 3px rgba(255,255,255,.4)}
   #sticks .lbl{position:absolute;left:0;right:0;bottom:-19px;text-align:center;font-size:11px;
     color:#f2e4c8;opacity:.42;letter-spacing:.14em;font-variant:small-caps}
-  #btns{position:fixed;right:calc(20px + env(safe-area-inset-right));top:calc(74px + env(safe-area-inset-top));z-index:4;display:flex;flex-direction:column;gap:8px}
-  #btns button{font-family:inherit;font-size:13px;color:#f0e7d4;background:rgba(240,235,220,.1);
-    border:1px solid rgba(240,235,220,.3);border-radius:16px;padding:7px 15px}
-  #btns button.on{background:rgba(255,190,110,.3);border-color:rgba(255,200,130,.7)}
-  @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:176px}}
+  /* one language for every chip in the interface, so nothing reads as a debug leftover */
+  .tog{font-family:inherit;font-size:13px;color:#f0e7d4;background:rgba(240,235,220,.09);
+    border:1px solid rgba(240,235,220,.26);border-radius:15px;padding:6px 13px;line-height:1;
+    -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);transition:background .16s,border-color .16s}
+  .tog.on{background:rgba(255,190,110,.28);border-color:rgba(255,200,130,.66)}
+  .tog.icon{padding:6px 11px;letter-spacing:.06em}
+  #ui{position:fixed;right:calc(15px + env(safe-area-inset-right));top:calc(13px + env(safe-area-inset-top));
+    z-index:4;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+  #mini{width:104px;height:104px;display:block;border-radius:4px;border:1px solid rgba(240,228,200,.24);
+    box-shadow:0 5px 20px rgba(0,0,0,.5),inset 0 0 24px rgba(0,0,0,.4);background:rgba(8,14,24,.5)}
+  #btns{display:flex;flex-direction:column;align-items:flex-end;gap:7px}
+  #hudHead{pointer-events:auto;cursor:pointer;display:inline-block}
+  #logT{position:fixed;left:calc(16px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));z-index:3;opacity:.7}
+  #log{bottom:46px}
+  @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:206px}#logT{bottom:176px}#mini{width:92px;height:92px}}
 </style>
 </head>
 <body>
 <div id="boot">growing an island…</div>
 <div id="scrim"></div><div id="scrimB"></div>
-<div id="hud"><h1>Lantern Isle</h1><div class="era" id="era">The Quiet</div><div id="stats"></div><div id="perf"></div></div>
+<div id="hud"><div id="hudHead"><h1>Lantern Isle</h1><div class="era" id="era">The Quiet</div></div>
+  <div id="hudBody" hidden><div id="stats"></div><div id="perf"></div></div></div>
+<button id="logT" class="tog icon" title="the island's notes">notes</button>
 <div id="log"></div>
 <div id="hint">left stick walks · right stick looks · scroll or pinch to zoom<br>WASD / arrows also work · tap the ground to drop a spark</div>
 <div id="sticks">
   <div class="stick" id="stkL"><div class="knob"></div><div class="lbl">MOVE</div></div>
   <div class="stick" id="stkR"><div class="knob"></div><div class="lbl">LOOK</div></div>
 </div>
-<div id="btns"><button id="flyB">fly</button><button id="freeB">free cam</button><button id="shipB" hidden>board</button><button id="mapB">map</button></div>
+<div id="ui">
+  <canvas id="mini" title="open the map"></canvas>
+  <button id="shipB" class="tog" hidden>board</button>
+  <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
+  <div id="btns" hidden><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
+</div>
 <div id="mapv" hidden><h2>Lantern Isle<span id="mapera"></span></h2><div id="mapwrap"><canvas id="mapc"></canvas></div>
 <div id="maplg"></div><div id="mapfoot">tap anywhere to close</div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -113,7 +132,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b28';
+const BUILD = 'b29';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2906,12 +2925,13 @@ const SHIP = {
 // it answers with motion. Lift-off is a sequence — the jets spool with the hull trembling,
 // then it unsticks and climbs slowly — and landing is a settle, not a stop.
 const PILOT = {
-  thrust: 5.9, reverse: 2.8, drag: .165,        // forward: top speed about 36, eleven seconds to get there, four to lose half of it
-  strafe: 4.2,                                  // side jets, same drag
+  thrust: 8.6, reverse: 4, drag: .135,          // forward: tops out near 64, and still takes about seven seconds to feel it
+  strafe: 5.5,                                  // side jets, same drag
   climb: 6.8, vdrag: .62, g: 9.8,               // vertical: hover is neutral, push to go up or down
   yawA: 1.0, yawDrag: 1.2,                      // turning builds up, about .8 rad/s flat out, and carries on for a beat when released
   spoolT: 2.5, cool: 2.1,                       // seconds for the jets to come up, and to die down
-  bank: .55, nose: .05, noseV: .012,            // the lean it takes from the yaw rate and from accelerating
+  bank: .55, nose: .26, noseV: .012,            // lean from the yaw rate, and from the stick rather than from the
+                                                // acceleration, so a bigger engine cannot rear the nose up further
   gearUpAt: 9, gearDownAt: 14,                  // above the ground, on the way up and on the way down
   camR: 27, camPol: 1.22, camLag: 2.6,          // the chase view: further back, flatter, and behind by a beat
   waterAlt: 1.4,                                // over water it hovers this far above the swell; there is nothing to land on
@@ -3046,9 +3066,12 @@ class Ship {
   pilot(dt) {
     const c = this.ctl, P = PILOT, t = world.clock;
     // ---- read the sticks: left is thrust and turn, right is climb and strafe ----
-    let fwd = -stick.L.y, yaw = stick.L.x, up = -stick.R.y, str = stick.R.x;
+    // Increasing heading swings the nose toward +X, which is the ship's own left (lx below),
+    // so a left stick has to RAISE the heading. It was lowering it, turning the ship the
+    // wrong way — and the bank, which is read off the yaw rate, dutifully followed it over.
+    let fwd = -stick.L.y, yaw = -stick.L.x, up = -stick.R.y, str = stick.R.x;
     if (keys.w || keys.arrowup) fwd += 1; if (keys.s || keys.arrowdown) fwd -= 1;
-    if (keys.d || keys.arrowright) yaw += 1; if (keys.a || keys.arrowleft) yaw -= 1;
+    if (keys.d || keys.arrowright) yaw -= 1; if (keys.a || keys.arrowleft) yaw += 1;
     if (keys[' ']) up += 1; if (keys.shift) up -= 1;
     if (keys.e) str += 1; if (keys.q) str -= 1;
     fwd = clamp(fwd, -1, 1); yaw = clamp(yaw, -1, 1); up = clamp(up, -1, 1); str = clamp(str, -1, 1);
@@ -3116,7 +3139,7 @@ class Ship {
     c.gear = (alt > P.gearUpAt && this.vel.y > -.5 && !(alt < P.gearDownAt && this.vel.y < .5)) ? 1 : (alt < P.gearDownAt ? 0 : this.sm.gear > .5 ? 1 : 0);
     // the lean: from the yaw rate and the strafe, not the stick; the nose from acceleration and climb
     this.roll = lerp(this.roll, -this.yawRate * P.bank - aS * .05, Math.min(1, dt * 3));
-    this.nose = lerp(this.nose, -aF * P.nose - this.vel.y * P.noseV + Math.min(0, fwdV) * .004, Math.min(1, dt * 2.5));
+    this.nose = lerp(this.nose, -clamp(fwd * P.nose + this.vel.y * P.noseV, -.42, .42), Math.min(1, dt * 2.5));
   }
   update(dt) {
     const b = this.bones; if (!b) return;
@@ -3184,8 +3207,8 @@ class Ship {
       if (pad && g0.pad) pad.rotation[ax] = g0.pad[ax] - amt * gk;
     }
     const breathe = (1 - this.air) * (1 - this.power) * Math.sin(t * .7) * .03;
-    if (b.back_jet_L) { const g0 = this.gear0.back_jet_L.hip; b.back_jet_L.rotation.x = g0.x + sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_L.rotation.y = g0.y - Math.max(0, -sm.yaw) * SHIP.yawOut; }
-    if (b.back_jet_R) { const g0 = this.gear0.back_jet_R.hip; b.back_jet_R.rotation.x = g0.x + sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_R.rotation.y = g0.y + Math.max(0, sm.yaw) * SHIP.yawOut; }
+    if (b.back_jet_L) { const g0 = this.gear0.back_jet_L.hip; b.back_jet_L.rotation.x = g0.x + sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_L.rotation.y = g0.y - Math.max(0, sm.yaw) * SHIP.yawOut; }   // turning left: left nozzle out
+    if (b.back_jet_R) { const g0 = this.gear0.back_jet_R.hip; b.back_jet_R.rotation.x = g0.x + sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_R.rotation.y = g0.y + Math.max(0, -sm.yaw) * SHIP.yawOut; }  // and the mirror of it
     // ---- the hatch, only when it is sitting still with nobody inside; and the button ----
     const want = !flying && playerNear < SHIP.near ? 1 : 0;
     const canBoard = !flying && this.open > .5 && playerNear < SHIP.near && !(p && p.aboard);
@@ -3197,7 +3220,7 @@ class Ship {
     // ---- exhaust ----
     if (this.em) {
       this.g.updateMatrixWorld(true);
-      const left = Math.max(0, sm.strafe) + Math.max(0, -sm.yaw), right = Math.max(0, -sm.strafe) + Math.max(0, sm.yaw);
+      const left = Math.max(0, sm.strafe) + Math.max(0, sm.yaw), right = Math.max(0, -sm.strafe) + Math.max(0, -sm.yaw);
       const demand = { L: sm.throttle, R: sm.throttle, sL: clamp(left, 0, 1) * this.air, sR: clamp(right, 0, 1) * this.air };
       for (const k in this.em) {
         const em = this.em[k]; if (!em.from || !em.to) continue;
@@ -4094,9 +4117,21 @@ addEventListener('keydown', e => { keys[e.key.toLowerCase()] = 1; if (e.key === 
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
 const flyB = document.getElementById('flyB'), freeB = document.getElementById('freeB');
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
-const mapB = document.getElementById('mapB');
-mapB.addEventListener('click', e => { e.stopPropagation(); toggleMap(); });
+const mapB = null;   // the minimap is the way in now
+document.getElementById('mini').addEventListener('click', e => { e.stopPropagation(); toggleMap(true); });
 document.getElementById('mapv').addEventListener('pointerdown', () => toggleMap(false));
+// Three clusters, each folded away by default or on a tap: the island's numbers behind its
+// own title, the debug controls behind one chip, and the notes behind theirs. What is left
+// on screen is the map, whatever the ship offers you, and the sticks.
+const fold = (btn, panel, startOpen) => {
+  let on = !!startOpen; const el = document.getElementById(panel), b = document.getElementById(btn);
+  const apply = () => { el.hidden = !on; b.classList.toggle('on', on); };
+  b.addEventListener('click', e => { e.stopPropagation(); on = !on; apply(); });
+  apply();
+};
+fold('hudHead', 'hudBody', false);
+fold('ctlT', 'btns', false);
+fold('logT', 'log', true);
 const shipB = document.getElementById('shipB'), hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
 shipB.addEventListener('click', () => { const sh = world.ship; if (!sh) return; if (player.aboard) sh.leave(); else sh.board(); });
 addEventListener('keydown', e => { if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
@@ -4466,8 +4501,18 @@ const MAP_KEY = {
   camp: ['#ffb45a', 'camp'], cave: ['#9fd6ff', 'cave'], isle: ['#c9a6ff', 'floating isle'],
   beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'],
 };
-function drawMap() {
-  const cv = document.getElementById('mapc'); if (!cv || !MAP.img) return;
+function drawMap() { drawMapTo(document.getElementById('mapc'), false); }
+// The minimap is the same picture at a tenth the size, so it is the same code with the
+// labels dropped and the glyphs shrunk rather than a second thing to keep in step.
+let miniT = 0;
+function drawMini(dt) {
+  if ((miniT -= dt) > 0) return;
+  miniT = .1;
+  if (!MAP.img) buildMapImage();
+  drawMapTo(document.getElementById('mini'), true);
+}
+function drawMapTo(cv, mini) {
+  if (!cv || !MAP.img) return;
   const wpx = cv.clientWidth * Q.dpr | 0, hpx = cv.clientHeight * Q.dpr | 0;
   if (!wpx || !hpx) return;
   if (cv.width !== wpx || cv.height !== hpx) { cv.width = wpx; cv.height = hpx; }
@@ -4476,15 +4521,16 @@ function drawMap() {
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
   g.drawImage(MAP.img, 0, 0, wpx, hpx);
   const px = (x, z) => [(x + W) / (2 * W) * wpx, (z + W) / (2 * W) * hpx];
+  const K = mini ? .62 : 1;
   const dot = (x, z, hex, r, ring) => {
     const [a, b] = px(x, z);
-    g.beginPath(); g.arc(a, b, r * S, 0, 6.283);
+    g.beginPath(); g.arc(a, b, r * S * K, 0, 6.283);
     g.fillStyle = hex; g.shadowColor = 'rgba(0,0,0,.75)'; g.shadowBlur = 5 * S; g.fill(); g.shadowBlur = 0;
-    if (ring) { g.beginPath(); g.arc(a, b, (r + 3.5) * S, 0, 6.283); g.strokeStyle = hex; g.globalAlpha = .55; g.lineWidth = 1.2 * S; g.stroke(); g.globalAlpha = 1; }
+    if (ring) { g.beginPath(); g.arc(a, b, (r + 3.5) * S * K, 0, 6.283); g.strokeStyle = hex; g.globalAlpha = .55; g.lineWidth = 1.2 * S; g.stroke(); g.globalAlpha = 1; }
     return [a, b];
   };
   const arrow = (x, z, heading, hex, size) => {
-    const [a, b] = px(x, z), dx = Math.sin(heading), dz = Math.cos(heading), s = size * S;
+    const [a, b] = px(x, z), dx = Math.sin(heading), dz = Math.cos(heading), s = size * S * K;
     g.save(); g.translate(a, b); g.rotate(Math.atan2(dx, -dz));
     g.beginPath(); g.moveTo(0, -s); g.lineTo(s * .72, s * .8); g.lineTo(0, s * .38); g.lineTo(-s * .72, s * .8); g.closePath();
     g.fillStyle = hex; g.shadowColor = 'rgba(0,0,0,.8)'; g.shadowBlur = 6 * S; g.fill(); g.shadowBlur = 0;
@@ -4495,9 +4541,9 @@ function drawMap() {
     const [hex] = MAP_KEY[m.k] || ['#ffffff'];
     let a, b;
     if (m.k === 'ship') { arrow(m.x, m.z, m.heading || 0, hex, 6); [a, b] = px(m.x, m.z);
-      if (m.flying) { g.beginPath(); g.arc(a, b, 10 * S, 0, 6.283); g.strokeStyle = hex; g.globalAlpha = .5; g.lineWidth = 1.2 * S; g.stroke(); g.globalAlpha = 1; } }
+      if (m.flying) { g.beginPath(); g.arc(a, b, 10 * S * K, 0, 6.283); g.strokeStyle = hex; g.globalAlpha = .5; g.lineWidth = 1.2 * S; g.stroke(); g.globalAlpha = 1; } }
     else [a, b] = dot(m.x, m.z, hex, m.k === 'cairn' ? 2.4 : m.k === 'tree' ? 4.5 : 3.4, m.k === 'beacon' || m.k === 'isle');
-    if (m.label) { g.fillStyle = 'rgba(246,238,222,.82)'; g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 4 * S;
+    if (m.label && !mini) { g.fillStyle = 'rgba(246,238,222,.82)'; g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 4 * S;
       g.fillText(m.label, a, b + 7 * S); g.shadowBlur = 0; }
   }
   // the wanderer last, on top of everything, and only when he is on his own feet
@@ -4513,7 +4559,7 @@ function toggleMap(on) {
   if (MAP.open && !MAP.img) { const t0 = performance.now(); buildMapImage(); console.info('map built in ' + (performance.now() - t0).toFixed(0) + ' ms'); }
   if (MAP.open) { buildLegend(); document.getElementById('mapera').textContent = eraName(); stick.L.x = stick.L.y = stick.R.x = stick.R.y = 0; }
   v.hidden = !MAP.open;
-  document.getElementById('mapB').classList.toggle('on', MAP.open);
+  mapB && mapB.classList.toggle('on', MAP.open);
   if (MAP.open) drawMap();
 }
 
@@ -4562,7 +4608,8 @@ function frame(now) {
     cam.tgt.lerp(_camWant.set(sh.pos.x + sh.vel.x * .22, sh.pos.y + 2.4 + sh.vel.y * .12, sh.pos.z + sh.vel.z * .22), Math.min(1, dt * 6));
     let want = sh.heading + Math.PI, d = want - cam.az; d = Math.atan2(Math.sin(d), Math.cos(d));
     cam.az += d * Math.min(1, dt * PILOT.camLag);
-    cam.r = lerp(cam.r, PILOT.camR, Math.min(1, dt * 2)); cam.pol0 = lerp(cam.pol0, PILOT.camPol, Math.min(1, dt * 2)); cam.idle = 0;
+    cam.r = lerp(cam.r, PILOT.camR + Math.min(15, Math.hypot(sh.vel.x, sh.vel.z) * .26), Math.min(1, dt * 1.2));
+    cam.pol0 = lerp(cam.pol0, PILOT.camPol, Math.min(1, dt * 2)); cam.idle = 0;
   } else {
     if (!player.free) cam.tgt.lerp(_camWant.set(player.pos.x, player.pos.y + 3.4, player.pos.z), Math.min(1, dt * 7));
     cam.pol0 = lerp(cam.pol0, CAM_POL, Math.min(1, dt * 2));
@@ -4599,6 +4646,7 @@ function frame(now) {
   if (world.chasmGlow) world.chasmGlow.scale.setScalar(14 + Math.sin(world.clock * 1.4) * 3 + world.night * 10);
   updateMotes(dt);
   if (MAP.open) drawMap();
+  drawMini(dt);
   weatherLeavings(dt); cullFar(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
