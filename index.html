@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b26';
+const BUILD = 'b27';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -349,25 +349,36 @@ function mesh(geo, mat, sx = 1, sy = 1, sz = 1, px = 0, py = 0, pz = 0) {
 }
 // Merge a pile of meshes into one buffer per material. Draw calls are the budget
 // here, not triangles, and static props are most of the count.
+// This used to expand every part with toNonIndexed() before concatenating, which was simple
+// and cost a fortune: a blob is 221 vertices indexed and 960 unrolled, so the merged world
+// held four million vertices where one would do. Merging keeps the indices now — concatenate
+// the vertex data, and rewrite each part's indices with an offset.
 function mergeBin(bin) {
   const byMat = new Map();
   for (const it of bin) { let a = byMat.get(it.mat); if (!a) { a = []; byMat.set(it.mat, a); } a.push(it); }
   const out = [];
   for (const [mat, items] of byMat) {
-    let total = 0; const parts = [];
+    let total = 0, idxTotal = 0; const parts = [];
     for (const it of items) {
-      const g = (it.geo.index ? it.geo.toNonIndexed() : it.geo.clone());
-      g.applyMatrix4(it.matrix); parts.push(g); total += g.attributes.position.count;
+      const g = it.geo.clone(); g.applyMatrix4(it.matrix); parts.push(g);
+      const n = g.attributes.position.count;
+      total += n; idxTotal += g.index ? g.index.count : n;
     }
-    const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3); let o = 0;
+    const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3);
+    const idx = total > 65535 ? new Uint32Array(idxTotal) : new Uint16Array(idxTotal);
+    let v = 0, i = 0;
     for (const g of parts) {
-      pos.set(g.attributes.position.array, o * 3);
-      if (g.attributes.normal) nor.set(g.attributes.normal.array, o * 3);
-      o += g.attributes.position.count; g.dispose();
+      const n = g.attributes.position.count;
+      pos.set(g.attributes.position.array, v * 3);
+      if (g.attributes.normal) nor.set(g.attributes.normal.array, v * 3);
+      if (g.index) { const a = g.index.array; for (let k = 0; k < a.length; k++) idx[i++] = a[k] + v; }
+      else for (let k = 0; k < n; k++) idx[i++] = k + v;
+      v += n; g.dispose();
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
     const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; out.push(m);
   }
   return out;
@@ -1672,7 +1683,26 @@ function loadModel(url, cb) {
   }, undefined, err => { e.failed = true; e.waiting.length = 0; console.warn('model failed, keeping placeholder:', url, err); });
 }
 
+// A 4096 square texture is 67 MB of RGBA on the GPU, 89 with its mipmaps, and these models
+// arrived with four of them: 340 MB before a single triangle is drawn, which is more than a
+// phone will give a browser tab and is why Safari was killing it. The wanderer is a couple
+// of hundred pixels tall on the screen he is played on, so cap the size and scale the rest
+// down once, at load, into a canvas. Nothing about the model has to change for this.
+const TEX_CAP = MOBILE ? 1024 : 2048;
+function shrinkTexture(t) {
+  const im = t && t.image; if (!im) return 0;
+  const w = im.width || 0, h = im.height || 0;
+  const big = Math.max(w, h); if (!big || big <= TEX_CAP) return 0;
+  const k = TEX_CAP / big, nw = Math.max(1, Math.round(w * k)), nh = Math.max(1, Math.round(h * k));
+  const c = document.createElement('canvas'); c.width = nw; c.height = nh;
+  const g = c.getContext('2d'); if (!g) return 0;
+  g.drawImage(im, 0, 0, nw, nh);
+  t.image = c; t.needsUpdate = true;
+  if (im.close) im.close();                      // release the decoded ImageBitmap
+  return (w * h - nw * nh) * 4 * 1.33 / 1048576;   // megabytes saved, mipmaps included
+}
 function prepModel(root) {
+  let saved = 0; const seen = new Set();
   root.traverse(o => {
     if (!o.isMesh) return;
     o.castShadow = true; o.receiveShadow = true;
@@ -1681,6 +1711,9 @@ function prepModel(root) {
     o.frustumCulled = false;
     for (const m of [].concat(o.material)) {
       if (!m) continue;
+      for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
+        const t = m[k]; if (!t || seen.has(t)) continue; seen.add(t); saved += shrinkTexture(t);
+      }
       if (MODEL.forceOpaque && m.transparent) {
         m.transparent = false; m.depthWrite = true; m.alphaTest = 0; m.needsUpdate = true;
       }
@@ -1692,6 +1725,7 @@ function prepModel(root) {
       }
     }
   });
+  if (saved > 1) console.info('texture downscale to ' + TEX_CAP + 'px saved ' + saved.toFixed(0) + ' MB of GPU memory');
 }
 
 // Box3.setFromObject is wrong on a skinned mesh: it transforms the rest-pose geometry box

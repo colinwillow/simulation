@@ -448,6 +448,33 @@ Camera zoom is clamped to `ZMIN`..`ZMAX`. ZMIN was 8, close enough for a pinch t
 camera inside the wanderer; it is 14 now. A pinch step is also ratio-capped, because two
 fingers landing a frame apart could otherwise fling the zoom across its whole range at once.
 
+### Memory, which is a harder limit than frame rate
+
+Safari kills a tab that wants too much, and it does not say why: the page loads, drags, and
+turns into "A problem repeatedly occurred". Frame rate is a budget you overspend; memory is
+a wall you hit. Two things put the island through it, and both were invisible from the
+draw-call counter that had been the focus until then.
+
+**Textures.** The exported models carried 4096-square maps. One of those is 67 MB of RGBA on
+the GPU and 89 with its mipmaps, and there were several: 341 MB resident in the scene, more
+than a phone gives a whole tab, before a triangle was drawn. `shrinkTexture` caps them at
+load — 1024 on mobile, 2048 elsewhere — by drawing each one once into a canvas. The wanderer
+is a couple of hundred pixels tall on the screen he is played on, so nothing is visibly lost.
+Scene texture memory went 341 MB to 21 MB. **Check the texture size before blaming anything
+else**; a model's file size hides this completely, because a 4096 map of flat colour is a
+tiny WebP and a ruinous texture.
+
+**Unrolled geometry.** `mergeBin` used to call `toNonIndexed()` on every part before
+concatenating. A blob is 221 vertices indexed and 960 unrolled, so merging the world for
+draw calls quietly turned 1.2M vertices into 4.3M — 102 MB of buffers, mirrored again on the
+GPU. It merges indexed now, which keeps every bit of the draw-call win: 39 MB, and the same
+1300 calls.
+
+Together: 443 MB of texture and geometry down to 61 MB, JS heap 137 MB to 71 MB, and the
+load a third quicker. The models are still 17 MB to download, because they carry an
+animation library nothing uses — that is a re-export away, and is bandwidth rather than
+memory, since the keyframe data is only 4.5 MB decoded.
+
 ---
 
 ## Tools
