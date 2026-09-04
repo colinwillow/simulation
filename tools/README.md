@@ -332,6 +332,17 @@ frame. The terrain opts out with `userData.noHole` — the ground in front of hi
 always nearer than his chest, and a hole in the grass every frame is not what anyone wants.
 Materials with their own `onBeforeCompile` (water, grass) are untouched.
 
+**Bodies opt out too**, and this is not optional: his own skull is nearer the lens than his
+chest, so the hole was punching through his head and showing his eyeballs from behind — most
+visible once the camera pulled in close to clear some geometry, which is exactly when it is
+least wanted. Models opt out by material in `prepModel`, one line covering the wanderer, the
+mudlarks and the ship. Creatures cannot, because their materials are shared with the scenery
+— a mossback and a moss tuft are both `M.moss` — so the `Creature` constructor swaps every
+material for a cached no-hole copy via `solid()`, once, before `flatten` bakes them in. That
+covers every species including ones not written yet. The copies are real clones, so
+`updateSky` mirrors `emissiveIntensity` onto them or the glowing creatures stop pulsing at
+night.
+
 There is a `BUILD` stamp in the HUD's perf line. Pages caches `index.html`, so a phone can
 sit on an old build while the repo has moved on; that once cost a whole round trip arguing
 about which way a model faced. Bump it with anything that changes behaviour.

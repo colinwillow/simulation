@@ -154,7 +154,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b32';
+const BUILD = 'b33';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -313,6 +313,19 @@ THREE.MeshStandardMaterial.prototype.onBeforeCompile = function (sh) {
       }
     }`);
 };
+// The hole is for scenery standing between the lens and the wanderer. It is not for the
+// wanderer, and not for anything else alive: seeing his own eyeballs through the back of his
+// skull is the exact opposite of what it is for. Models opt out by material in prepModel,
+// but a creature's materials are shared with the scenery — a mossback and a moss tuft are
+// both M.moss — so a creature takes a private copy that opts out instead.
+const NOHOLE = new Map();
+function solid(mat) {
+  if (Array.isArray(mat)) return mat.map(solid);
+  if (!mat || mat.userData.noHole) return mat;
+  let c = NOHOLE.get(mat);
+  if (!c) { c = mat.clone(); c.userData = Object.assign({}, mat.userData, { noHole: true }); NOHOLE.set(mat, c); }
+  return c;
+}
 const M = {
   barkA: std(P.bark, { roughness: .95 }), barkB: std(P.bark2, { roughness: .95 }),
   canopy: [std(P.canopy, { roughness: .78 }), std(P.canopy2, { roughness: .78 }), std(P.canopy3, { roughness: .78 })],
@@ -1766,6 +1779,7 @@ function prepModel(root) {
     o.frustumCulled = false;
     for (const m of [].concat(o.material)) {
       if (!m) continue;
+      m.userData.noHole = true;          // a rig is a body: never punch a hole through it
       for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
         const t = m[k]; if (!t || seen.has(t)) continue; seen.add(t); saved += shrinkTexture(t);
       }
@@ -2018,6 +2032,7 @@ class Creature {
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
     this.g = new THREE.Group(); this.body = new THREE.Group(); this.g.add(this.body); this.build();
+    this.g.traverse(m => { if (m.isMesh && m.material) m.material = solid(m.material); });   // never see through a body
     // Bake the static half of the body — plates, spines, shells, snouts, whatever the
     // species piled on — into one mesh per material. Every part a creature animates is one
     // it kept a handle to, so protecting everything reachable from `this` is exactly right,
@@ -3871,6 +3886,8 @@ function updateSky() {
   M.drifter.emissiveIntensity = lerp(.15, 1.2, world.night);
   M.burrower2.emissiveIntensity = lerp(.2, 1.3, world.night);
   M.membrane.emissiveIntensity = lerp(.1, .8, world.night);
+  // the creatures' private copies are the same paint, so they take the same nightly lift
+  for (const [src, c] of NOHOLE) c.emissiveIntensity = src.emissiveIntensity;
   waterMat.opacity = lerp(.72, .9, dayK); waterMat.color.copy(col('#2b7fa4')).lerp(col('#12304a'), world.night * .75);
   waterUni.uSky.value.copy(tmpC.mid);
   foamUni.uOp.value = lerp(.55, 1, dayK) * (1 + WX.storm * .5);
