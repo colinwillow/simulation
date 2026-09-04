@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b22';
+const BUILD = 'b23';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2821,6 +2821,61 @@ class Hopper extends Creature {
   }
 }
 // ---------- the camp ----------
+// ---------- the ship ----------
+// It came out of Cinema 4D with its pose morphs stripped: Blender's exporter writes blend
+// shapes from mesh shape keys and animation from actions, and a pose morph driving joint
+// hierarchy is neither, so there was nothing for it to convert. Every joint survived with
+// its name though, which is the better half of the deal — the hatch, the three legs, the
+// two rear jets and the two side jets are all bones, so they take any angle you ask for
+// rather than snapping between two authored states.
+const SHIP = {
+  url: 'models/alien_ship_orange.glb',
+  span: 6.9,        // widest measurement in world units; the model is authored at about one
+  near: 13,         // walk inside this and the hatch opens
+  hatch: .95,       // radians about hatch_pivot's own x, which is the hinge
+  rad: 2.7,         // what you bump into
+};
+class Ship {
+  constructor(x, z, face) {
+    this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.open = 0; this.bones = null;
+    this.g = new THREE.Group(); this.g.position.copy(this.pos);
+    alignTo(this.g, x, z, .9); this.g.rotateY(face);
+    scene.add(this.g);
+    loadModel(SHIP.url, e => {
+      if (!this.alive) return;
+      const inst = cloneModel(e.root);
+      const sz = e.box.getSize(new THREE.Vector3());
+      const k = SHIP.span / Math.max(1e-4, Math.max(sz.x, sz.z));
+      inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
+      this.g.add(inst); this.inst = inst; this.k = k;
+      const b = {}; inst.traverse(m => { if (m.isBone) b[m.name] = m; });
+      this.bones = b;
+      this.hatch0 = b.hatch_pivot ? b.hatch_pivot.rotation.x : 0;
+      // the six hull lights as one Points rather than six sprites
+      const pts = [];
+      for (const n of ['light_L_1_', 'light_L_2', 'light_L_3', 'light_R_1', 'light_R_2', 'light_R_3']) {
+        const o2 = b[n]; if (!o2) continue;
+        inst.updateMatrixWorld(true);
+        pts.push(this.g.worldToLocal(new THREE.Vector3().setFromMatrixPosition(o2.matrixWorld)));
+      }
+      if (pts.length) { this.lights = glowPoints('#6ff0e0', 1.3, .5, pts); this.g.add(this.lights); }
+    });
+    this.ob = obAdd(x, z, SHIP.rad, this, this.pos.y + 3.4);
+  }
+  update(dt) {
+    const b = this.bones; if (!b) return;
+    // Nobody flies it yet. It sits with its legs down and notices you coming.
+    const want = world.player && !world.player.free && this.pos.distanceTo(world.player.pos) < SHIP.near ? 1 : 0;
+    this.open = lerp(this.open, want, Math.min(1, dt * (want ? 2.2 : 1.5)));
+    if (b.hatch_pivot) b.hatch_pivot.rotation.x = this.hatch0 + smooth(0, 1, this.open) * SHIP.hatch;
+    if (this.lights) this.lights.material.size = 1.3 * (.5 + world.night * .9 + this.open * .5);
+    // idle: the rear jets breathe, and the side jets twitch, so it never reads as scenery
+    const t = world.clock;
+    if (b.back_jet_L) b.back_jet_L.rotation.x = Math.sin(t * .7) * .03;
+    if (b.back_jet_R) b.back_jet_R.rotation.x = Math.sin(t * .7 + 1.1) * .03;
+  }
+  dispose() { obRemove(this.ob); scene.remove(this.g); }
+}
 class Campfire {
   constructor(x, z) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z);
@@ -3293,6 +3348,18 @@ function populate() {
   // the camp, on a beach shelf
   const cp = randomLand(1.3, 5, .5, 900, 6) || randomLand(1.2, 7, .7, 900, 4) || randomLand(1, 9, .9, 900, 2.5);
   if (cp) { world.camp = new Campfire(cp.x, cp.z); world.structures.push(world.camp); }
+  // the ship, set down on the flattest open ground we can find near the camp
+  {
+    let sp = null, best = 1e9;
+    for (let i = 0; i < 900; i++) {
+      const p = randomLand(1.6, 8, .28, 1, 7); if (!p) continue;
+      const d = cp ? Math.hypot(p.x - cp.x, p.z - cp.z) : 40;
+      if (d < 26 || d > 95) continue;
+      const sl = slope(p.x, p.z);
+      if (sl < best) { best = sl; sp = p; }
+    }
+    if (sp) { world.ship = new Ship(sp.x, sp.z, rnd(Math.PI * 2)); world.structures.push(world.ship); }
+  }
   // the cave, on the steepest flank of the massif we can find
   let cv = null, cvS = 0;
   for (let i = 0; i < 900; i++) {
