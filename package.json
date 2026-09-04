@@ -7,6 +7,7 @@
     "check:terrain": "node tools/terrain.js index.html",
     "check:sim": "node tools/headless.js index.html 6000",
     "check:model": "node tools/model.js",
+    "check:ship": "node tools/sortie.js index.html",
     "icons": "node tools/icons.js"
   },
   "devDependencies": {

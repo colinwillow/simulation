@@ -187,6 +187,37 @@ dart during a sprint could otherwise strand it half a field away. It trails 2.7�
 behind at rest and 4–7 while running, and a capsule around the body keeps it from passing
 through him — it is a creature, not a halo.
 
+### The ship
+
+`models/alien_ship_orange.glb` arrived at 0.8 MB with 31 named bones, vertex weights, one
+WebP-textured material, and no clips or blend shapes. The pose morphs authored in Cinema 4D
+(legs retracted, hatch open, jets vectored) did not survive because they never could: glTF
+morph targets move vertices, Blender writes them from mesh shape keys and animation from
+actions, and a pose morph that drives joint hierarchy is neither. That was the better
+outcome. Every mechanism is a joint, so the game drives each by any amount instead of
+sliding between two authored states.
+
+The rig's frame is +Z forward, +Y up, +X left (`leg_L` sits at +X; the rear flames run to
+−Z). Each hinge was found the same way the hatch was: rotate the joint, watch its marker
+bone move in the ship's own frame, keep the axis and sign that do the right thing. The
+`SHIP` table records the answers: the hatch lifts on `hatch_pivot.rotation.x` negative; a
+rear nozzle's `x` tips the flame up and down and its `y` swings it outward (`-y` left,
+`+y` right); each side jet's exhaust axis is ±X, so the left one firing pushes the ship
+right; the hips fold `leg_L +z`, `leg_R -z`, `leg_back +x` until the pads lie flat under
+the rim, with the ankle counter-folded so the pad stays flat. None of it is guessed from
+bone names.
+
+`Ship` keeps a small control set — throttle, yaw, pitch, strafe, gear — and a smoothed
+shadow of it that the joints actually follow, so nothing ever snaps. The outside nozzle
+swings out through a turn, both follow the nose through a climb, the hull banks and noses
+with them, the side jets fire on strafe-toward and turn-away, and four `PSys` emitters read
+their position and axis off the flame bones every frame so the exhaust follows the
+vectoring. Nothing drives the controls from input yet: the ship flies a **sortie** on its
+own (`SHIP.sortie`), waiting until the player has walked away, lifting straight up clear
+of the trees, flying one lap of the island at whatever altitude clears the terrain and the
+great tree, and settling back on its pad. Its collider leaves with it and returns with it;
+the hatch only answers the player while it is landed.
+
 ### The camera
 
 Pitch is fixed at `CAM_POL`. Looking up and down was never worth a whole stick axis, so
@@ -404,7 +435,7 @@ fingers landing a frame apart could otherwise fling the zoom across its whole ra
 
 ## Tools
 
-Three Node scripts in `tools/`. All were written because I shipped bugs that these would
+The Node scripts in `tools/`. All were written because I shipped bugs that these would
 have caught.
 
 ```bash
@@ -415,6 +446,7 @@ npm run check:terrain                  # land area, walkable %, height distribut
 npm run check:sim                      # 6000 frames with no GPU, print sim stats
 node tools/headless.js index.html 2400 storm   # ...starting in that weather
 npm run check:model models/*.glb       # what is in a model, and can the game use it
+npm run check:ship                     # fly the ship's sortie with no GPU, report every joint
 ```
 
 Each also takes an explicit file and frame count, e.g. `node tools/headless.js index.html 2000`.
@@ -436,6 +468,13 @@ height distribution. Use it to check terrain changes against intent instead of e
 **headless** stubs the DOM and WebGL, runs the simulation for N frames, and reports
 population counts, collision penetration, stuck timers and progression. Use it to check that
 ecology changes don't stall the world.
+
+**sortie** builds on headless: the loader is not available under node, so it hands the ship
+a stand-in skeleton of named bones at the measured positions and lets `Ship.update` fly a
+whole sortie against it. It reports, per phase, the ranges of every control and joint, the
+exhaust rates, whether the collider was down, terrain and great-tree clearance, and which
+side jet fired for which turn. A change to the flight model or the rig's hinge table should
+run this before it is believed.
 
 ---
 

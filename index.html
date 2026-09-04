@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b24';
+const BUILD = 'b25';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2836,13 +2836,37 @@ const SHIP = {
                     // lifts the canopy: measured on the 2317 vertices the hatch owns, -.95
                     // raises them 1.1 to 1.35 and +.95 drops them 1.45 down through the floor.
   rad: 2.7,         // what you bump into
+  // The landing gear. Each hip is a lever with the foot on the end and no authored 'up'
+  // pose, so the fold is chosen from the geometry: about the hip's lateral hinge, in the
+  // direction that swings the foot outward and up, until the pad lies flat against the
+  // underside of the rim. The pad counter-folds so it stays flat. Left and right mirror.
+  gear: { leg_L: ['z', 1.2], leg_R: ['z', -1.2], leg_back: ['x', 1.2] },
+  // Vectoring, in radians at full input, measured off the flame_direction bones: a rear
+  // nozzle's x tips the flame up and down, its y swings it outward (-y left, +y right).
+  yawOut: .62, pitchTilt: .5,
+  // How the hull answers the controls: bank into a turn, nose into a climb.
+  bank: .42, nose: .22,
+  // The sortie: nobody flies it yet, so it flies itself. It waits until you have walked
+  // away, lifts straight up clear of the trees, flies one lap of the island at altitude,
+  // comes home, lets the gear down and settles. Every joint gets exercised on the way.
+  sortie: true, firstAt: 55, every: [DAY * 1.4, DAY * 2.8],
+  cruise: 62, speed: 30, hop: 26, liftT: 6, landT: 8, radius: W * .5,
 };
 class Ship {
   constructor(x, z, face) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.open = 0; this.bones = null;
+    this.pad = this.pos.clone(); this.face = face;
     this.g = new THREE.Group(); this.g.position.copy(this.pos);
     alignTo(this.g, x, z, .9); this.g.rotateY(face);
+    this.q0 = this.g.quaternion.clone();              // how it sits on the ground
+    this.qAir = new THREE.Quaternion(); this._e = new THREE.Euler(0, 0, 0, 'YXZ');
     scene.add(this.g);
+    this.state = 'landed'; this.t = 0; this.air = 0; this.next = SHIP.firstAt; this.hop = SHIP.hop;
+    this.vel = new THREE.Vector3(); this.prevHeading = face; this.heading = face;
+    // the controls, and their smoothed shadow, which is what the joints actually follow
+    this.ctl = { throttle: 0, yaw: 0, pitch: 0, strafe: 0, gear: 0 };
+    this.sm = { throttle: 0, yaw: 0, pitch: 0, strafe: 0, gear: 0 };
+    this.gear0 = {};
     loadModel(SHIP.url, e => {
       if (!this.alive) return;
       const inst = cloneModel(e.root);
@@ -2853,6 +2877,8 @@ class Ship {
       const b = {}; inst.traverse(m => { if (m.isBone) b[m.name] = m; });
       this.bones = b;
       this.hatch0 = b.hatch_pivot ? b.hatch_pivot.rotation.x : 0;
+      for (const n in SHIP.gear) { const hip = b[n], pad = b[n + '_pivot']; if (hip) this.gear0[n] = { hip: hip.rotation.clone(), pad: pad ? pad.rotation.clone() : null }; }
+      for (const n of ['back_jet_L', 'back_jet_R']) if (b[n]) this.gear0[n] = { hip: b[n].rotation.clone() };
       // the six hull lights as one Points rather than six sprites
       const pts = [];
       for (const n of ['light_L_1_', 'light_L_2', 'light_L_3', 'light_R_1', 'light_R_2', 'light_R_3']) {
@@ -2861,20 +2887,145 @@ class Ship {
         pts.push(this.g.worldToLocal(new THREE.Vector3().setFromMatrixPosition(o2.matrixWorld)));
       }
       if (pts.length) { this.lights = glowPoints('#6ff0e0', 1.3, .5, pts); this.g.add(this.lights); }
+      this.buildJets();
     });
     this.ob = obAdd(x, z, SHIP.rad, this, this.pos.y + 3.4);
   }
+  // Exhaust. Each emitter reads its position and axis off the model's own flame bones
+  // every frame, so the particles follow the nozzles wherever the vectoring points them.
+  buildJets() {
+    const b = this.bones, mk = (from, to) => ({ from: b[from], to: b[to], p: new THREE.Vector3(), d: new THREE.Vector3(0, 0, -1), k: 0 });
+    this.em = {
+      L: mk('back_jet_L_flame', 'back_jet_L_flame_direction'), R: mk('back_jet_R_flame', 'back_jet_R_flame_direction'),
+      sL: mk('side_jet_L', 'side_jet_L_direction'), sR: mk('side_jet_R', 'side_jet_R_direction'),
+    };
+    // The exhaust leaves the nozzle at a modest world speed on purpose: the ship is doing
+    // thirty, so anything much faster than it strings out into nothing, while this hangs in
+    // the air behind as a trail. A third of the ship's own velocity carries it along.
+    const main = em => new PSys({ n: MOBILE ? 90 : 140, life: .5, rate: 0, gy: .5, drag: 2.4, additive: true, a0: .95,
+      c0: '#fff3d2', c1: '#ff7a26', s0: 1.25, s1: .2,
+      spawn: (p, v) => { p.copy(em.p).addScaledVector(em.d, rnd(0, .4)).add(new THREE.Vector3(rnd(-.2, .2), rnd(-.2, .2), rnd(-.2, .2)));
+        v.copy(em.d).multiplyScalar(7 + em.k * 9).addScaledVector(this.vel, .35).add(new THREE.Vector3(rnd(-1.2, 1.2), rnd(-1.2, 1.2), rnd(-1.2, 1.2))); } });
+    const side = em => new PSys({ n: MOBILE ? 48 : 72, life: .36, rate: 0, gy: .2, drag: 2.6, additive: true, a0: .85,
+      c0: '#e6f4ff', c1: '#3f8fff', s0: .7, s1: .1,
+      spawn: (p, v) => { p.copy(em.p).add(new THREE.Vector3(rnd(-.12, .12), rnd(-.12, .12), rnd(-.12, .12)));
+        v.copy(em.d).multiplyScalar(6 + em.k * 7).addScaledVector(this.vel, .35).add(new THREE.Vector3(rnd(-.8, .8), rnd(-.8, .8), rnd(-.8, .8))); } });
+    this.jets = { L: main(this.em.L), R: main(this.em.R), sL: side(this.em.sL), sR: side(this.em.sR) };
+    for (const k in this.jets) this.jets[k].pts.visible = false;
+  }
+  // ---- the sortie: a path, and controls read off it ----
+  planFlight() {
+    // up off the pad, out to a wide circle round the island at altitude, and home again
+    const c = this.pad, top = c.clone(); top.y += this.hop || SHIP.hop;
+    const a0 = Math.atan2(c.z, c.x), R = SHIP.radius, pts = [top.clone()];
+    let alt = SHIP.cruise;
+    for (let i = 0; i <= 64; i++) { const a = a0 + i / 64 * Math.PI * 2; alt = Math.max(alt, height(Math.cos(a) * R, Math.sin(a) * R) + 22); }
+    if (world.greatTree) alt = Math.max(alt, world.greatTree.pos.y + world.greatTree.H * 1.05 + 16);   // the crown reaches past H
+    const first = new THREE.Vector3((Math.cos(a0) * R + c.x) * .5, alt, (Math.sin(a0) * R + c.z) * .5);   // halfway out to the circle
+    pts.push(first);
+    for (let i = 1; i < 8; i++) { const a = a0 + i / 8 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * R, alt + Math.sin(i * 1.7) * 6, Math.sin(a) * R)); }
+    pts.push(first.clone(), top.clone());
+    this.curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', .5);
+    this.curveLen = this.curve.getLength();
+    // The lap is high enough by construction; the climb-out and the descent are not, and a
+    // great tree standing near the pad sits right under them. Walk the whole path against
+    // the ground and the tree's column, and if any of it comes up short, lift straight up
+    // that much further before setting off — once, since the hop is what fixes it.
+    if (!this.hopRaised) {
+      const gt = world.greatTree, gtTop = gt ? gt.pos.y + gt.H * 1.05 : -1e9;
+      let need = 0;
+      for (let i = 0; i <= 160; i++) {
+        const q = this.curve.getPointAt(i / 160);
+        let floor = height(q.x, q.z) + 14;
+        if (gt && Math.hypot(q.x - gt.pos.x, q.z - gt.pos.z) < 22) floor = Math.max(floor, gtTop + 12);
+        need = Math.max(need, floor - q.y);
+      }
+      if (need > 0) { this.hop = Math.min(SHIP.hop + need + 2, 80); this.hopRaised = true; this.planFlight(); this.hopRaised = false; }
+      else this.hop = SHIP.hop;
+    }
+  }
+  begin(state) { this.state = state; this.t = 0; }
   update(dt) {
     const b = this.bones; if (!b) return;
-    // Nobody flies it yet. It sits with its legs down and notices you coming.
-    const want = world.player && !world.player.free && this.pos.distanceTo(world.player.pos) < SHIP.near ? 1 : 0;
+    const c = this.ctl, p = world.player, t = world.clock;
+    const playerNear = p && !p.free ? this.pos.distanceTo(p.pos) : 1e9;
+    // ---- state ----
+    if (this.state === 'landed') {
+      c.throttle = 0; c.yaw = 0; c.pitch = 0; c.strafe = 0; c.gear = 0;
+      if (SHIP.sortie && t > this.next && playerNear > SHIP.near + 4 && this.open < .05) {
+        this.planFlight(); this.begin('lift'); obRemove(this.ob); this.ob = null;
+      }
+    } else if (this.state === 'lift') {
+      this.t += dt; const k = clamp(this.t / SHIP.liftT, 0, 1), e = smooth(0, 1, k);
+      this.g.position.set(this.pad.x, this.pad.y + this.hop * e, this.pad.z);
+      this.heading = this.face; c.throttle = .55 + .45 * (1 - k); c.pitch = .35 * (1 - k); c.yaw = 0; c.strafe = 0;
+      c.gear = k > .28 ? 1 : 0;
+      if (k >= 1) { this.begin('cruise'); this.dist = 0; }
+    } else if (this.state === 'cruise') {
+      // ease the speed in and out of the lap, and read every control off the path
+      const s0 = this.dist / this.curveLen, sp = SHIP.speed * (.35 + .65 * smooth(0, .07, s0) * smooth(1, .93, s0));
+      this.dist = Math.min(this.curveLen, this.dist + sp * dt);
+      const u = this.dist / this.curveLen, pos = this.curve.getPointAt(u), tan = this.curve.getTangentAt(u);
+      this.g.position.copy(pos);
+      const h = Math.atan2(tan.x, tan.z); let dh = h - this.prevHeading; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+      this.heading = h;
+      c.yaw = clamp(dh / Math.max(dt, 1e-3) / .55, -1, 1);        // a full turn input is about half a radian a second
+      c.pitch = clamp(tan.y / .32, -1, 1);
+      c.throttle = clamp(sp / SHIP.speed, .3, 1); c.strafe = 0; c.gear = 1;
+      if (u >= 1) this.begin('land');
+    } else if (this.state === 'land') {
+      this.t += dt; const k = clamp(this.t / SHIP.landT, 0, 1), e = smooth(0, 1, k);
+      this.g.position.set(this.pad.x, this.pad.y + this.hop * (1 - e), this.pad.z);
+      this.heading = this.face; c.throttle = .6 - .45 * k; c.pitch = -.3 * (1 - k); c.yaw = 0; c.strafe = 0;
+      c.gear = k > .18 ? 0 : 1;
+      if (k >= 1) { this.begin('landed'); this.next = t + rnd(SHIP.every[0], SHIP.every[1]);
+        this.g.position.copy(this.pad); this.ob = obAdd(this.pad.x, this.pad.z, SHIP.rad, this, this.pad.y + 3.4); }
+    }
+    // velocity, for the exhaust to trail from, and the previous heading for the yaw rate
+    // A position delta over dt, so a hitched frame would read as a lurch of hundreds of
+    // units a second and the exhaust would inherit it. It can never really go faster than
+    // it cruises, so it is not allowed to say it did.
+    if (dt > 0) { this.vel.copy(this.g.position).sub(this.pos).divideScalar(dt); const vl = this.vel.length(); if (vl > SHIP.speed * 1.4) this.vel.multiplyScalar(SHIP.speed * 1.4 / vl); }
+    this.pos.copy(this.g.position); this.prevHeading = this.heading;
+    // ---- smoothing: the joints never snap ----
+    const sm = this.sm;
+    for (const k in c) sm[k] = lerp(sm[k], c[k], Math.min(1, dt * (k === 'gear' ? 1.6 : 5)));
+    // ---- attitude: level and turning in the air, sat on its ground normal when down ----
+    const flying = this.state !== 'landed';
+    this.air = lerp(this.air, flying ? 1 : 0, Math.min(1, dt * (flying ? 1.1 : 1.4)));
+    this._e.set(-sm.pitch * SHIP.nose, this.heading, sm.yaw * SHIP.bank, 'YXZ');
+    this.qAir.setFromEuler(this._e);
+    this.g.quaternion.copy(this.q0).slerp(this.qAir, smooth(0, 1, this.air));
+    // ---- the joints ----
+    const gk = smooth(0, 1, sm.gear);
+    for (const n in SHIP.gear) {
+      const hip = b[n], pad = b[n + '_pivot'], g0 = this.gear0[n]; if (!hip || !g0) continue;
+      const [ax, amt] = SHIP.gear[n];
+      hip.rotation[ax] = g0.hip[ax] + amt * gk;
+      if (pad && g0.pad) pad.rotation[ax] = g0.pad[ax] - amt * gk;
+    }
+    const breathe = (1 - this.air) * Math.sin(t * .7) * .03;
+    if (b.back_jet_L) { const g0 = this.gear0.back_jet_L.hip; b.back_jet_L.rotation.x = g0.x + sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_L.rotation.y = g0.y - Math.max(0, -sm.yaw) * SHIP.yawOut; }
+    if (b.back_jet_R) { const g0 = this.gear0.back_jet_R.hip; b.back_jet_R.rotation.x = g0.x + sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_R.rotation.y = g0.y + Math.max(0, sm.yaw) * SHIP.yawOut; }
+    // ---- the hatch, only when it is sitting still ----
+    const want = !flying && playerNear < SHIP.near ? 1 : 0;
     this.open = lerp(this.open, want, Math.min(1, dt * (want ? 2.2 : 1.5)));
     if (b.hatch_pivot) b.hatch_pivot.rotation.x = this.hatch0 + smooth(0, 1, this.open) * SHIP.hatch;
-    if (this.lights) this.lights.material.size = 1.3 * (.5 + world.night * .9 + this.open * .5);
-    // idle: the rear jets breathe, and the side jets twitch, so it never reads as scenery
-    const t = world.clock;
-    if (b.back_jet_L) b.back_jet_L.rotation.x = Math.sin(t * .7) * .03;
-    if (b.back_jet_R) b.back_jet_R.rotation.x = Math.sin(t * .7 + 1.1) * .03;
+    if (this.lights) this.lights.material.size = 1.3 * (.5 + world.night * .9 + this.open * .5 + this.air * .6);
+    // ---- exhaust ----
+    if (this.em) {
+      this.g.updateMatrixWorld(true);
+      const left = Math.max(0, sm.strafe) + Math.max(0, -sm.yaw), right = Math.max(0, -sm.strafe) + Math.max(0, sm.yaw);
+      const demand = { L: sm.throttle, R: sm.throttle, sL: clamp(left, 0, 1) * this.air, sR: clamp(right, 0, 1) * this.air };
+      for (const k in this.em) {
+        const em = this.em[k]; if (!em.from || !em.to) continue;
+        em.p.setFromMatrixPosition(em.from.matrixWorld);
+        em.d.setFromMatrixPosition(em.to.matrixWorld).sub(em.p).normalize();
+        em.k = demand[k];
+        const ps = this.jets[k]; ps.rate = (k[0] === 's' ? 110 : 170) * em.k * (flying ? 1 : 0);
+        if (ps.rate > 0) ps.pts.visible = true; else if (!flying && this.air < .02) ps.pts.visible = false;
+      }
+    }
   }
   dispose() { obRemove(this.ob); scene.remove(this.g); }
 }
@@ -3357,6 +3508,7 @@ function populate() {
       const p = randomLand(1.6, 8, .28, 1, 7); if (!p) continue;
       const d = cp ? Math.hypot(p.x - cp.x, p.z - cp.z) : 40;
       if (d < 26 || d > 95) continue;
+      if (world.greatTree && Math.hypot(p.x - world.greatTree.pos.x, p.z - world.greatTree.pos.z) < 40) continue;   // it has to climb out past the crown
       const sl = slope(p.x, p.z);
       if (sl < best) { best = sl; sp = p; }
     }
