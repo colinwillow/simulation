@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b21';
+const BUILD = 'b22';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -373,6 +373,46 @@ function mergeBin(bin) {
   return out;
 }
 function collect(bin, m) { m.updateMatrix(); bin.push({ geo: m.geometry, matrix: m.matrix.clone(), mat: m.material }); return m; }
+
+// Bake a built subtree down to one mesh per material. Draw calls are the budget on a
+// phone, and a world at its caps was spending 4800 of them on props that never move
+// relative to each other — twelve per moss tuft, twenty per bloom, fifty limbs on the
+// great tree. `keep` protects anything that animates: it is asked about every node on the
+// way down, and a node it claims is left alone along with everything under it.
+function flatten(root, keep) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), bin = [], drop = [];
+  (function walk(o) {
+    for (const c of o.children.slice()) {
+      if (keep && keep(c)) continue;
+      // mergeBin keeps position and normal and nothing else, so anything whose look depends
+      // on uvs, vertex colours or a skeleton is left exactly where it is
+      if (c.isMesh) {
+        const m = c.material;
+        if (c.isSkinnedMesh || Array.isArray(m) || !m || m.vertexColors || m.map) continue;
+        bin.push({ geo: c.geometry, matrix: new THREE.Matrix4().multiplyMatrices(inv, c.matrixWorld), mat: m }); drop.push(c);
+      }
+      else if (c.isGroup || c.type === 'Object3D') walk(c);
+    }
+  })(root);
+  if (bin.length < 2) return 0;
+  for (const m of drop) if (m.parent) m.parent.remove(m);
+  for (const m of mergeBin(bin)) root.add(m);
+  return drop.length;
+}
+
+// One draw call for a handful of glow sprites that share a position set: the lantern fruit
+// on a tree used to be nine additive sprites, each with a material of its own.
+function glowPoints(hex, size, opacity, pts) {
+  const g = new THREE.BufferGeometry();
+  const a = new Float32Array(pts.length * 3);
+  pts.forEach((p, i) => { a[i * 3] = p.x; a[i * 3 + 1] = p.y; a[i * 3 + 2] = p.z; });
+  g.setAttribute('position', new THREE.BufferAttribute(a, 3));
+  const m = new THREE.Points(g, new THREE.PointsMaterial({ map: glowTex, color: new THREE.Color(hex),
+    size, sizeAttenuation: true, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false }));
+  m.userData.size0 = size;
+  return m;
+}
 
 // soft glow sprite
 const glowTex = (() => {
@@ -1185,15 +1225,21 @@ class LanternTree {
     }
     for (const m of mergeBin(leaves)) this.canopy.add(m);
     // hanging lantern fruit on short stems
-    this.fruits = [];
+    // The whole crop hangs off one swinging group and draws as three calls: stems, fruit,
+    // and a single Points for all the glows. It used to be three objects per fruit, up to
+    // twenty-seven on an elder, and every sprite carried a material of its own.
+    this.fruitG = new THREE.Group(); this.canopy.add(this.fruitG);
+    const lights = [];
     for (let i = 0; i < (elder ? 9 : 5); i++) {
       const a = rnd(Math.PI * 2), r = rnd(1.2, base * .95), y = rnd(-1.6, .4);
       const st = new THREE.Group(); st.position.set(Math.cos(a) * r, y, Math.sin(a) * r);
       st.add(mesh(G.cyl, M.barkB, .04, .8, .04, 0, -.4, 0));
-      const f = mesh(G.sph, M.lantern, .3, .42, .3, 0, -1.0, 0); f.castShadow = true; st.add(f);
-      const gl = glow('#ffbe6a', 2.6, .5); gl.position.y = -1.0; st.add(gl); st.userData.gl = gl;
-      this.canopy.add(st); this.fruits.push(st);
+      const fr = mesh(G.sph, M.lantern, .3, .42, .3, 0, -1.0, 0); fr.castShadow = true; st.add(fr);
+      this.fruitG.add(st);
+      lights.push(new THREE.Vector3(st.position.x, st.position.y - 1, st.position.z));
     }
+    flatten(this.fruitG);
+    this.fruitGl = glowPoints('#ffbe6a', 2.6, .5, lights); this.fruitG.add(this.fruitGl);
     this.glow = glow('#ffb45c', 0, .45); this.glow.position.y = h + .3; this.g.add(this.glow);
     scene.add(this.g); this.applyScale();
     this.ob = obAdd(x, z, elder ? 2.1 : 1.25, this);
@@ -1217,13 +1263,8 @@ class LanternTree {
         }
         world.structures.push(new Stump(this.pos.x, this.pos.z, this.elder));
         {                                                   // crown litter where the canopy hit
-          const cd = 1.6 + segLen * nSeg, bin = [];
-          for (let i = 0; i < 5; i++) {
-            const bx = this.pos.x + dir.x * cd + rnd(-3.5, 3.5), bz = this.pos.z + dir.z * cd + rnd(-3.5, 3.5);
-            const b = mesh(pick(G.blob), i % 2 ? pick(M.canopy) : M.moss, rnd(.9, 2), rnd(.35, .7), rnd(.9, 2), bx, groundY(bx, bz) + .15, bz);
-            b.rotation.set(rnd(1), rnd(3), rnd(1)); collect(bin, b);
-          }
-          for (const m of mergeBin(bin)) scene.add(m);
+          const cd = 1.6 + segLen * nSeg;
+          world.structures.push(new Litter(this.pos.x + dir.x * cd, this.pos.z + dir.z * cd));
         }
         world.effects.push(new Burst(this.pos.x + dir.x * 4, this.pos.y + 1, this.pos.z + dir.z * 4, '#d8c9a8', 16, 1.4));
         if (Math.random() < .6 && count(world.plants, LanternTree) < MAX.tree) { const p = nearLand(this.pos, 3, 8); if (p) world.plants.push(new LanternTree(p.x, p.z, 0)); }
@@ -1235,7 +1276,8 @@ class LanternTree {
     this.canopy.rotation.z = sw; this.canopy.rotation.x = sw * .7;
     const lit = this.growth >= 1 ? world.night : 0;
     this.glow.scale.setScalar(9 * lit);
-    for (const f of this.fruits) { f.rotation.z = Math.sin(world.clock * 1.4 + f.position.x) * .12; f.userData.gl.scale.setScalar(1.2 + lit * 3.2); }
+    this.fruitG.rotation.z = Math.sin(world.clock * 1.4 + this.pos.x) * .12;   // the crop swings as one
+    this.fruitGl.material.size = 1.2 + lit * 3.2;
   }
   fall() {
     this.falling = 0; this.claimed = true;
@@ -1252,7 +1294,7 @@ class GreatTree {
   constructor(x, z) {
     this.alive = true; this.great = true; this.pos = new THREE.Vector3(x, height(x, z), z);
     this.g = new THREE.Group(); this.g.position.copy(this.pos); alignTo(this.g, x, z, .2); this.g.rotateY(rnd(Math.PI * 2));
-    this.vines = []; this.tufts = [];
+    this.vines = []; this.tufts = []; this.lanterns = [];
     const H = this.H = rnd(31, 37), bark = M.elderBark;
     // buttress roots sweeping out of the trunk into the ground
     for (let i = 0; i < 9; i++) {
@@ -1275,6 +1317,12 @@ class GreatTree {
     this.crown = new THREE.Group(); this.crown.position.y = H * .68; this.g.add(this.crown);
     const nMain = 5;
     for (let i = 0; i < nMain; i++) this.limb(this.crown, rnd(9, 12), rnd(1.3, 1.7), 2, rnd(.55, .95), i / nMain * Math.PI * 2 + rnd(-.25, .25));
+    // Fifty limb meshes, nine root tubes, a trunk and a ring of stones: none of it moves
+    // except as a whole, and it was a tenth of the island's draw calls on its own.
+    flatten(this.crown, c => c.userData.dyn);
+    { const inv = new THREE.Matrix4().copy(this.crown.matrixWorld).invert();
+      this.crown.add(glowPoints('#ffbe6a', 3, .45, this.lanterns.map(p => p.applyMatrix4(inv)))); }
+    flatten(this.g, c => c === this.crown);
     this.glow = glow('#ffcf8a', 0, .55); this.glow.position.y = H * .95; this.g.add(this.glow);
     this.light = new THREE.PointLight(0xffc07a, 0, 120, 2); this.light.position.y = H * .9; this.g.add(this.light);
     scene.add(this.g);
@@ -1291,32 +1339,37 @@ class GreatTree {
     if (Math.random() < .5) this.vine(tip, rnd(5, 10));
   }
   tuft(tip, rad) {
-    const grp = new THREE.Group(); tip.add(grp); this.tufts.push({ g: grp, p: rnd(Math.PI * 2) });
+    // The tuft used to twist by three hundredths of a radian on its own clock, which on a
+    // thirty-five unit tree is nothing you can see and thirty groups the crown could not be
+    // baked through. It rides the crown's sway now and the whole canopy is two meshes.
+    const grp = new THREE.Group(); tip.add(grp);
     const n = MOBILE ? 3 : 5, mat = pick(M.elderLeaf), bin = [];
     for (let i = 0; i < n; i++) {
       const r = rnd(2.2, 4.2);
       const b = mesh(pick(G.blob), i % 3 ? mat : pick(M.elderLeaf), r, r * rnd(.5, .75), r, rnd(-2.5, 2.5), rnd(-.5, 2.2), rnd(-2.5, 2.5));
       b.rotation.set(rnd(3), rnd(3), rnd(3)); collect(bin, b);
     }
-    for (const m of mergeBin(bin)) grp.add(m);
+    const lights = [];
     for (let i = 0; i < 2; i++) {
       const f = mesh(G.sph, M.lantern, .42, .58, .42, rnd(-2, 2), rnd(-1.6, -.4), rnd(-2, 2));
-      grp.add(f, glow('#ffbe6a', 3, .45).translateX(f.position.x).translateY(f.position.y).translateZ(f.position.z));
+      collect(bin, f); lights.push(f.position.clone());
     }
+    for (const m of mergeBin(bin)) grp.add(m);
+    grp.updateMatrixWorld(true);   // the lantern glows all go into one Points on the crown
+    for (const p of lights) this.lanterns.push(p.clone().applyMatrix4(grp.matrixWorld));
   }
   vine(tip, len) {
-    const pv = new THREE.Group(); tip.add(pv); this.vines.push({ g: pv, p: rnd(Math.PI * 2), s: rnd(.7, 1.5) });
+    const pv = new THREE.Group(); pv.userData.dyn = true; tip.add(pv); this.vines.push({ g: pv, p: rnd(Math.PI * 2), s: rnd(.7, 1.5) });
     const bin = []; collect(bin, mesh(G.cyl, M.vine, .09, len, .09, 0, -len / 2, 0));
     for (let i = 1; i < 4; i++) { const y = -len * i / 4; collect(bin, mesh(pick(G.blob), pick(M.elderLeaf), .5, .3, .5, rnd(-.2, .2), y, rnd(-.2, .2))); }
+    collect(bin, mesh(G.sph, M.lantern, .26, .34, .26, 0, -len, 0));
     for (const m of mergeBin(bin)) pv.add(m);
-    const bead = mesh(G.sph, M.lantern, .26, .34, .26, 0, -len, 0); pv.add(bead);
-    const gl = glow('#ffd08a', 2.4, .5); gl.position.y = -len; pv.add(gl);
+    pv.add(glowPoints('#ffd08a', 2.4, .5, [new THREE.Vector3(0, -len, 0)]));
   }
   update(dt) {
     const t = world.clock;
     this.crown.rotation.z = Math.sin(t * .35) * .012; this.crown.rotation.x = Math.cos(t * .27) * .012;
     for (const v of this.vines) { v.g.rotation.z = Math.sin(t * .55 * v.s + v.p) * .13; v.g.rotation.x = Math.cos(t * .43 * v.s + v.p) * .1; }
-    for (const f of this.tufts) f.g.rotation.y = Math.sin(t * .3 + f.p) * .05;
     this.glow.scale.setScalar(34 * (.15 + world.night * .85));
     this.light.intensity = 3.4 * world.night;
   }
@@ -1341,7 +1394,7 @@ class Log {
 // what's left standing after the trunk goes over
 class Stump {
   constructor(x, z, elder) {
-    this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z);
+    this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.born = world.clock;
     const w = elder ? 1.9 : 1, h = rnd(1, 1.8);
     this.g = new THREE.Group(); this.g.position.copy(this.pos); alignTo(this.g, x, z, .45); this.g.rotateY(rnd(Math.PI * 2));
     const bin = [];
@@ -1355,7 +1408,77 @@ class Stump {
     scene.add(this.g);
     this.ob = obAdd(x, z, elder ? 1.5 : .95, this, this.pos.y + h + .35);   // splinters and all
   }
-  update() {} dispose() { obRemove(this.ob); scene.remove(this.g); }
+  update(dt) {
+    if (weatherStep(this, dt) && Math.random() < .6 && count(world.plants, MossTuft) < MAX.moss)
+      world.plants.push(new MossTuft(this.pos.x, this.pos.z, .05));   // the moss takes it back
+  }
+  dispose() { obRemove(this.ob); scene.remove(this.g); }
+}
+// The other half of the budget. Frustum culling only removes what is off screen; a third
+// person camera looking across the island keeps most of it in view, and moss two hundred
+// units away is a couple of pixels. Switch the small things off past a distance chosen for
+// their size, so what the renderer is asked to draw depends on where you are standing and
+// not on how long the island has been running. Trees and the great tree are the skyline and
+// are never touched.
+const FAR = MOBILE
+  ? { MossTuft: 100, Bloom: 135, Litter: 115, Stump: 135, Mound: 115, Hopper: 115, Skimmer: 135, Burrower: 145, Weaver: 155, Drifter: 165, Grazer: 195, Walker: 300, Leviathan: 320 }
+  : { MossTuft: 165, Bloom: 215, Litter: 185, Stump: 215, Mound: 185, Hopper: 185, Skimmer: 215, Burrower: 230, Weaver: 245, Drifter: 260, Grazer: 300, Walker: 420, Leviathan: 440 };
+let farT = 0;
+function cullFar(dt) {
+  if ((farT -= dt) > 0) return;
+  farT = .3;
+  const x = cam.tgt.x, z = cam.tgt.z;
+  for (const list of [world.plants, world.structures, world.creatures])
+    for (const o of list) {
+      const r = FAR[o.constructor.name];
+      if (!r || !o.alive || !o.g) continue;
+      const dx = o.pos.x - x, dz = o.pos.z - z;
+      o.g.visible = dx * dx + dz * dz < r * r;
+    }
+}
+
+// Nothing the island makes may accumulate for ever. Felling a tree used to leave a stump
+// that was never removed and a pile of crown litter that nothing even held a reference to,
+// so a session left running for hours climbed instead of settling. Both now weather: past
+// the keep count the oldest sink and go, and the world holds a steady population of them.
+const LEAVINGS = { keep: 24, fade: 9 };
+let leavingT = 0;
+function weatherLeavings(dt) {
+  if ((leavingT -= dt) > 0) return;
+  leavingT = 2;
+  for (const K of [Stump, Litter]) {
+    const a = world.structures.filter(o => o.alive && o instanceof K && o.going === undefined);
+    if (a.length <= LEAVINGS.keep) continue;
+    a.sort((p, q) => p.born - q.born);
+    for (let i = 0; i < a.length - LEAVINGS.keep; i++) a[i].going = 0;
+  }
+}
+// Returns true on the frame it finally goes, so the caller can leave something behind.
+function weatherStep(o, dt) {
+  if (o.going === undefined) return false;
+  o.going += dt;
+  const k = 1 - o.going / LEAVINGS.fade;
+  if (k <= 0) { o.alive = false; return true; }
+  o.g.scale.setScalar(k * k);            // it sinks into the ground rather than blinking out
+  return false;
+}
+
+// What the canopy leaves on the ground where it hit. It used to be a handful of meshes
+// added straight to the scene with nothing holding them, so they could never be taken away.
+class Litter {
+  constructor(x, z) {
+    this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.born = world.clock;
+    this.g = new THREE.Group(); scene.add(this.g);
+    const bin = [];
+    for (let i = 0; i < 5; i++) {
+      const bx = x + rnd(-3.5, 3.5), bz = z + rnd(-3.5, 3.5);
+      const b = mesh(pick(G.blob), i % 2 ? pick(M.canopy) : M.moss, rnd(.9, 2), rnd(.35, .7), rnd(.9, 2), bx, groundY(bx, bz) + .15, bz);
+      b.rotation.set(rnd(1), rnd(3), rnd(1)); collect(bin, b);
+    }
+    for (const m of mergeBin(bin)) this.g.add(m);
+  }
+  update(dt) { weatherStep(this, dt); }
+  dispose() { scene.remove(this.g); }
 }
 class MossTuft {
   constructor(x, z, size = 1) {
@@ -1366,6 +1489,7 @@ class MossTuft {
       b.rotation.set(rnd(1), rnd(3), rnd(1)); b.castShadow = true; b.receiveShadow = true; this.g.add(b);
     }
     for (let i = 0; i < 5; i++) { const f = mesh(G.leaf, M.moss, rnd(2, 4), rnd(1.2, 2.2), 1, rnd(-1, 1), .1, rnd(-1, 1)); f.rotation.y = rnd(3); this.g.add(f); }
+    flatten(this.g);                                  // twelve pieces, two materials, one shape
     scene.add(this.g); this.apply();
   }
   apply() { const s = .15 + .85 * clamp(this.size, 0, 1); this.g.scale.setScalar(s); }
@@ -1391,8 +1515,10 @@ class Bloom {
       const p = mesh(G.blob[(i + 2) % 5], mat, .6, .18, .34, Math.cos(a) * .45, .38, Math.sin(a) * .45);
       p.rotation.y = -a; p.rotation.z = -.9; this.head.add(p);
     }
+    flatten(this.head);                               // the petals turn with the head, not against it
     this.core = mesh(G.sph, M.lantern, .3, .26, .3, 0, .42, 0); this.head.add(this.core);
     this.glow = glow('#ff6fb8', 5, .5); this.glow.position.y = .5; this.head.add(this.glow);
+    flatten(this.g, c => c === this.head);
     scene.add(this.g); this.apply();
     this.ob = obAdd(x, z, .75, this);
   }
@@ -1802,7 +1928,24 @@ class Creature {
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
-    this.g = new THREE.Group(); this.body = new THREE.Group(); this.g.add(this.body); this.build(); scene.add(this.g);
+    this.g = new THREE.Group(); this.body = new THREE.Group(); this.g.add(this.body); this.build();
+    // Bake the static half of the body — plates, spines, shells, snouts, whatever the
+    // species piled on — into one mesh per material. Every part a creature animates is one
+    // it kept a handle to, so protecting everything reachable from `this` is exactly right,
+    // and costs a species nothing to opt into.
+    {
+      const keep = new Set();
+      const mark = v => { if (!v || typeof v !== 'object') return;
+        if (v.isObject3D) { keep.add(v); return; }
+        if (Array.isArray(v)) { for (const e of v) mark(e); return; }
+        for (const k in v) if (v[k] && v[k].isObject3D) keep.add(v[k]); };
+      for (const k in this) if (k !== 'g' && k !== 'body') mark(this[k]);
+      flatten(this.body, c => keep.has(c));
+      // and again inside each animated part: a head turns as one piece, so the snout, ears
+      // and eyes on it are as static as anything bolted to the flank
+      for (const k of keep) if (k.isGroup) flatten(k, c => keep.has(c));
+    }
+    scene.add(this.g);
     this.g.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
     const rc = CREATURE_RIGS[this.constructor.name];
     if (rc) attachRig(this.g, rc, r => {
@@ -3902,6 +4045,7 @@ function frame(now) {
   for (let i = 0; i < world.psys.length; i++) world.psys[i].update(dt);
   if (world.chasmGlow) world.chasmGlow.scale.setScalar(14 + Math.sin(world.clock * 1.4) * 3 + world.night * 10);
   updateMotes(dt);
+  weatherLeavings(dt); cullFar(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
   waterUni.uT.value = world.clock; foamUni.uT.value = world.clock; grassUni.uT.value = world.clock;
