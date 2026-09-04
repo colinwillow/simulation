@@ -99,7 +99,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b15';
+const BUILD = 'b16';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1511,7 +1511,13 @@ class Cairn {
 // front. And a dark surface with no light on it goes to pure black, which reads as the
 // body vanishing; emitting a fraction of its own colour gives it a floor. Keep the lift
 // well under the 0.88 bloom threshold or models start to glow at night.
-const MODEL = { forceOpaque: true, ambientLift: .45, rateMin: .6, rateMax: 2.6 };
+const MODEL = {
+  forceOpaque: true, ambientLift: .45, rateMin: .6, rateMax: 2.6,
+  // Where the walk gives way to the run, as a fraction of the thing's own top speed —
+  // not of the clip's authored pace, which is a different number entirely and much smaller.
+  runAt: .42, runFull: .74,
+  moveAt: .015, moveFull: .13,        // and where idle gives way to the walk
+};
 // One cache per URL. The GLB is fetched once, prepared once, measured once; every user
 // after that gets a clone that shares the geometry and materials. Measuring is the
 // expensive part (every vertex through boneTransform), so it must not happen per creature.
@@ -1684,9 +1690,13 @@ function stepRig(r, dt, speed, grounded, ctx) {
   const a = r.acts, ref = r.walkSpeed || 3, c = ctx || {};
   const want = {};
   const swim = a.swim || a.swimIdle ? c.swim || 0 : 0;
-  // ground: idle -> walk -> run by actual speed. The run takes over past ~2x walk pace.
-  const loco = grounded ? clamp(speed / ref, 0, 1) : 0;
-  const runMix = a.run ? smooth(ref * 1.9, ref * 3.2, speed) : 0;
+  // Blend on how much of its own top speed this thing is using, which is the question the
+  // eye is actually asking. Keying it off the walk clip's authored pace put the wanderer
+  // in a full run at 6 u/s when he tops out at 17 — a third of the way up the stick.
+  const top = c.top || ref * 3 || 6;
+  const frac = clamp(speed / top, 0, 1);
+  const loco = grounded ? smooth(MODEL.moveAt, MODEL.moveFull, frac) : 0;
+  const runMix = a.run ? smooth(MODEL.runAt, MODEL.runFull, frac) : 0;
   want.idle = (1 - loco); want.walk = loco * (1 - runMix); want.run = loco * runMix;
   // water: tread <-> swim forward
   const sw = clamp(speed / 6, 0, 1);
@@ -2003,7 +2013,7 @@ class Creature {
     if (this.rig) {
       const px = this.px2 === undefined ? this.rx : this.px2, pz = this.pz2 === undefined ? this.rz : this.pz2;
       this.px2 = this.rx; this.pz2 = this.rz;
-      stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic);
+      stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic, { top: this.speed });
     }
   }
   dispose() { scene.remove(this.g); }
@@ -3376,7 +3386,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, MOVE, MODEL, RIG };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -3609,6 +3619,18 @@ function updateFairy(dt) {
     f.vel.x += rnd(-2.6, 2.6); f.vel.y += rnd(-1, 2.6); f.vel.z += rnd(-2.6, 2.6);
   }
   f.pos.addScaledVector(f.vel, dt);
+  // It is a physical little thing, so it does not pass through him. Push it out of a
+  // capsule around the body: a radius in xz, over the height he actually occupies.
+  {
+    const dx = f.pos.x - p.pos.x, dz = f.pos.z - p.pos.z, d = Math.hypot(dx, dz);
+    if (f.pos.y > p.pos.y - .2 && f.pos.y < p.pos.y + RIG.height * 1.05 && d < 1.15) {
+      if (d > 1e-3) {
+        f.pos.x = p.pos.x + dx / d * 1.15; f.pos.z = p.pos.z + dz / d * 1.15;
+        const inward = (f.vel.x * dx + f.vel.z * dz) / d;   // cancel only the part heading into him
+        if (inward < 0) { f.vel.x -= dx / d * inward; f.vel.z -= dz / d * inward; }
+      } else f.pos.x += 1.15;
+    }
+  }
   // a leash, so a dart during a sprint can never strand it half a field away
   const away = f.pos.distanceTo(f.want);
   if (away > 5.5) { f.pos.lerp(f.want, 1 - 5.5 / away); f.vel.multiplyScalar(.5); }
@@ -3618,9 +3640,12 @@ function updateFairy(dt) {
   fairyTrail.rate = p.free ? 0 : 18 + Math.min(34, f.vel.length() * 3.4);
 }
 
+isle.fairy = fairy;   // defined after the handle, so attached here
+
 function updateRig(dt) {
   const p = player;
   stepRig(p.rigH, dt, p.speed, !p.fly && p.swim < .5 && p.grounded, {
+    top: p.swim > .5 ? MOVE.swimMax : MOVE.max,
     swim: p.swim, air: !p.fly && !p.grounded && p.leadT <= 0 && p.swim < .5,
     // The landing clip is planted, so at speed it slides. Fade it out as the ground speed
     // rises and let the run carry the landing instead. A proper roll clip would be better.

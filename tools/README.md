@@ -115,9 +115,17 @@ the follow cam sits while you walk forward) and look. Seeing the back means corr
 seeing the face means the model walks backwards.
 
 **The blend tree** (`stepRig`) is driven by what the body is doing, never by the input.
-On the ground it is idle → walk → run by measured speed, with the run taking over past
-about twice the walk's authored pace and each cycle played at the rate its own stride was
-measured for. In the water it is tread ↔ swim forward. A jump is three one-shots chained
+On the ground it is idle → walk → run, blended on the fraction of **its own top speed**
+(`ctx.top`) that it is actually using, with each cycle played at the rate its own stride was
+measured for.
+
+That fraction matters. Keying the transition off the walk clip's authored pace — which is
+what it used to do — put the wanderer in a full run at 6 u/s when he tops out at 17, a
+third of the way up the stick. `MODEL.runAt`/`runFull` (.42/.74) and `moveAt`/`moveFull`
+now place the handoffs: pure walk to 6.7 u/s, run easing in from 7.6, half and half near
+10, flat out by 15. Creatures pass their own `this.speed` as the top.
+
+In the water it is tread ↔ swim forward. A jump is three one-shots chained
 by the physics: `jump_initiate` while `leadT` counts down, `jump_in_air` while airborne,
 `jump_landing` for half a second after touchdown. Every weight fades over a tenth of a
 second; the one-shots restart the moment they are wanted. A file that lacks a role simply
@@ -176,7 +184,8 @@ under heavy damping, so it lags when he sets off and drifts past when he stops. 
 that it wanders on its own noise, darts now and then, and trails sparks from a `PSys` whose
 rate rises with its own speed. A leash keeps it within 5.5 units of its anchor, because a
 dart during a sprint could otherwise strand it half a field away. It trails 2.7–4 units
-behind at rest and 4–7 while running.
+behind at rest and 4–7 while running, and a capsule around the body keeps it from passing
+through him — it is a creature, not a halo.
 
 ### The camera
 
