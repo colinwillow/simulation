@@ -235,6 +235,26 @@ seconds to die, and only then does `leave` appear. Over water there is nothing t
 so it hovers above the swell. `npm run check:ship pilot` flies all of that under node and
 prints the timings.
 
+### The map
+
+`map` on the HUD, or `m`. Drawn from the terrain's own vertex colours and heights rather
+than re-sampled or hand-drawn, so it is the island you are standing on and cannot drift out
+of step with it — change the terrain and the map changes with it, for free. Built once on
+first open (23 ms) into an offscreen canvas at `SEG + 1` square; the markers are the only
+per-frame work, so it costs nothing while closed and almost nothing while open.
+
+Three things make it read as a map rather than a colour blob: relief shading from the slope
+of the height field against a light from the north-west, a pale line wherever a land pixel
+touches a water one, and a depth ramp for the sea that keeps a hint of the bed under the
+shallows. **The vertex colours are linear** — `col()` converts on the way in and the
+composite pass applies the gamma on the way out — so the map has to apply that gamma itself.
+Writing them straight into a 2D canvas came out near black, and the massif went pure black
+while the grass merely looked murky, which is a good way to lose an hour.
+
+Filling it in as you explore is the reason the terrain and the markers are separate passes:
+a third canvas painted with a soft circle at the player each frame, composited over the
+terrain image with `destination-in`, is the whole of it. Nothing else has to change.
+
 ### The camera
 
 Pitch is fixed at `CAM_POL`. Looking up and down was never worth a whole stick axis, so

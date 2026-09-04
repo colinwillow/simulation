@@ -32,6 +32,18 @@
   #log div{animation:fade 11s forwards}
   @keyframes fade{0%{opacity:0;transform:translateY(4px)}6%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
   #hint{position:fixed;right:16px;bottom:14px;font-size:12px;opacity:.5;pointer-events:none;text-align:right;line-height:1.5}
+  #mapv[hidden]{display:none}
+  #mapv{position:fixed;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(6,10,18,.82);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  #mapv h2{margin:0 0 10px;font-size:19px;font-weight:normal;letter-spacing:.06em;opacity:.95}
+  #mapv h2 span{font-style:italic;font-size:13px;opacity:.6;letter-spacing:.02em;margin-left:8px}
+  #mapwrap{position:relative;width:min(92vw,62vh);aspect-ratio:1;border-radius:3px;overflow:hidden;
+    border:1px solid rgba(240,228,200,.28);box-shadow:0 10px 44px rgba(0,0,0,.6),inset 0 0 60px rgba(0,0,0,.45)}
+  #mapc{display:block;width:100%;height:100%}
+  #maplg{margin-top:12px;font-size:11px;line-height:1.9;opacity:.8;display:flex;flex-wrap:wrap;gap:4px 14px;
+    justify-content:center;max-width:min(92vw,62vh);font-family:ui-monospace,Menlo,Consolas,monospace}
+  #maplg i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:-1px;font-style:normal}
+  #mapfoot{margin-top:9px;font-size:11px;opacity:.45;font-style:italic}
   #boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#070a13;font-style:italic;letter-spacing:.05em;z-index:5;transition:opacity 1.2s}
   #sticks .stick{position:fixed;bottom:calc(26px + env(safe-area-inset-bottom));
     width:132px;height:132px;border-radius:50%;z-index:4;touch-action:none;
@@ -67,7 +79,9 @@
   <div class="stick" id="stkL"><div class="knob"></div><div class="lbl">MOVE</div></div>
   <div class="stick" id="stkR"><div class="knob"></div><div class="lbl">LOOK</div></div>
 </div>
-<div id="btns"><button id="flyB">fly</button><button id="freeB">free cam</button><button id="shipB" hidden>board</button></div>
+<div id="btns"><button id="flyB">fly</button><button id="freeB">free cam</button><button id="shipB" hidden>board</button><button id="mapB">map</button></div>
+<div id="mapv" hidden><h2>Lantern Isle<span id="mapera"></span></h2><div id="mapwrap"><canvas id="mapc"></canvas></div>
+<div id="maplg"></div><div id="mapfoot">tap anywhere to close</div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <!-- Loaders are vendored, not CDN: the model is Draco-compressed, so GLTFLoader needs a
      DRACOLoader and its decoder. Keeping them in-repo means no extra origin to trust and
@@ -99,7 +113,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b27';
+const BUILD = 'b28';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -4080,9 +4094,12 @@ addEventListener('keydown', e => { keys[e.key.toLowerCase()] = 1; if (e.key === 
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
 const flyB = document.getElementById('flyB'), freeB = document.getElementById('freeB');
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
+const mapB = document.getElementById('mapB');
+mapB.addEventListener('click', e => { e.stopPropagation(); toggleMap(); });
+document.getElementById('mapv').addEventListener('pointerdown', () => toggleMap(false));
 const shipB = document.getElementById('shipB'), hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
 shipB.addEventListener('click', () => { const sh = world.ship; if (!sh) return; if (player.aboard) sh.leave(); else sh.board(); });
-addEventListener('keydown', e => { if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
+addEventListener('keydown', e => { if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
 const _prevP = new THREE.Vector3();
 function updatePlayer(dt) {
@@ -4379,6 +4396,129 @@ if (window.visualViewport) {
 
 // ---------- HUD ----------
 const statsEl = document.getElementById('stats'), eraEl = document.getElementById('era'), perfEl = document.getElementById('perf');
+// ---------- the map ----------
+// Drawn from the terrain's own vertex colours and heights rather than re-sampled or drawn
+// by hand, so it is the island you are standing on and cannot drift out of step with it.
+// Built once, on first open, into an offscreen image; the markers are the only per-frame
+// work. Filling it in as you explore is a mask composited over this image — the reason the
+// terrain and the markers are kept in separate passes.
+const MAP = {
+  open: false, img: null, N: 0,
+  sea0: col('#5b93ad'), sea1: col('#12314a'),   // shallows and deep water
+  light: { x: -.62, z: -.68 },                  // relief lit from the north-west, as maps are
+};
+function buildMapImage() {
+  const N = SEG + 1, pa = terrainGeo.attributes.position, ca = terrainGeo.attributes.color;
+  const H = new Float32Array(N * N), R = new Float32Array(N * N), G = new Float32Array(N * N), B = new Float32Array(N * N);
+  for (let i = 0; i < pa.count; i++) {
+    const cx = Math.round((pa.getX(i) + W) / (2 * W) * (N - 1)), cy = Math.round((pa.getZ(i) + W) / (2 * W) * (N - 1));
+    if (cx < 0 || cy < 0 || cx >= N || cy >= N) continue;
+    const k = cy * N + cx;
+    H[k] = pa.getY(i); R[k] = ca.getX(i); G[k] = ca.getY(i); B[k] = ca.getZ(i);
+  }
+  const cv = document.createElement('canvas'); cv.width = cv.height = N;
+  const g = cv.getContext('2d'), im = g.createImageData(N, N), d = im.data;
+  const cell = 2 * W / (N - 1), L = MAP.light, ln = Math.hypot(L.x, L.z, 1) || 1;
+  const c = new THREE.Color();
+  // Everything on this side of the renderer is linear — col() converts on the way in and the
+  // composite pass applies the gamma on the way out. A 2D canvas has no composite pass, so
+  // the map has to apply it itself, or the island comes out near black.
+  const g8 = v => Math.pow(clamp(v, 0, 1), 1 / 2.2) * 255;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const k = y * N + x, h = H[k], o4 = k * 4;
+    if (h < SEA) {
+      c.copy(MAP.sea0).lerp(MAP.sea1, smooth(0, 16, SEA - h));
+      // the sea keeps a hint of the bed under it, so shoals and drop-offs still read
+      c.lerp(new THREE.Color(R[k], G[k], B[k]), .16 * (1 - smooth(0, 9, SEA - h)));
+      d[o4] = g8(c.r); d[o4 + 1] = g8(c.g); d[o4 + 2] = g8(c.b); d[o4 + 3] = 255;
+      continue;
+    }
+    // relief: the slope of the height field against the light
+    const xm = Math.max(0, x - 1), xp = Math.min(N - 1, x + 1), ym = Math.max(0, y - 1), yp = Math.min(N - 1, y + 1);
+    const dx = (H[y * N + xp] - H[y * N + xm]) / ((xp - xm) * cell), dz = (H[yp * N + x] - H[ym * N + x]) / ((yp - ym) * cell);
+    const nl = Math.hypot(dx, 1, dz) || 1;
+    const sh = clamp((-dx * L.x + 1 - dz * L.z) / (nl * ln), 0, 1);
+    let k2 = .70 + .62 * sh;   // flat ground lands at 1.17 either way; this only lifts the shadowed faces
+    // a pale line where the land meets the water, which is what makes a map read as a coast
+    const coast = H[y * N + xm] < SEA || H[y * N + xp] < SEA || H[ym * N + x] < SEA || H[yp * N + x] < SEA;
+    c.setRGB(R[k] * k2, G[k] * k2, B[k] * k2);
+    if (coast) c.lerp(col('#f2e6cb'), .55);
+    d[o4] = g8(c.r); d[o4 + 1] = g8(c.g); d[o4 + 2] = g8(c.b); d[o4 + 3] = 255;
+  }
+  g.putImageData(im, 0, 0);
+  MAP.img = cv; MAP.N = N;
+}
+// Everything worth walking to. `k` is the legend key, and the order here is the order the
+// legend is written in, so there is one list to keep in step rather than two.
+function mapMarks() {
+  const out = [];
+  const add = (o, k, label) => { if (o && o.alive !== false && o.pos) out.push({ x: o.pos.x, z: o.pos.z, k, label }); };
+  add(world.greatTree, 'tree', 'Elderwillow');
+  add(world.camp, 'camp', 'camp');
+  add(world.cave, 'cave', 'cave');
+  add(world.isle, 'isle', 'floating isle');
+  for (const st of world.structures) if (st.alive && st instanceof Cairn) out.push({ x: st.pos.x, z: st.pos.z, k: st.beacon ? 'beacon' : 'cairn', label: st.beacon ? 'beacon' : null });
+  if (world.ship) out.push({ x: world.ship.pos.x, z: world.ship.pos.z, k: 'ship', label: 'ship', flying: world.ship.state !== 'landed', heading: world.ship.heading });
+  return out;
+}
+const MAP_KEY = {
+  you: ['#ffe9b0', 'you'], ship: ['#ff8a3c', 'ship'], tree: ['#8fe6a8', 'Elderwillow'],
+  camp: ['#ffb45a', 'camp'], cave: ['#9fd6ff', 'cave'], isle: ['#c9a6ff', 'floating isle'],
+  beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'],
+};
+function drawMap() {
+  const cv = document.getElementById('mapc'); if (!cv || !MAP.img) return;
+  const wpx = cv.clientWidth * Q.dpr | 0, hpx = cv.clientHeight * Q.dpr | 0;
+  if (!wpx || !hpx) return;
+  if (cv.width !== wpx || cv.height !== hpx) { cv.width = wpx; cv.height = hpx; }
+  const g = cv.getContext('2d'), S = Q.dpr;
+  g.clearRect(0, 0, wpx, hpx);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.drawImage(MAP.img, 0, 0, wpx, hpx);
+  const px = (x, z) => [(x + W) / (2 * W) * wpx, (z + W) / (2 * W) * hpx];
+  const dot = (x, z, hex, r, ring) => {
+    const [a, b] = px(x, z);
+    g.beginPath(); g.arc(a, b, r * S, 0, 6.283);
+    g.fillStyle = hex; g.shadowColor = 'rgba(0,0,0,.75)'; g.shadowBlur = 5 * S; g.fill(); g.shadowBlur = 0;
+    if (ring) { g.beginPath(); g.arc(a, b, (r + 3.5) * S, 0, 6.283); g.strokeStyle = hex; g.globalAlpha = .55; g.lineWidth = 1.2 * S; g.stroke(); g.globalAlpha = 1; }
+    return [a, b];
+  };
+  const arrow = (x, z, heading, hex, size) => {
+    const [a, b] = px(x, z), dx = Math.sin(heading), dz = Math.cos(heading), s = size * S;
+    g.save(); g.translate(a, b); g.rotate(Math.atan2(dx, -dz));
+    g.beginPath(); g.moveTo(0, -s); g.lineTo(s * .72, s * .8); g.lineTo(0, s * .38); g.lineTo(-s * .72, s * .8); g.closePath();
+    g.fillStyle = hex; g.shadowColor = 'rgba(0,0,0,.8)'; g.shadowBlur = 6 * S; g.fill(); g.shadowBlur = 0;
+    g.strokeStyle = 'rgba(20,14,8,.55)'; g.lineWidth = 1 * S; g.stroke(); g.restore();
+  };
+  g.font = (10 * S) + 'px ui-monospace,Menlo,Consolas,monospace'; g.textAlign = 'center'; g.textBaseline = 'top';
+  for (const m of mapMarks()) {
+    const [hex] = MAP_KEY[m.k] || ['#ffffff'];
+    let a, b;
+    if (m.k === 'ship') { arrow(m.x, m.z, m.heading || 0, hex, 6); [a, b] = px(m.x, m.z);
+      if (m.flying) { g.beginPath(); g.arc(a, b, 10 * S, 0, 6.283); g.strokeStyle = hex; g.globalAlpha = .5; g.lineWidth = 1.2 * S; g.stroke(); g.globalAlpha = 1; } }
+    else [a, b] = dot(m.x, m.z, hex, m.k === 'cairn' ? 2.4 : m.k === 'tree' ? 4.5 : 3.4, m.k === 'beacon' || m.k === 'isle');
+    if (m.label) { g.fillStyle = 'rgba(246,238,222,.82)'; g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 4 * S;
+      g.fillText(m.label, a, b + 7 * S); g.shadowBlur = 0; }
+  }
+  // the wanderer last, on top of everything, and only when he is on his own feet
+  if (!player.aboard) arrow(player.pos.x, player.pos.z, player.faceH, MAP_KEY.you[0], 7);
+}
+function buildLegend() {
+  const el = document.getElementById('maplg'); if (!el || el.childElementCount) return;
+  el.innerHTML = Object.keys(MAP_KEY).map(k => `<span><i style="background:${MAP_KEY[k][0]}"></i>${MAP_KEY[k][1]}</span>`).join('');
+}
+function toggleMap(on) {
+  const v = document.getElementById('mapv');
+  MAP.open = on === undefined ? !MAP.open : !!on;
+  if (MAP.open && !MAP.img) { const t0 = performance.now(); buildMapImage(); console.info('map built in ' + (performance.now() - t0).toFixed(0) + ' ms'); }
+  if (MAP.open) { buildLegend(); document.getElementById('mapera').textContent = eraName(); stick.L.x = stick.L.y = stick.R.x = stick.R.y = 0; }
+  v.hidden = !MAP.open;
+  document.getElementById('mapB').classList.toggle('on', MAP.open);
+  if (MAP.open) drawMap();
+}
+
+isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap;   // MAP is a const above, so this cannot move any earlier
+
 const perf = { ms: 16.7, worst: 0, acc: 0, n: 0 };
 function updateHUD() {
   const f = (world.t / DAY) % 1;
@@ -4458,6 +4598,7 @@ function frame(now) {
   for (let i = 0; i < world.psys.length; i++) world.psys[i].update(dt);
   if (world.chasmGlow) world.chasmGlow.scale.setScalar(14 + Math.sin(world.clock * 1.4) * 3 + world.night * 10);
   updateMotes(dt);
+  if (MAP.open) drawMap();
   weatherLeavings(dt); cullFar(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
