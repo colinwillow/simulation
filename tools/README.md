@@ -648,6 +648,65 @@ Trunks, cairns and the great tree register `Infinity` and were never in the conv
 
 Only the player reads `climb`; creatures keep their own steering.
 
+### Getting a model ready to ship
+
+`npm run pack models/whatever.glb` does in one command what a trip through Blender was doing
+by hand, and does not touch the mesh:
+
+- textures down to a maximum dimension (1024 by default, `-- --size 2048` for the ship);
+  pixels are what cost GPU memory, and a 4096 map is 85 MB however small the file is
+- textures to webp, which is about a quarter of a jpeg at the same size
+- geometry through Draco, about a quarter of the raw buffers
+
+Simplification is deliberately off. It is the one part of `gltf-transform optimize` that
+changes what you modelled, and this tool has no business decimating anything silently.
+
+**A model straight off a generator is a perfectly good model that is packaged badly.**
+Measured on the same plant, generator export against the same asset taken through Blender:
+
+| | straight from the generator | through Blender | after `npm run pack` |
+|---|---|---|---|
+| file | 491 KB | 124 KB | 121 KB |
+| texture | 365 KB jpeg | 94 KB webp | 103 KB webp |
+| geometry | 113 KB raw | 28 KB Draco | Draco |
+| triangles | 2,254 | 2,294 | **2,254** |
+| GPU memory | 5.3 MB | 5.3 MB | 5.3 MB |
+
+Identical at runtime — same triangles, same draw call, same texture memory. The whole
+difference is four times the download. So going straight from a generator into the repo is
+fine, and `npm run pack` afterwards is the Blender step.
+
+Order matters if you ever run the underlying commands by hand: `webp` decodes any Draco it
+finds, so `draco` has to come second or the geometry ships raw.
+
+### How many triangles a thing should be
+
+Think in **count × triangles**, because the caps are what decide the bill. Measured, with the
+world at its caps (these totals include the primitive stand-in bodies, which are hidden once
+a model lands but still in the scene graph):
+
+| | each | cap | in the scene |
+|---|---|---|---|
+| lantern tree | 6.1k | 78 mobile / 122 desktop | 344k |
+| moss tuft | 2.5k | 115 | 170k |
+| bloom | 2.3k model | 34 / 50 | 102k |
+| terrain | — | — | 186k |
+| sea + foam | — | — | 163k |
+| grass and scatter | — | — | 303k |
+| **whole scene** | | | **~2.6M** |
+
+So:
+
+- **Ground cover and small plants: 1,000–3,000.** Both of the plants so far are 2,254, which
+  is right on the money. At the moss cap every extra 1,000 triangles costs 115,000.
+- **Trees: 3,000–6,000.** They are bigger on screen and there are more of them; the procedural
+  lantern tree already sits at 6.1k.
+- **One-offs — a great tree, the ship, a landmark: 10,000–20,000** is fine, because there is
+  one of them.
+
+Triangles are rarely what bites first, though — draw calls are, and a model is *one* against
+a merged primitive's one to three, so swapping models in tends to help there.
+
 ### Swapping a model onto a plant
 
 `PLANT_MODELS` is the same idea as `CREATURE_RIGS` but for scenery, and simpler because

@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b44';
+const BUILD = 'b45';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1748,6 +1748,8 @@ class MossTuft {
     for (let i = 0; i < 5; i++) { const f = mesh(G.leaf, M.moss, rnd(2, 4), rnd(1.2, 2.2), 1, rnd(-1, 1), .1, rnd(-1, 1)); f.rotation.y = rnd(3); this.g.add(f); }
     flatten(this.g);                                  // twelve pieces, two materials, one shape
     scene.add(this.g); this.apply();
+    const pm = PLANT_MODELS[this.constructor.name];
+    if (pm) attachPlantModel(this, pm);
   }
   apply() { const s = .15 + .85 * clamp(this.size, 0, 1); this.g.scale.setScalar(s); }
   update(dt) { if (this.size < 1) { this.size = Math.min(1, this.size + dt * .018); this.apply(); } }
@@ -2230,6 +2232,9 @@ function stepRig(r, dt, speed, grounded, ctx) {
 // for a species. Plants are not rigged, so this is only a mesh: the class keeps its growth,
 // its sway, its pulse and its glow.
 const PLANT_MODELS = {
+  // Ground cover, and the one there are most of: 115 of these at 2,254 triangles is a
+  // quarter of a million, which is what the primitive tufts already cost between them.
+  MossTuft: { url: 'models/alien_plant_02.glb', height: 1.5 },
   Bloom: {
     url: 'models/alien_plant_01.glb',
     height: 3.4,
@@ -5436,6 +5441,7 @@ function toggleMap(on) {
 isle.water = water; isle.foam = foam; isle.abyss = abyss; isle.terrain = terrain; isle.motesGeo = motesGeo;
 isle.MOVE = MOVE; isle.isClear = obClear; isle.standOn = standOn;
 isle.camera = camera; isle.renderer = renderer;   // for measuring how big things land on screen
+isle.scene = scene;
 isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap; isle.way = WAY; isle.setWaypoint = setWaypoint; isle.clampView = clampView;   // MAP is a const above, so this cannot move any earlier
 
 // What a tap on the right stick would do right now, if anything. Whatever is within reach
