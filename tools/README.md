@@ -447,6 +447,53 @@ Worth knowing when chasing something like this: `updateSky()` rewrites every lig
 intensity each frame, so poking a light from the console does nothing — the next frame puts
 it back. Test lighting by changing the material, or by changing the time of day.
 
+### What a creature notices
+
+`think()` is a species' job — graze, chop, dig, browse. Everything *else* a creature does
+lives on the base class in `senses(dt)`, which runs first and returns true when it has taken
+the wheel, because an animal bolting from you should not also be deciding which moss to eat.
+
+Seven optional knobs, passed in the species' `super(x, z, {...})` call. A species that leaves
+one out simply never does that thing:
+
+| knob | what it does |
+|---|---|
+| `wary` | how close he can get before it breaks off and bolts |
+| `flock` | how far that alarm carries to its own kind |
+| `notice` | how far away it turns its head to look at him |
+| `curious` | how strongly it comes over to watch somebody standing still |
+| `spark` | whether a dropped spark is worth walking to |
+| `thirst` | seconds between drinks |
+| `social` | whether two of them stop and look at each other when they meet |
+
+They run in that order of priority: running, then fear, then a greeting already under way,
+then a spark, then curiosity, then thirst, then the chance of a new greeting.
+
+Things worth knowing before changing any of it:
+
+- **`spook(from, radius)` propagates.** One hopper bolting takes the flock with it, which is
+  the most alive the meadow ever looks. It early-returns while already running, so standing
+  next to a herd does not reset the timer every frame.
+- **A frightened animal picks a destination, it does not just steer away.** `pickFlee` wants
+  somewhere valid, with clearance, and a halfway point it can stand on. The first version
+  steered blindly and ran animals into cliffs, where they juddered until the stall watchdog
+  teleported them out — the escape count went half again what it was, and every one of those
+  is a visible puff of dust. It repicks if the way turns out to be blocked.
+- **Curiosity has a budget.** Fifteen seconds of watching and it has seen enough, then it is
+  not interested again for a minute or so. Without that a creature glues itself to anyone who
+  stands still.
+- **Thirst, curiosity and sparks all stand down when `stall > 2-3`.** A long errand is exactly
+  the thing that walks an animal into a pocket it cannot get out of.
+- **Standing at a spark counts the same as a mote does** — a creature's attention feeds
+  `spark.gathered`, so calling animals over is a way to make a bloom take.
+- **`trackHead` is applied after `pose()`, not inside it.** A species' own idle sway lives on
+  the same joint; `pose()` zeroes the yaw on the way past so the two add instead of fighting.
+- **The Mudlark overrides `spook`**: it does not outrun anything, it goes down, and stays down
+  until you have gone.
+
+The headless report attributes each stall to the sense that had the wheel (`| by {...}`),
+which is how to tell a behaviour that traps creatures from one that merely moves them about.
+
 ### Species
 
 | Name | Role in the web |
@@ -818,19 +865,22 @@ moved it. The rebuild is now skipped in the piloted state.
 
 ### The ground
 
-The meadow has a real surface; the beaches, cliff faces and snowline keep their vertex
-colours. That split is what stops the island reading as one tiled material stretched over a
-shape, and it costs one attribute: `land`, computed per vertex in the terrain build off the
-same height and slope thresholds that chose the colours in the first place. The shader fades
-both the map and its normals out to nothing where `land` is 0.
+**There is no texture map on the terrain, on purpose.** It had one for a build — a tiled
+surface faded in over the meadow and out again over sand and rock, with a `land` attribute
+deciding where — and it read as wallpaper: a repeat you could count from a hillside, in
+colours that fought the island's own. What is there now is what was underneath it all along,
+done properly.
 
-UVs came free. The chart point each vertex was built from is already a world-space
-coordinate, so `uv = chart / GROUND.tile` is a tiling parameterisation with no seams and no
-unwrap — worth remembering for anything else that wants to be textured across the terrain.
+The height field picks sand, grass, rock and snow; the biome stains it; and three octaves of
+noise break it up so no two square metres are the same colour. Hue moves as well as
+lightness, because ground that only gets lighter and darker reads as one paint under a lamp.
+It costs one attribute (`color`) and no texture memory at all.
 
-`GROUND.tint` is the knob that matters: at 1 the map is stained flat green by the grass
-colour underneath it and only its relief survives, at 0 the island loses its zoning
-altogether. Just over a half keeps both.
+If it ever wants a map again, the two pieces to put back are in the comment above
+`BIOME_GROUND`: UVs come free — the chart point each vertex was built from is already a
+world-space coordinate, so `uv = chart / tile` is a tiling parameterisation with no seams and
+no unwrap — and a `land` mask off the same height and slope thresholds the colours use fades
+the map in and out.
 
 ### Biomes
 
@@ -906,11 +956,22 @@ step over it, and a grazer standing in the crop is a better picture than an empt
 ### The title screen
 
 Not a picture of the game — the game. The world is fully built and already running before
-anything is on screen, so the title screen is nothing but the camera parked out at
-`INTRO.r`, turning at `INTRO.spin`, orbiting whatever centrepiece the island produced (the
-letters if `placeTitle` stood them up, the Elderwillow if not). The ship flies the sortie it
-has always known how to fly — lift, one lap of the island at altitude, land — which is
-switched off in play because it is his ship now, and is exactly right here.
+anything is on screen, so the title screen is nothing but a camera in it.
+
+The shot is a **crane, not a turntable**. It opens at `INTRO.wide` — high and far out, where
+the world reads as a globe with weather on it — and comes down over `INTRO.craneT` seconds to
+`INTRO.near`, the meadow with the letters standing in it, then goes back up. Both ends are
+places worth being and the whole travel is one cosine, so it never starts, stops or turns a
+corner. It does not orbit: `placeTitle` turns the monument's reading side toward the middle of
+the island, so there is exactly one direction the letters are legible from and a full turn
+would spend half of itself round the back of them. It sits in front and sways.
+
+The ship flies the sortie it has always known how to fly — lift, one lap of the island at
+altitude, land — which is switched off in play because it is his ship now, and is exactly
+right here. The letters are a mote attractor for as long as the title screen is up, so the
+island's motes gather on them: the one thing on screen that says the world is running rather
+than painted. The frame is letterboxed and vignetted, and the bars **retract** rather than
+fade, so entering reads as the frame opening up.
 
 `startGame()` loads nothing. It drops `INTRO.on`, starts `diveFrame` easing the boom from
 wherever it was down to 20 over `INTRO.diveT`, and takes `body.intro` off, which fades the
@@ -924,6 +985,18 @@ you.
 **Every harness in `tools/` sets `INTRO.on = false` immediately after `eval`.** They measure
 the game being played; the title screen parks the camera at the planet and flies the ship in
 circles, which is the last thing any of them want.
+
+### The sky, seen from above
+
+`skyUni.uHigh` is how far out of the atmosphere the lens is — 0 on the ground, 1 by about
+340 units above sea level — and the dome darkens toward space with it, hardest at the zenith
+and not at all at the horizon, which keeps its haze. The stars come up with it too. Without
+this every high shot was the same pale daylight haze it is at sea level, which is what made
+the first title screens look washed out; it pays off in the ship as well, which cruises at
+sixty-eight.
+
+It reads height above the **sea**, not above the ground: on a mountain top you are still
+standing in the air you breathe, and the sky should not go black on a walk up a hill.
 
 ### The environment map
 
@@ -1089,9 +1162,16 @@ node tools/shot.js --out shots/x.png   # take a picture of it, in a real browser
 
 Each also takes an explicit file and frame count, e.g. `node tools/headless.js index.html 2000`.
 
-**glslcheck** pulls the water material out of the HTML, runs it through Three's real
-`onBeforeCompile` path, resolves all `#include` chunks the way Three does, and compiles the
-result as GLSL ES 1.0. Run this after *any* shader edit.
+**glslcheck** does two passes. The first pulls the water material out of the HTML, runs it
+through Three's real `onBeforeCompile` path, resolves all `#include` chunks the way Three
+does, and compiles the result as GLSL ES 1.0. The second finds **every raw ShaderMaterial in
+the file** — the sky, the stars, the motes, the foam, the flames, eighteen of them — and
+compiles each with the preludes Three prepends. Run this after *any* shader edit.
+
+The second pass exists because the first one said CLEAN while the sky would not compile: a
+`uHigh` added to a uniforms object and used in the fragment source, but never declared in it.
+Nothing caught it, and the only symptom in a browser is one `INVALID_OPERATION: useProgram`
+in the console and a sky that renders as whatever the last valid program was.
 
 **shot** is the only tool here that renders anything. Everything else measures a number;
 a detail pass is about how the place looks, and there is no substitute for looking at it. It
@@ -1265,6 +1345,11 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | The size of the letters in the meadow | `TITLE.span` |
 | How far apart the built sites stand | `SITE_APART` (relaxes to 52, then 38) |
 | How dark the worn ground is | `M_WORN.color` |
+| How the title screen's crane moves | `INTRO.wide` / `INTRO.near` / `INTRO.craneT` |
+| How far the shot swings across the letters | `INTRO.sweep`, `INTRO.rate` |
+| How an animal feels about you | `wary`/`flock`/`notice`/`curious` in its constructor |
+| How high the sky goes dark | the `smooth(60, 250, ...)` in `updateSky` |
+| How much ground colour varies | the three `m1`/`m2`/`m3` terms in the terrain build |
 
 ---
 

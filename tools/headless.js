@@ -31,7 +31,7 @@ const N=+process.argv[3]||6000;
 if(process.argv[4]) global.__wx.force=process.argv[4];
 let maxRain=0,maxStorm=0;
 const stall=new Map();   // creature -> {t, x, z, worst, state}
-let stallWorst=0, stallWho='', stallState='', stallNear='', stallCount=0; const stallTop=[], stallByClass={};
+let stallWorst=0, stallWho='', stallState='', stallNear='', stallCount=0; const stallTop=[], stallByClass={}, stallByDoing={};
 const w=global.__w,C=global.__C,c=global.__count,obRad=global.__obRad;
 let worstOverlap=0, worstWho='', overlapFrames=0, stuckMax=0;
 const obs=new Set(); for(const [k,a] of global.__OB.map) for(const o of a) obs.add(o);
@@ -40,7 +40,8 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
   if(i%30===0){ for(const cr of w.creatures){ if(!cr.alive||cr.flying||cr.aquatic) continue;
       let e=stall.get(cr); if(!e){ e={t:0,x:cr.pos.x,z:cr.pos.z,worst:0}; stall.set(cr,e); }
       const moved=Math.hypot(cr.pos.x-e.x,cr.pos.z-e.z); e.x=cr.pos.x; e.z=cr.pos.z;
-      if(cr.moving>0.5 && moved<0.25) { e.t+=1; if(e.t>e.worst) e.worst=e.t; if(e.t*1===3){ stallCount++; const k=cr.constructor.name; stallByClass[k]=(stallByClass[k]||0)+1; }
+      if(cr.moving>0.5 && moved<0.25) { e.t+=1; if(e.t>e.worst) e.worst=e.t; if(e.t*1===3){ stallCount++; const k=cr.constructor.name; stallByClass[k]=(stallByClass[k]||0)+1;
+        const d=cr.doing||cr.state||'-'; stallByDoing[d]=(stallByDoing[d]||0)+1; }
         if(e.t>stallWorst){ stallWorst=e.t; stallWho=cr.constructor.name; stallState=cr.state;
           let best=null,bd=1e9; for(const o of obs){ const d=Math.hypot(cr.pos.x-o.x,cr.pos.z-o.z)-obRad(o); if(d<bd){bd=d;best=o;} }
           stallNear=best?(best.owner?best.owner.constructor.name:'?')+' at '+bd.toFixed(1):'none'; }
@@ -82,7 +83,7 @@ console.log('sites',(w.sites||[]).length,(w.sites||[]).map(o=>o.x.toFixed(0)+','
       if(global.__h(x,z)>0.6 && global.__bio(x,z).name===n) k++; }
     return n+' '+k; }).join(' '));
 console.log('frames',N,'| day',w.day,'cairns',w.cairns,'beacons',w.beacons,'trees',c(w.plants,C.LanternTree),'blooms',c(w.plants,C.Bloom),'grazers',c(w.creatures,C.Grazer),'tinkers',c(w.creatures,C.Weaver));
-console.log('walking in place: episodes over 3s',stallCount,JSON.stringify(stallByClass),'| escapes',w.escapes||0,'| longest',stallWorst,'s',stallWho,'state',stallState,'| nearest obstacle',stallNear);
+console.log('walking in place: episodes over 3s',stallCount,JSON.stringify(stallByClass),'| by',JSON.stringify(stallByDoing),'| escapes',w.escapes||0,'| longest',stallWorst,'s',stallWho,'state',stallState,'| nearest obstacle',stallNear);
 stallTop.sort((a,b)=>b.e.worst-a.e.worst).slice(0,3).forEach(t=>console.log('   stalled',t.e.worst+'s',t.cr.constructor.name,'state',t.state,'| nearest',t.near,'| ignore',t.cr.ignore?t.cr.ignore.constructor.name:'-'));
 const X=global.__wx; console.log('weather: now',X.state,'| fronts',X.fronts,'| strikes',X.strikes,'| sparks alive',w.sparks.filter(s=>s.alive).length,'| max rain',maxRain.toFixed(2),'storm',maxStorm.toFixed(2),'| wet',X.wet.toFixed(2),'| wind',X.windK.toFixed(2));
 console.log('ghost-frames excluded | obstacles',obs.size,'| worst penetration',worstOverlap.toFixed(2),worstWho,'| sampled frames with any overlap',overlapFrames,'/',Math.ceil(N/97),'| max stuck timer',stuckMax.toFixed(2));

@@ -125,8 +125,19 @@
   /* a soft floor to sit the control on, so it reads against sky or meadow either way */
   #intro::before{content:'';position:absolute;left:0;right:0;bottom:0;height:42vh;
     background:linear-gradient(to top,rgba(6,9,18,.62),rgba(6,9,18,0));pointer-events:none}
-  #introFoot{position:relative;display:flex;flex-direction:column;align-items:center;gap:12px;
-    pointer-events:auto;padding-bottom:calc(52px + env(safe-area-inset-bottom))}
+  /* and a vignette, which is most of what separates a shot from a screenshot */
+  #intro::after{content:'';position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse 76% 66% at 50% 46%,rgba(0,0,0,0) 52%,rgba(4,6,12,.5) 100%)}
+  /* Letterbox. It retracts rather than fading, so entering the world reads as the frame
+     opening up rather than a menu going away. */
+  #intro .bar{position:absolute;left:0;right:0;height:7.5vh;background:#05070d;z-index:1;
+    transition:height 1.15s cubic-bezier(.45,0,.15,1)}
+  #intro .bar.top{top:0} #intro .bar.bot{bottom:0}
+  #intro.go .bar{height:0}
+  #introFoot{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:12px;
+    pointer-events:auto;padding-bottom:calc(52px + env(safe-area-inset-bottom));
+    animation:introUp 1.9s 1.1s both cubic-bezier(.2,.7,.2,1)}
+  @keyframes introUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
   #startB{font:inherit;font-size:15px;letter-spacing:.34em;text-transform:uppercase;
     color:#fff3dc;background:rgba(255,214,150,.07);border:1px solid rgba(255,214,150,.5);
     border-radius:999px;padding:13px 40px 13px 44px;cursor:pointer;
@@ -140,7 +151,7 @@
 </head>
 <body class="intro">
 <div id="boot"><img src="images/title_image_01.webp" alt="Plutopia"><span>growing a world…</span></div>
-<div id="intro" hidden><div id="introFoot">
+<div id="intro" hidden><div class="bar top"></div><div class="bar bot"></div><div id="introFoot">
   <button id="startB">enter</button>
   <div id="introHint">it has been going without you &middot; tap anywhere to land</div>
 </div></div>
@@ -975,14 +986,19 @@ const skyUni = {
   uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Color(0xffe6bb) }, uSunI: { value: 1 },
   // weather: cloud cover, storm darkening, drift time and direction, rainbow, lightning
   uCloud: { value: 0 }, uStorm: { value: 0 }, uCloudT: { value: 0 }, uWind: { value: new THREE.Vector2(1, 0) },
-  uRainbow: { value: 0 }, uFlash: { value: 0 }
+  uRainbow: { value: 0 }, uFlash: { value: 0 },
+  // How far out of the atmosphere the camera is. On the ground it is 0 and nothing changes.
+  // Climb -- in the ship, or on the title screen, where the shot is a hundred units up --
+  // and the dome darkens toward space instead of staying the same pale daylight haze it is
+  // at sea level, which is the single thing that made every high shot look washed out.
+  uHigh: { value: 0 }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
   vertexShader: `varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
   fragmentShader: `
     uniform vec3 uTop,uMid,uLow,uSunCol; uniform vec3 uSun; uniform float uSunI;
-    uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash; uniform vec2 uWind; varying vec3 vD;
+    uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh; uniform vec2 uWind; varying vec3 vD;
     // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -1022,6 +1038,17 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         c += hue((1.0 - t) * 0.72) * bw * uRainbow * smoothstep(0.0, 0.08, h) * 0.52 * (1.0 - cl * 0.7);
       }
       c += uFlash * vec3(0.85, 0.92, 1.05) * (0.45 + 0.9 * cl);
+      // thinner air with height, and thinnest straight up: the horizon keeps its haze
+      // From up there the sky is not paler at the horizon and darker overhead -- that is
+      // what it looks like from inside it. It is black in every direction except a thin
+      // bright ring where the air is seen edge-on, and the first attempt at this keyed the
+      // darkening to the zenith, which left the whole pale band the camera actually looks
+      // at untouched. Key it to the limb instead.
+      if (uHigh > 0.001) {
+        float limb = exp(-abs(h) * 8.0);
+        vec3 space = mix(vec3(0.011, 0.019, 0.048), c * 1.18, limb * 0.88);
+        c = mix(c, space, uHigh * 0.94);
+      }
       gl_FragColor = vec4(c, 1.0);
     }`
 }));
@@ -1057,26 +1084,34 @@ const bounce = new THREE.DirectionalLight(0xffd9a8, .18); const BOUNCE_D = new T
 const fill = new THREE.DirectionalLight(0x9fd4e8, .42); const FILL_D = new THREE.Vector3(.2, -1, .35); scene.add(fill);
 bounce.target = fill.target = sun.target;   // every light aims at the ground under the camera
 scene.fog = new THREE.FogExp2(0xa7c8e6, .0038);
+// What the haze goes toward when the lens is above most of it. Density is already thinned by
+// altitude down in updateSky; this is only the colour, and it multiplies into whatever the
+// time of day and the weather have chosen rather than replacing it -- writing a constant
+// there, which the first version of this did, froze the fog at noon for the whole night.
+const FOG_HIGH = new THREE.Color(0x1b2b46);
 
 // ---------- terrain ----------
-// Declared up here because the mesh build below reads GROUND.tile for its UVs, and a const
-// referenced above its declaration takes the whole rest of the file with it.
-// tint: how much the terrain's own grass colour still tints the texture on the meadow.
-// At 1 the map is stained green and only its relief survives; at 0 the island loses its
-// zoning and becomes one tiled material. Just under a half keeps both.
-const GROUND = { tile: 7, boost: .88, normal: .85, tint: .68 };
-// What each biome does to the ground under it. `col` is the stain laid over whatever the
-// height field already chose, `k` how hard, and `tex` how much of the tiled ground map
-// survives there -- the map is a meadow surface, so a swamp and a burnt-over ash flat keep
-// most of their own colour and a cliff keeps all of it.
+// The ground carries no texture map. It had one for a build -- a tiled surface faded in over
+// the meadow and out again over sand and rock -- and it read as wallpaper: a repeat you
+// could count from a hillside, in colours that fought the island's own. What is here instead
+// is what was underneath it all along, done properly: the height field picks sand, grass,
+// rock and snow, the biome stains it, and three octaves of noise break it up so no two
+// square metres are the same colour. It costs one attribute and no memory.
+//
+// If it ever wants a map again: put `uv` back on the geometry (`chart / tile` is a seamless
+// tiling parameterisation, no unwrap needed) and a `land` mask off the same height and
+// slope thresholds the colours use, and fade the map in and out with it.
+//
+// What each biome does to the ground under it: `col` is the stain laid over whatever the
+// height field already chose, and `k` is how hard.
 const BIOME_GROUND = {
-  coast:    { col: col('#cdb488'), k: .22, tex: .35 },
-  wetland:  { col: col('#4a7148'), k: .52, tex: .45 },
-  jungle:   { col: col('#2c6a4c'), k: .54, tex: .62 },
-  pasture:  { col: col('#8fbb62'), k: .30, tex: 1 },
-  scrub:    { col: col('#a99a5c'), k: .44, tex: .85 },
-  highland: { col: col('#7d7770'), k: .22, tex: .3 },
-  ash:      { col: col('#57463d'), k: .62, tex: .28 },
+  coast:    { col: col('#cdb488'), k: .22 },
+  wetland:  { col: col('#4a7148'), k: .52 },
+  jungle:   { col: col('#2c6a4c'), k: .54 },
+  pasture:  { col: col('#8fbb62'), k: .30 },
+  scrub:    { col: col('#a99a5c'), k: .44 },
+  highland: { col: col('#7d7770'), k: .22 },
+  ash:      { col: col('#57463d'), k: .62 },
 };
 // A polar grid instead of a square one: rings running out from the chart origin and spokes
 // running round it, which is the shape the projection wants. Rings are packed tight over the
@@ -1113,15 +1148,9 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
 {
   const pa = terrainGeo.attributes.position, colors = new Float32Array(pa.count * 3), c = new THREE.Color(), c2 = new THREE.Color();
   const chart = new Float32Array(pa.count * 2), hgt = new Float32Array(pa.count), _tv = new THREE.Vector3();
-  // UVs come free: the chart point IS a world-space coordinate, so dividing it by a tile size
-  // is a tiling parameterisation with no seams and no unwrap. And a mask saying how much of
-  // this vertex is meadow, off the same thresholds the colouring below uses -- the ground
-  // texture belongs on grass, not on a cliff face, a beach or a snowline.
-  const uv = new Float32Array(pa.count * 2), land = new Float32Array(pa.count);
   for (let i = 0; i < pa.count; i++) {
     const x = pa.getX(i), z = pa.getZ(i), h = height(x, z);
     chart[i * 2] = x; chart[i * 2 + 1] = z; hgt[i] = h;
-    uv[i * 2] = x / GROUND.tile; uv[i * 2 + 1] = z / GROUND.tile;
     planetPos(x, h, z, _tv); pa.setXYZ(i, _tv.x, _tv.y, _tv.z);
     const sl = slope(x, z);
     const wet = smooth(2.2, -1.2, h);
@@ -1146,53 +1175,25 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
     const bg = BIOME_GROUND[biomeAt(x, z, h, sl).name];
     const bk = _bio.k * (.4 + .6 * _bio.edge);
     c.lerp(bg.col, bg.k * bk);
-    land[i] = smooth(SEA + .8, SEA + 3.4, h) * (1 - smooth(11, 17, h)) * (1 - clamp((sl - .55) * 1.8, 0, 1)) * lerp(1, bg.tex, bk);
-    c.offsetHSL((fbm(x * .3, z * .3, 2) - .5) * .02, 0, (fbm(x * .5, z * .5, 3) - .5) * .07);
+    // Three scales of mottle, and this is the whole surface now that there is no map: broad
+    // patches you read from a hillside, clumps at walking distance, and a fine grain that
+    // keeps a flat meadow from going to one solid colour. Hue moves as well as lightness,
+    // because ground that only gets lighter and darker reads as one paint under a lamp.
+    const meadow = smooth(SEA + .6, SEA + 3, h) * (1 - smooth(13, 20, h));
+    const m1 = fbm(x * .018 + 3.7, z * .018 + 8.1, 3) - .5;
+    const m2 = fbm(x * .085 + 17, z * .085 + 2.3, 3) - .5;
+    const m3 = fbm(x * .34, z * .34, 2) - .5;
+    c.offsetHSL(m1 * .075 * meadow + m2 * .032 * meadow + m3 * .022,
+                m1 * .16 * meadow + m2 * .09 * meadow,
+                m1 * .12 + m2 * .13 + m3 * .05);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
   }
   terrainGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   terrainGeo.setAttribute('chart', new THREE.BufferAttribute(chart, 2));
   terrainGeo.setAttribute('hgt', new THREE.BufferAttribute(hgt, 1));
-  terrainGeo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  terrainGeo.setAttribute('land', new THREE.BufferAttribute(land, 1));
   terrainGeo.computeVertexNormals();
 }
-// The meadow gets a real surface. Everything else on the island -- the beaches, the cliff
-// faces, the snow -- keeps the vertex colours, which is what makes it read as a place rather
-// than one tiled material stretched over a shape. `land` decides which is which per vertex,
-// and it comes off the same height and slope thresholds that chose the colours.
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 });
-{
-  const tl = new THREE.TextureLoader();
-  const rep2 = t => { t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = renderer.capabilities.getMaxAnisotropy(); return t; };
-  // sRGB on the colour, linear on the normals: one is a picture, the other is a direction
-  terrainMat.map = rep2(tl.load('images/ground/ground_01_diffuse.webp', t => { t.encoding = THREE.sRGBEncoding; t.needsUpdate = true; }));
-  terrainMat.map.encoding = THREE.sRGBEncoding;
-  terrainMat.normalMap = rep2(tl.load('images/ground/ground_01_normals.webp'));
-  terrainMat.normalScale = new THREE.Vector2(GROUND.normal, GROUND.normal);
-  terrainMat.onBeforeCompile = sh => {
-    sh.uniforms.uBoost = { value: GROUND.boost };
-    sh.uniforms.uTint = { value: GROUND.tint };
-    sh.vertexShader = 'attribute float land;\nvarying float vLand;\n' +
-      sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLand = land;');
-    sh.fragmentShader = 'uniform float uBoost, uTint;\nvarying float vLand;\n' + sh.fragmentShader
-      // off the meadow the vertex colour is the whole story; on it, it steps back so the
-      // texture's own pinks and creams are not stained flat green
-      .replace('#include <color_fragment>',
-        'diffuseColor.rgb *= mix(vec3(1.0), vColor, mix(1.0, uTint, vLand));')
-      // the stock chunk multiplies the map in everywhere; this one fades it out to plain
-      // white off the meadow, so sand stays sand and rock stays rock
-      .replace('#include <map_fragment>',
-        `{
-           vec4 tex = texture2D(map, vUv);
-           diffuseColor.rgb *= mix(vec3(1.0), tex.rgb * uBoost, vLand);
-         }`)
-      // and the relief with it, or a beach picks up bumps that are not there
-      .replace('#include <normal_fragment_maps>',
-        '#include <normal_fragment_maps>\n  normal = normalize(mix(geometryNormal, normal, vLand));');
-  };
-}
 const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 terrain.material.userData.noHole = true;
 terrain.receiveShadow = true; terrain.userData.flat = true; scene.add(terrain);   // built on the sphere already
@@ -2664,6 +2665,20 @@ class Creature {
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
+    // Everything a creature does that is not its species' job. Each of these is optional and
+    // a species that leaves one out simply never does that thing.
+    //   wary    how close he can get before it breaks off and bolts
+    //   flock   how far the alarm carries to its own kind
+    //   notice  how far away it turns its head to look at him
+    //   curious how strongly it comes over to watch somebody standing still
+    //   spark   whether a dropped spark is worth walking to
+    //   thirst  seconds between drinks
+    //   social  whether two of them stop and look at each other when they meet
+    this.SN = { wary: o.wary || 0, flock: o.flock || 0, notice: o.notice || 0,
+      curious: o.curious || 0, spark: o.spark || 0, thirst: o.thirst || 0, social: o.social || 0 };
+    this.alarm = 0; this.alarmFrom = null; this.met = 0; this.metWho = null; this.metCool = rnd(0, 30);
+    this.curio = 0; this.curioCool = rnd(0, 40); this.drinking = 0;
+    this.drinkT = o.thirst ? rnd(o.thirst * .2, o.thirst) : 1e9;
     this.g = new THREE.Group(); this.body = new THREE.Group(); this.g.add(this.body); this.build();
     this.g.traverse(m => { if (m.isMesh && m.material) m.material = solid(m.material); });   // never see through a body
     // Bake the static half of the body — plates, spines, shells, snouts, whatever the
@@ -2794,6 +2809,135 @@ class Creature {
     }
   }
   abandon() { this.wp = null; this.target = null; }   // species with a longer memory override this
+  // Bolt. It keeps running for a couple of seconds after the reason for it has gone, and it
+  // takes its neighbours with it: a flock that scatters as one is the difference between a
+  // field of animals and a field of things standing in it.
+  spook(from, radius = 0) {
+    if (this.alarm > 1.2) return;
+    this.alarm = rnd(1.6, 3.1); this.alarmFrom = { x: from.x, z: from.z }; this.fleeTo = null;
+    this.met = 0; this.metWho = null; this.abandon();
+    if (radius > 0) for (const o of world.creatures)
+      if (o !== this && o.alive && o.constructor === this.constructor && o.alarm <= 0 && this.dist(o.pos) < radius) o.spook(from, 0);
+  }
+  // Somewhere to run to: away from whatever it is, and somewhere it can stand.
+  pickFlee(from) {
+    const base = from ? Math.atan2(this.pos.x - from.x, this.pos.z - from.z) : this.heading;
+    // Somewhere it can stand, with room round it, and a halfway point it can stand on too:
+    // a frightened animal picking a valid spot on the far side of a boulder field runs
+    // straight into the boulder field, and the last thing a bolting creature should do is
+    // spend its panic juddering against a rock.
+    for (let pass = 0; pass < 2; pass++) {
+      const spread = pass ? 2.2 : 1.1, pad = pass ? .2 : this.rad + 1.1;
+      for (let i = 0; i < 14; i++) {
+        const a = base + rnd(-spread, spread), r = rnd(14, 30);
+        const x = this.pos.x + Math.sin(a) * r, z = this.pos.z + Math.cos(a) * r;
+        if (!this.valid(x, z) || !obClear(x, z, pad)) continue;
+        const mx = (this.pos.x + x) * .5, mz = (this.pos.z + z) * .5;
+        if (!this.terrainOK(mx, mz)) continue;
+        return new THREE.Vector3(x, 0, z);
+      }
+    }
+    return null;
+  }
+  // Somewhere to drink: land, just above the tideline, that this creature can actually reach.
+  shoreNear(maxR = 70) {
+    for (let i = 0; i < 70; i++) {
+      const a = rnd(Math.PI * 2), r = rnd(9, maxR);
+      const x = this.pos.x + Math.cos(a) * r, z = this.pos.z + Math.sin(a) * r;
+      const h = height(x, z);
+      if (h > SEA + .7 && h < SEA + 2 && this.valid(x, z)) return new THREE.Vector3(x, 0, z);
+    }
+    return null;
+  }
+  // Everything above the species' own job, in the order it overrides it. Returns true when
+  // it has taken the wheel, because a creature bolting from you should not also be deciding
+  // which moss to eat.
+  senses(dt) {
+    const S = this.SN, pl = world.player, him = pl && !pl.free && !pl.aboard;
+    this.doing = '';                       // which sense has the wheel, for the harness to blame
+    if (this.metCool > 0) this.metCool -= dt;
+    if (this.curioCool > 0) this.curioCool -= dt;
+    if (this.alarm > 0) {
+      this.alarm -= dt; this.moving = 1;
+      // Steering blindly away from the thing was the first version of this, and it ran
+      // animals into cliffs and boulders where they juddered until the stall watchdog
+      // teleported them out -- the escape count half again what it was. Pick somewhere it
+      // can actually get to, away from the threat, and run there.
+      // and if the way there turns out to be blocked, pick again rather than grind at it
+      if (!this.fleeTo || this.dist(this.fleeTo) < 3.5 || this.stall > 1.5) this.fleeTo = this.pickFlee(this.alarmFrom);
+      if (this.fleeTo) this.seek(this.fleeTo, 2.4);
+      else { this.alarm = 0; this.fleeTo = null; }        // nowhere to go: stop panicking
+      if (this.alarm <= 0) this.fleeTo = null;
+      this.doing = 'flee'; return true;
+    }
+    if (S.wary && him && this.dist(pl.pos) < S.wary) { this.spook(pl.pos, S.flock); return true; }
+    if (this.met > 0) {
+      this.met -= dt; this.moving = 0;
+      if (this.metWho && this.metWho.alive) this.seek(this.metWho.pos, 1);
+      if (this.met <= 0) { this.metCool = rnd(25, 70); this.metWho = null; }
+      this.doing = 'meet'; return true;
+    }
+    // A dropped spark is the one thing a person can do to call an animal over, and standing
+    // near one is also what makes it take: a creature's attention counts the same as a mote's.
+    if (S.spark && world.sparks.length && this.stall < 3) {
+      const sp = nearest(world.sparks, this.pos, s => s.alive && !s.spawned, 45);
+      if (sp) {
+        if (this.dist(sp.pos) > 3.2) { this.moving = 1; this.seek(sp.pos, 1.5); }
+        else { this.moving = 0; this.seek(sp.pos, 1); sp.gathered += dt * 4; }
+        this.doing = 'spark'; return true;
+      }
+    }
+    // It comes to look at somebody who has stopped moving -- for a while, and then it has
+    // seen enough and will not be interested again for a minute or so.
+    if (S.curious && him && this.curioCool <= 0 && this.stall < 3 && pl.speed < .8 && this.dist(pl.pos) < 32) {
+      this.curio += dt;
+      if (this.curio >= 15) { this.curio = 0; this.curioCool = rnd(40, 95); }
+      else {
+        const d = this.dist(pl.pos);
+        if (d > 6) { this.moving = .6; this.seek(pl.pos, S.curious); } else { this.moving = 0; this.seek(pl.pos, 1); }
+        this.doing = 'watch'; return true;
+      }
+    } else if (this.curio > 0) this.curio = Math.max(0, this.curio - dt * .5);
+    if (S.thirst && !this.aquatic && !this.flying) {
+      this.drinkT -= dt;
+      if (this.state === 'drink') {
+        if (!this.wp) { this.state = 'wander'; this.drinkT = rnd(S.thirst * .6, S.thirst * 1.4); }
+        else if (this.dist(this.wp) < 3.4) {
+          this.moving = 0; this.drinking -= dt;
+          if (this.drinking <= 0) { this.state = 'wander'; this.wp = null; this.drinkT = rnd(S.thirst * .6, S.thirst * 1.4); }
+        } else { this.moving = 1; this.seek(this.wp, 1.25); }
+        this.doing = 'drink'; return true;
+      }
+      if (this.drinkT <= 0 && this.stall < 2) {
+        const w = this.shoreNear();
+        if (w) { this.wp = w; this.target = null; this.state = 'drink'; this.drinking = rnd(5, 9); this.doing = 'drink'; return true; }
+        this.drinkT = rnd(25, 50);           // nowhere to go from here; ask again shortly
+      }
+    }
+    if (S.social && this.metCool <= 0 && Math.random() < dt * .45) {
+      const o = nearest(world.creatures, this.pos,
+        c => c.alive && c !== this && c.constructor === this.constructor && c.met <= 0 && c.metCool <= 0 && c.alarm <= 0, 6.5);
+      if (o) { const t = rnd(2.4, 4.8); this.met = t; this.metWho = o; o.met = t; o.metWho = this; this.doing = 'meet'; return true; }
+    }
+    return false;
+  }
+  // A head that turns to follow him. Applied after pose() rather than inside it, because a
+  // species' own idle sway lives on the same joint and would otherwise overwrite this; pose()
+  // zeroes the yaw on the way past so the two add instead of fighting.
+  trackHead(dt) {
+    const h = this.head; if (!h) return;
+    const pl = world.player;
+    let want = 0;
+    if (pl && !pl.free && !pl.aboard && this.SN.notice) {
+      const dx = pl.pos.x - this.rx, dz = pl.pos.z - this.rz, d = Math.hypot(dx, dz);
+      if (d < this.SN.notice) {
+        let a = Math.atan2(dx, dz) - this.heading; a = Math.atan2(Math.sin(a), Math.cos(a));
+        want = clamp(a, -1, 1) * smooth(this.SN.notice, this.SN.notice * .45, d);
+      }
+    }
+    this.headY = lerp(this.headY || 0, want, Math.min(1, dt * 2.4));
+    h.rotation.y += this.headY;
+  }
   // nearest valid spot with clearance for this creature, closest ring first
   findEscape() {
     for (let r = 3; r <= 16; r += 2.5) for (let i = 0; i < 12; i++) {
@@ -2865,13 +3009,15 @@ class Creature {
     this.pos.y = base; this.g.position.y = base;
     if (!this.flying && !this.aquatic) { alignTo(this.g, this.rx, this.rz, .55); this.g.rotateY(this.heading); }
     else this.g.rotation.set(0, this.heading, 0);
+    if (this.head) this.head.rotation.y = 0;         // trackHead adds to whatever pose sets
     this.body.position.y = Math.abs(Math.sin(world.clock * this.gait + this.phase)) * this.bob * this.animK;
     this.body.rotation.x = Math.sin(world.clock * this.gait + this.phase) * .06 * this.animK;
     this.body.rotation.z = -this.lean * .12;
     if (this.legs.length) this.animLegs(this.gait);
   }
   update(dt) {
-    if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); } else this.think(dt);
+    if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); }
+    else if (!this.senses(dt)) this.think(dt);
     this.locomote(dt);
     if (this.ghost > 0) this.ghost -= dt;
     if (!this.flying) {
@@ -2936,6 +3082,7 @@ class Creature {
     const kR = Math.min(1, dt * (this.flying ? 20 : 10));
     this.rx = lerp(this.rx, this.pos.x, kR); this.rz = lerp(this.rz, this.pos.z, kR);
     this.pose(dt);
+    this.trackHead(dt);
     if (this.rig) {
       const px = this.px2 === undefined ? this.rx : this.px2, pz = this.pz2 === undefined ? this.rz : this.pz2;
       this.px2 = this.rx; this.pz2 = this.rz;
@@ -2955,7 +3102,10 @@ function eyes(parent, y, z, dx, s, mat) {
 
 // Mossback — grazer, herder, seed-carrier
 class Grazer extends Creature {
-  constructor(x, z) { super(x, z, { speed: 3.2, turn: 2.2, rad: 1.7, look: 9, minObR: .8 }); this.gait = 7; this.bob = .18; this.full = 0; this.seeded = 0; }
+  // Placid: it lets you walk right up before it moves off, but the whole herd hears about it
+  // when it does. It drinks, and two of them meeting will stop and stand nose to nose.
+  constructor(x, z) { super(x, z, { speed: 3.2, turn: 2.2, rad: 1.7, look: 9, minObR: .8,
+    wary: 3.6, flock: 8, notice: 17, thirst: 155, social: 1 }); this.gait = 7; this.bob = .18; this.full = 0; this.seeded = 0; }
   build() {
     const b = this.body, hide = pick(M.grazer);
     const torso = mesh(G.blob[0], hide, 1.5, 1.25, 2.0, 0, 1.35, 0); b.add(torso);
@@ -3022,7 +3172,10 @@ class Grazer extends Creature {
 }
 // Tinker — feller, hauler, builder
 class Weaver extends Creature {
-  constructor(x, z) { super(x, z, { speed: 4.6, turn: 3.2, rad: .95, look: 7 }); this.gait = 10; this.bob = .22; this.carry = null; this.state = 'seek'; this.tree = null; }
+  // The one that isn't afraid of you. It will put its work down and come over to look, and a
+  // spark dropped on the ground is worth crossing a field for.
+  constructor(x, z) { super(x, z, { speed: 4.6, turn: 3.2, rad: .95, look: 7,
+    curious: 1.2, notice: 24, spark: 1, thirst: 200 }); this.gait = 10; this.bob = .22; this.carry = null; this.state = 'seek'; this.tree = null; }
   build() {
     const b = this.body, skin = pick(M.weaver);
     b.add(mesh(G.blob[1], skin, .62, .95, .5, 0, 1.5, 0));            // torso
@@ -3121,7 +3274,13 @@ class Weaver extends Creature {
 }
 // Mudlark — digger, accidental gardener
 class Burrower extends Creature {
-  constructor(x, z) { super(x, z, { speed: 2.6, turn: 2.6, rad: 1.25, look: 6 }); this.gait = 9; this.bob = .1; this.timer = rnd(6, 16); }
+  constructor(x, z) { super(x, z, { speed: 2.6, turn: 2.6, rad: 1.25, look: 6,
+    wary: 6.5, notice: 13, spark: 1 }); this.gait = 9; this.bob = .1; this.timer = rnd(6, 16); }
+  // A mudlark does not outrun anything. It goes down, and stays down until you have gone.
+  spook(from) {
+    if (this.state === 'dig') return;
+    this.abandon(); this.alarm = 0; this.state = 'dig'; this.timer = rnd(4, 8);
+  }
   build() {
     const b = this.body;
     b.add(mesh(G.blob[2], M.burrower, 1.25, .82, 1.75, 0, .85, 0));
@@ -3219,7 +3378,8 @@ class Skimmer extends Creature {
 }
 // Kitewing — pollen courier, seed sower
 class Drifter extends Creature {
-  constructor(x, z) { super(x, z, { speed: 7, turn: 1.6, flying: true, rad: 1.2 }); this.gait = 5; this.bob = 0; this.pollen = 0; this.alt = groundY(x, z) + 12; this.lastBloom = null; this.orbit = rnd(Math.PI * 2); }
+  constructor(x, z) { super(x, z, { speed: 7, turn: 1.6, flying: true, rad: 1.2,
+    curious: .85, notice: 30 }); this.gait = 5; this.bob = 0; this.pollen = 0; this.alt = groundY(x, z) + 12; this.lastBloom = null; this.orbit = rnd(Math.PI * 2); }
   build() {
     const b = this.body;
     b.add(mesh(G.blob[2], M.drifter, .38, .4, 1.25, 0, 0, 0));
@@ -3459,7 +3619,9 @@ class Leviathan extends Creature {
 }
 // Grovewalker — slow, tall, carries its own little grove
 class Walker extends Creature {
-  constructor(x, z) { super(x, z, { speed: 1.6, turn: .85, rad: 2.6, look: 15, minObR: 1.3 }); this.gait = 2.5; this.bob = .3; this.browse = 0; }
+  // Far too big to mind you. It turns its head, and that is the whole of its reaction.
+  constructor(x, z) { super(x, z, { speed: 1.6, turn: .85, rad: 2.6, look: 15, minObR: 1.3,
+    notice: 30, thirst: 280 }); this.gait = 2.5; this.bob = .3; this.browse = 0; }
   build() {
     const b = this.body, L = 5.6;
     b.add(mesh(G.blob[1], M.walker, 2.5, 2.1, 4.0, 0, L + 1.5, 0));
@@ -3528,7 +3690,10 @@ class Walker extends Creature {
 }
 // Hopper — the small end of the scale; trails the big grazers for the cropped ground
 class Hopper extends Creature {
-  constructor(x, z) { super(x, z, { speed: 3.0, turn: 4.5, rad: .5, look: 4, minObR: 1.0 }); this.gait = 9; this.bob = .62; }
+  // Nervous, and it does not keep that to itself: one hopper bolting takes the whole flock
+  // with it, which is the most alive the meadow ever looks.
+  constructor(x, z) { super(x, z, { speed: 3.0, turn: 4.5, rad: .5, look: 4, minObR: 1.0,
+    wary: 7, flock: 10, notice: 11, social: 1 }); this.gait = 9; this.bob = .62; }
   build() {
     const b = this.body, coat = pick(M.hopper);
     b.add(mesh(G.blob[2], coat, .42, .4, .58, 0, .5, 0));
@@ -3548,7 +3713,7 @@ class Hopper extends Creature {
       const d = this.dist(o.pos); if (d < 9) { cx += o.pos.x; cz += o.pos.z; n++; if (d < 1.4) this.flee(o.pos, 1.6 / Math.max(d, .4)); }
     }
     if (n) this.seek({ x: cx / n, z: cz / n }, .5);
-    if (world.player && !world.player.free) { const d = this.dist(world.player.pos); if (d < 9) this.flee(world.player.pos, (9 - d) / 9 * 3); }
+    // fear of him is the base class's job now -- it bolts, and it tells the others
     const big = nearest(world.creatures, this.pos, o => o instanceof Grazer || o instanceof Walker, 45);
     if (big) {
       const d = this.dist(big.pos);
@@ -4482,6 +4647,14 @@ function updateMotes(dt) {
   // attractor that circulates what it catches rather than holding it (see below).
   if (world.player && !world.player.free && !world.player.fly) attractors.push({ x: fairy.pos.x, y: fairy.pos.y, z: fairy.pos.z, w: .35 + world.night * 1.5, r: 46, o: world.player, out: true });
   for (const c of world.creatures) if (c.alive && c instanceof Drifter) attractors.push({ x: c.pos.x, y: c.pos.y, z: c.pos.z, w: .35, r: 20, o: c });
+  // On the title screen the letters gather the island's motes, which is the one thing on
+  // screen that says the world is running rather than painted.
+  if (INTRO.on && world.title) {
+    const t = world.title.position;
+    // Weak and short-ranged on purpose: the first pass pulled every mote on the island into
+    // one bright blob sitting exactly where the letters are, and read as a lens flare.
+    attractors.push({ x: t.x, y: groundY(t.x, t.z) + TITLE.span * .66, z: t.z, w: 1.6, r: 95, o: world.title });
+  }
   for (const a of attractors) a.n = 0;
   const t = world.clock;
   for (let i = 0; i < NM; i++) {
@@ -4564,7 +4737,11 @@ function placeTitle() {
   // the steading's fence registers nothing on purpose, so the first version of this stood
   // the letters in the middle of somebody's crop.
   const sites = world.sites || [];
-  const far = (x, z, d) => sites.every(s => Math.hypot(x - s.x, z - s.z) > d);
+  const gt = world.greatTree;
+  const far = (x, z, d) => sites.every(s => Math.hypot(x - s.x, z - s.z) > d)
+    // and clear of the Elderwillow, whose crown is wide enough to stand in front of the
+    // letters on the title screen and hide half of them
+    && (!gt || Math.hypot(x - gt.pos.x, z - gt.pos.z) > Math.max(38, d));
   let spot = null;
   for (const [clear, apart] of [[16, 60], [12, 60], [9, 45], [6, 45], [4, 30], [0, 30]]) {
     for (let i = 0; i < 3000 && !spot; i++) {
@@ -5118,7 +5295,12 @@ function updateSky() {
   hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.34, .72, dayK) * (1 - oc * .3) + WX.flash * 1.5;
   sun.intensity *= 1 - oc * .8; sun.castShadow = sun.castShadow && sun.intensity > .2;
   sun.color.copy(tmpC.sun); bounce.intensity = lerp(.05, .22, dayK); fill.intensity = lerp(.12, .5, dayK);
-  stars.material.uniforms.uOp.value = world.night; stars.material.uniforms.uT.value = world.clock; stars.rotation.y = world.clock * .004;
+  // Height above the sea under the lens, not above the ground: on a mountain top you are
+  // still standing in the air you breathe, and the sky should not go black on a walk up it.
+  skyUni.uHigh.value = lerp(skyUni.uHigh.value, smooth(60, 250, camS.y - SEA), Math.min(1, .06));
+  scene.fog.color.lerp(FOG_HIGH, skyUni.uHigh.value * .55);
+  stars.material.uniforms.uOp.value = Math.max(world.night, skyUni.uHigh.value * .85);
+  stars.material.uniforms.uT.value = world.clock; stars.rotation.y = world.clock * .004;
   M.lantern.emissiveIntensity = lerp(.4, 3.2, world.night);
   for (const m of M.bloom) m.emissiveIntensity = lerp(.3, 1.6, world.night);
   M.skimmer.emissiveIntensity = lerp(.2, 1.4, world.night);
@@ -5153,8 +5335,18 @@ function eraName() {
 // r/pol were 168 and .95 to begin with, which framed the planet beautifully and made the
 // letters standing in the meadow about twelve pixels wide. Closer and lower: still a look at
 // a globe, with the thing it is the title of legible on it.
-const INTRO = { on: true, r: 108, pol: 1.2, sweep: .5, rate: .085, bob: 11, up: 11,
-  t: 0, dive: 0, diveT: 3.4, r0: 0 };
+// The shot is a crane, not a turntable. It opens wide and high, where the world reads as a
+// globe with weather on it, and comes down over most of a minute to the meadow with the
+// letters standing in it, then goes back up. Both ends are places worth being, and the whole
+// travel is one cosine so it never starts, stops or turns a corner.
+const INTRO = {
+  on: true,
+  wide: { r: 224, pol: .80, up: 30 },      // the planet
+  near: { r:  74, pol: 1.24, up: 8 },      // the meadow
+  craneT: 52,                              // seconds from one end to the other and back
+  sweep: .46, rate: .055,                  // how far the shot swings across the letters
+  t: 0, dive: 0, diveT: 3.4, r0: 0
+};
 const introEl = document.getElementById('intro'), startB = document.getElementById('startB');
 function introFrame(dt) {
   INTRO.t += dt;
@@ -5162,14 +5354,17 @@ function introFrame(dt) {
   // stood them up, the Elderwillow if it could not, the origin if neither.
   const c = world.title ? world.title.position : (world.greatTree ? world.greatTree.pos : null);
   const tx = c ? c.x : 0, tz = c ? c.z : 0;
-  cam.tgt.set(tx, groundY(tx, tz) + INTRO.up, tz);
+  // eased all the way: cosine gives a still moment at the top and at the bottom
+  const k = .5 - .5 * Math.cos(INTRO.t / INTRO.craneT * Math.PI * 2);
+  const e = k * k * (3 - 2 * k), W1 = INTRO.wide, N1 = INTRO.near;
+  cam.tgt.set(tx, groundY(tx, tz) + lerp(W1.up, N1.up, e), tz);
   // It does not orbit. placeTitle turns the monument's reading side toward the middle of
   // the island, so there is exactly one direction the letters are legible from -- a full
   // turn spends half of itself round the back of them. Sit in front and sway.
   const face = world.title ? Math.atan2(-tx, -tz) : 0;
   cam.az = face + Math.sin(INTRO.t * INTRO.rate) * INTRO.sweep;
-  cam.pol0 = INTRO.pol;
-  cam.r = INTRO.r + Math.sin(INTRO.t * .12) * INTRO.bob;
+  cam.pol0 = lerp(W1.pol, N1.pol, e);
+  cam.r = lerp(W1.r, N1.r, e);
   cam.idle = 0;
   // and send the ship round the island. This is the sortie it has always known how to fly
   // -- lift, one lap at altitude, land -- which is switched off in play because it is his

@@ -11,6 +11,7 @@
 //   --wait       seconds of world time to let settle before the shutter (default 6)
 //   --w --h      canvas size (default 1280x800)
 //   --title      shoot the title screen instead, before the world is entered
+//   --intro-t    seconds along the title screen's crane to jump to (0 wide, 26 near)
 //
 // cdnjs is outside this container's egress, so the three.js tag is served from node_modules.
 const fs = require('fs'), path = require('path'), http = require('http');
@@ -80,7 +81,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
   // The loading card is held until the models are in, so a shot taken before it lifts is a
   // shot of the card. Wait it out.
   await page.waitForFunction('!document.getElementById("boot")', null, { timeout: 240000 }).catch(() => {});
-  await page.evaluate(([at, hour, r, az, title, site]) => {
+  await page.evaluate(([at, hour, r, az, title, site, introT]) => {
     const g = window.__g;
     if (site !== null) {
       const s = (g.world.sites || [])[+site];
@@ -95,7 +96,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     // Every shot but --title is of the game being played, so the title screen gets started
     // the same way a player starts it.
     if (!title) g.startGame();
-  }, [at, hour, r, az, has('title'), arg('site', null)]);
+    // The title crane takes the better part of a minute to travel; under swiftshader that is
+    // ten real ones. Jump to a point on it instead of waiting for it.
+    else if (introT !== null) g.INTRO.t = +introT;
+  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null)]);
 
   // Wall clock is meaningless here -- swiftshader runs this at a couple of frames a second,
   // so the settle is counted in world seconds like every other harness in this folder.
