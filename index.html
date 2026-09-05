@@ -154,7 +154,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b33';
+const BUILD = 'b34';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -250,6 +250,12 @@ function height(x, z) {
   // fine detail — new in v2, this is what kills the blocky read
   h += (fbm(nx * 26 + 2.2, nz * 26 + 7.4, 4) - .5) * 1.5 * clamp(mask + .3, 0, 1);
   h += (fbm(nx * 60, nz * 60, 3) - .5) * .55;
+  // Every chart direction meets at the far pole, so the last stretch before it settles to a
+  // single depth: otherwise the one vertex all the spokes share would want a different
+  // height depending on which spoke asked. It is open ocean out there, nine hundred units
+  // from the island, and nothing but the mesh has ever looked at it.
+  const rr = Math.hypot(x, z), rM = Math.PI * W;
+  if (rr > rM * .86) h = lerp(h, -18.5, smooth(rM * .86, rM, rr));
   return h;
 }
 function slope(x, z) { const e = 1.5; const dx = height(x + e, z) - height(x - e, z), dz = height(x, z + e) - height(x, z - e); return Math.sqrt(dx * dx + dz * dz) / (2 * e); }
@@ -257,8 +263,112 @@ function groundY(x, z) { return Math.max(height(x, z), SEA); }
 function isLand(x, z) { return height(x, z) > SEA + 0.6; }
 function normalAt(x, z) { const e = 1.2, dx = height(x + e, z) - height(x - e, z), dz = height(x, z + e) - height(x, z - e); return new THREE.Vector3(-dx, 2 * e, -dz).normalize(); }
 
+// ---------- the planet ----------
+// The world is still authored, simulated and reasoned about as a flat chart in (x, z):
+// height(), the obstacle field, every steering behaviour, the map, and every distance that
+// has ever been tuned. Only the last step before drawing wraps that chart onto a sphere,
+// which is why nothing below this line had to learn any spherical trigonometry.
+//
+// The projection is azimuthal equidistant with the chart origin at the north pole: a chart
+// point r from the origin lands at polar angle r / R, so how far you walk is exactly how
+// far you have gone, everywhere on the globe. What it costs is spacing *around* the pole,
+// which shrinks by sin(theta)/theta -- 1 at the origin, .82 out at the sister isle, 0 at
+// the antipode, which is nine hundred units of open water nobody has a reason to visit.
+// R = W puts the far pole at chart radius pi*W and makes the circumference 2*pi*W: about
+// four minutes' walk the whole way round, and a horizon roughly seventy units out.
+const PLANET = { R: W };
+PLANET.rMax = Math.PI * PLANET.R;
+const _plU = new THREE.Vector3(), _plY = new THREE.Vector3(0, 1, 0);
+// the unit surface normal over a chart point -- "up", before any terrain slope
+function planetUp(x, z, out) {
+  out = out || new THREE.Vector3();
+  const r = Math.hypot(x, z);
+  if (r < 1e-6) return out.set(0, 1, 0);
+  const th = r / PLANET.R, k = Math.sin(th) / r;
+  return out.set(x * k, Math.cos(th), z * k);
+}
+function planetPos(x, y, z, out) { return planetUp(x, z, out).multiplyScalar(PLANET.R + y); }
+// The chart has no edge any more -- walk far enough in any direction and you come back --
+// but the last stretch before the far pole is where the projection squeezes everything into
+// nothing, so the world still stops you short of it. RIM is a hundred and fifty degrees of
+// arc from home: you can walk almost the whole way round, through six hundred units of open
+// water, and never find a wall until the ocean nobody has a reason to cross.
+PLANET.rim = PLANET.rMax * .86;
+PLANET.wander = W * 1.05;          // and how far the wildlife will go on its own
+function rimClamp(p, rim = PLANET.rim) {
+  const r = Math.hypot(p.x, p.z);
+  if (r > rim) { const k = rim / r; p.x *= k; p.z *= k; }
+  return p;
+}
+function planetQ(x, z, out) { return (out || new THREE.Quaternion()).setFromUnitVectors(_plY, planetUp(x, z, _plU)); }
+// world -> chart, the exact inverse, for the few places that read a world matrix back out
+// of the scene graph and then want to go on talking about it in chart terms.
+function planetChart(p, out) {
+  const L = p.length(), hxz = Math.hypot(p.x, p.z);
+  const r = Math.atan2(hxz, p.y) * PLANET.R, k = hxz > 1e-6 ? r / hxz : 0;
+  return (out || new THREE.Vector3()).set(p.x * k, L - PLANET.R, p.z * k);
+}
+// Bakes a chart-space geometry onto the planet, vertex by vertex. For the one merged mesh
+// that spans the whole world -- the scattered rocks and driftwood -- there is no single group
+// transform that could do the job, because its parts are hundreds of units apart.
+const _wgV = new THREE.Vector3(), _wgQ = new THREE.Quaternion();
+function warpGeo(g) {
+  const pa = g.attributes.position, na = g.attributes.normal;
+  for (let i = 0; i < pa.count; i++) {
+    const x = pa.getX(i), y = pa.getY(i), z = pa.getZ(i);
+    if (na) {
+      planetQ(x, z, _wgQ);
+      _wgV.set(na.getX(i), na.getY(i), na.getZ(i)).applyQuaternion(_wgQ);
+      na.setXYZ(i, _wgV.x, _wgV.y, _wgV.z);
+    }
+    planetPos(x, y, z, _wgV); pa.setXYZ(i, _wgV.x, _wgV.y, _wgV.z);
+  }
+  pa.needsUpdate = true; if (na) na.needsUpdate = true;
+  g.computeBoundingSphere();
+  return g;
+}
+// Same map, for the vertex shaders that place their own points: particles, water, foam.
+const PLANET_GLSL = `
+  #define PLANET_R ${PLANET.R.toFixed(4)}
+  // rotate a chart-space direction into world space at chart point c
+  vec3 planetRot(vec2 c, vec3 v){
+    float r = length(c);
+    if (r < 1e-4) return v;
+    float th = r / PLANET_R;
+    vec3 a = vec3(c.y, 0.0, -c.x) / r;
+    float ct = cos(th), st = sin(th);
+    return v * ct + cross(a, v) * st + a * dot(a, v) * (1.0 - ct);
+  }
+  vec3 planetPos(vec3 c){ return planetRot(c.xz, vec3(0.0, PLANET_R + c.y, 0.0)); }
+`;
+
 // ---------- renderer ----------
 const scene = new THREE.Scene();
+// Everything in the scene goes on writing chart coordinates into `position` and `rotation`
+// exactly as it did when the world was flat. This is the one place that knows better: an
+// override of the matrix compose that reads the chart transform and writes the world one.
+// Reparent an object under something else -- a log picked up onto a bone -- and it falls
+// back to the stock behaviour, because then its transform is already someone else's local
+// space and has nothing to do with the chart.
+const _stockUpdateMatrix = THREE.Object3D.prototype.updateMatrix;
+const _pmP = new THREE.Vector3(), _pmQ = new THREE.Quaternion();
+function planetUpdateMatrix() {
+  if (this.parent !== scene) return _stockUpdateMatrix.call(this);
+  planetQ(this.position.x, this.position.z, _pmQ).multiply(this.quaternion);
+  planetPos(this.position.x, this.position.y, this.position.z, _pmP);
+  this.matrix.compose(_pmP, _pmQ, this.scale);
+  this.matrixWorldNeedsUpdate = true;
+}
+// Opt out with userData.flat: the lights and the sky ride the camera in world space, and a
+// few big sheets are either built on the sphere already or warped in their own shader.
+const _sceneAdd = scene.add.bind(scene);
+scene.add = function (...os) {
+  for (const o of os) if (o && !o.isLight && !o.userData.flat) o.updateMatrix = planetUpdateMatrix;
+  return _sceneAdd(...os);
+};
+// The sky dome and the stars are hung off a rig that follows the camera and takes the local
+// frame with it, so the gradient still runs from underfoot to overhead wherever you stand.
+const skyRig = new THREE.Group(); skyRig.userData.flat = true; scene.add(skyRig);
 const renderer = new THREE.WebGLRenderer({ antialias: !MOBILE, powerPreference: 'high-performance', stencil: false });
 renderer.setPixelRatio(Q.dpr);
 renderer.setSize(innerWidth, innerHeight);
@@ -535,14 +645,14 @@ class PSys {
       transparent: true, depthWrite: false, vertexColors: true,
       blending: o.additive ? THREE.AdditiveBlending : THREE.NormalBlending,
       uniforms: { map: { value: o.tex || smokeTex }, uScale: { value: innerHeight * .5 } },
-      vertexShader: `attribute float sz; attribute float al; varying vec3 vC; varying float vA; uniform float uScale;
-        void main(){ vC=color; vA=al; vec4 mv=modelViewMatrix*vec4(position,1.0);
+      vertexShader: PLANET_GLSL + `attribute float sz; attribute float al; varying vec3 vC; varying float vA; uniform float uScale;
+        void main(){ vC=color; vA=al; vec4 mv=modelViewMatrix*vec4(planetPos(position),1.0);
           gl_PointSize=max(sz*uScale/max(-mv.z,1.0),1.0); gl_Position=projectionMatrix*mv; }`,
       fragmentShader: `uniform sampler2D map; varying vec3 vC; varying float vA;
         void main(){ vec4 t=texture2D(map,gl_PointCoord); float a=t.a*vA;
           if(a<0.004) discard; gl_FragColor=vec4(vC*t.rgb,a); }`
     });
-    this.pts = new THREE.Points(this.geo, this.mat); this.pts.frustumCulled = false; scene.add(this.pts);
+    this.pts = new THREE.Points(this.geo, this.mat); this.pts.frustumCulled = false; this.pts.userData.flat = true; scene.add(this.pts);
     this._p = new THREE.Vector3(); this._v = new THREE.Vector3();
     world.psys.push(this);
   }
@@ -613,7 +723,7 @@ class Streaks {
         uC0: { value: new THREE.Color(o.c0) }, uC1: { value: new THREE.Color(o.c1) },
         uAlpha: { value: o.alpha === undefined ? .55 : o.alpha }, uLight: { value: new THREE.Vector3(0, 1, 0) }
       },
-      vertexShader: `
+      vertexShader: PLANET_GLSL + `
         attribute vec3 iPos; attribute vec3 iVel; attribute vec3 iDat;
         uniform float uSize, uStretch;
         varying vec2 vUv; varying float vA, vSeed, vSpd;
@@ -621,8 +731,8 @@ class Streaks {
           vUv = uv;
           float k = iDat.x;
           if (k < 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // dead: off-screen
-          vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
-          vec3 vv = (modelViewMatrix * vec4(iVel, 0.0)).xyz;
+          vec4 mv = modelViewMatrix * vec4(planetPos(iPos), 1.0);
+          vec3 vv = (modelViewMatrix * vec4(planetRot(iPos.xz, iVel), 0.0)).xyz;
           float sp = length(vv.xy);
           vec2 dir = sp > 0.001 ? vv.xy / sp : vec2(0.0, 1.0);
           vec2 perp = vec2(-dir.y, dir.x);
@@ -649,7 +759,7 @@ class Streaks {
         }`
     });
     this.mesh = new THREE.Mesh(geo, this.mat);
-    this.mesh.frustumCulled = false; this.mesh.renderOrder = 3;
+    this.mesh.frustumCulled = false; this.mesh.renderOrder = 3; this.mesh.userData.flat = true;
     scene.add(this.mesh);
     this._p = new THREE.Vector3(); this._v = new THREE.Vector3();
     world.psys.push(this);
@@ -748,7 +858,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
       gl_FragColor = vec4(c, 1.0);
     }`
 }));
-sky.frustumCulled = false; scene.add(sky);
+sky.frustumCulled = false; skyRig.add(sky);
 
 // stars
 const stars = (() => {
@@ -763,7 +873,7 @@ const stars = (() => {
     fragmentShader: `varying float vS; uniform float uOp;
       void main(){ vec2 c=gl_PointCoord-0.5; float a=smoothstep(0.5,0.0,length(c)); gl_FragColor=vec4(vec3(1.0,0.97,0.92)*vS*0.4, a*uOp); }`
   }));
-  scene.add(m); return m;
+  skyRig.add(m); return m;
 })();
 
 // ---------- lights ----------
@@ -772,22 +882,55 @@ sun.shadow.mapSize.set(Q.shadow, Q.shadow);
 Object.assign(sun.shadow.camera, { left: -105, right: 105, top: 105, bottom: -105, near: 60, far: 700 });
 sun.shadow.camera.updateProjectionMatrix();
 sun.shadow.bias = -0.0005; sun.shadow.normalBias = .5;
-scene.add(sun, sun.target);
-const moon = new THREE.DirectionalLight(0x9db0ff, 0); scene.add(moon);
+sun.target.userData.flat = true; scene.add(sun, sun.target);
+const moon = new THREE.DirectionalLight(0x9db0ff, 0); moon.target = sun.target; scene.add(moon);
 const hemi = new THREE.HemisphereLight(0x9bc5ee, 0x3f3a2a, .6); scene.add(hemi);
-const bounce = new THREE.DirectionalLight(0xffd9a8, .18); bounce.position.set(-1, .3, -1); scene.add(bounce);
+const bounce = new THREE.DirectionalLight(0xffd9a8, .18); const BOUNCE_D = new THREE.Vector3(-1, .3, -1); scene.add(bounce);
 // up-light off the sea, so undersides and bellies aren't pure black
-const fill = new THREE.DirectionalLight(0x9fd4e8, .42); fill.position.set(.2, -1, .35); scene.add(fill);
+const fill = new THREE.DirectionalLight(0x9fd4e8, .42); const FILL_D = new THREE.Vector3(.2, -1, .35); scene.add(fill);
+bounce.target = fill.target = sun.target;   // every light aims at the ground under the camera
 scene.fog = new THREE.FogExp2(0xa7c8e6, .0038);
 
 // ---------- terrain ----------
+// A polar grid instead of a square one: rings running out from the chart origin and spokes
+// running round it, which is the shape the projection wants. Rings are packed tight over the
+// island and open out across the empty ocean beyond it, so the far side of the planet costs
+// a few hundred triangles instead of half the budget.
+function polarGeo(spokes, rings, rOf) {
+  const n = 1 + rings * spokes, pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3);
+  for (let i = 1; i <= rings; i++) {
+    const r = rOf(i / rings);
+    for (let j = 0; j < spokes; j++) {
+      const a = j / spokes * Math.PI * 2, k = ((i - 1) * spokes + j + 1) * 3;
+      pos[k] = Math.cos(a) * r; pos[k + 2] = Math.sin(a) * r;
+    }
+  }
+  for (let i = 0; i < n; i++) nrm[i * 3 + 1] = 1;
+  const tri = [];
+  for (let j = 0; j < spokes; j++) tri.push(0, 1 + (j + 1) % spokes, 1 + j);
+  for (let i = 1; i < rings; i++) for (let j = 0; j < spokes; j++) {
+    const a = 1 + (i - 1) * spokes + j, b = 1 + (i - 1) * spokes + (j + 1) % spokes;
+    tri.push(a, b, a + spokes, b, b + spokes, a + spokes);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  g.setIndex(n > 65535 ? new THREE.Uint32BufferAttribute(tri, 1) : new THREE.Uint16BufferAttribute(tri, 1));
+  return g;
+}
+// Chart radius of ring t: about two units apart under the island, widening to six by the
+// time it reaches the far pole. The whole globe for fewer vertices than the old flat square.
+const ringR = t => PLANET.rMax * (.62 * t + .38 * Math.pow(t, 2.6));
 const SEG = Q.seg;
-const terrainGeo = new THREE.PlaneGeometry(W * 2, W * 2, SEG, SEG);
-terrainGeo.rotateX(-Math.PI / 2);
+const TSPOKE = MOBILE ? 360 : 448, TRING = MOBILE ? 150 : 208;
+const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
 {
   const pa = terrainGeo.attributes.position, colors = new Float32Array(pa.count * 3), c = new THREE.Color(), c2 = new THREE.Color();
+  const chart = new Float32Array(pa.count * 2), hgt = new Float32Array(pa.count), _tv = new THREE.Vector3();
   for (let i = 0; i < pa.count; i++) {
-    const x = pa.getX(i), z = pa.getZ(i), h = height(x, z); pa.setY(i, h);
+    const x = pa.getX(i), z = pa.getZ(i), h = height(x, z);
+    chart[i * 2] = x; chart[i * 2 + 1] = z; hgt[i] = h;
+    planetPos(x, h, z, _tv); pa.setXYZ(i, _tv.x, _tv.y, _tv.z);
     const sl = slope(x, z);
     const wet = smooth(2.2, -1.2, h);
     if (h < SEA - 1.5) { c.copy(P.sandWet).lerp(col('#2b4a52'), clamp((SEA - 1.5 - h) / 10, 0, 1)); }
@@ -809,18 +952,30 @@ terrainGeo.rotateX(-Math.PI / 2);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
   }
   terrainGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  terrainGeo.setAttribute('chart', new THREE.BufferAttribute(chart, 2));
+  terrainGeo.setAttribute('hgt', new THREE.BufferAttribute(hgt, 1));
   terrainGeo.computeVertexNormals();
 }
 const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 }));
 terrain.material.userData.noHole = true;
-terrain.receiveShadow = true; scene.add(terrain);
+terrain.receiveShadow = true; terrain.userData.flat = true; scene.add(terrain);   // built on the sphere already
 
 // ---------- water + foam ----------
-const WSEG = MOBILE ? 150 : 240;
-const waterGeo = new THREE.PlaneGeometry(W * 2.6, W * 2.6, WSEG, WSEG); waterGeo.rotateX(-Math.PI / 2);
-{ const pa = waterGeo.attributes.position, d = new Float32Array(pa.count);
-  for (let i = 0; i < pa.count; i++) d[i] = height(pa.getX(i), pa.getZ(i));
-  waterGeo.setAttribute('dep', new THREE.BufferAttribute(d, 1)); }
+// The sea is the whole globe: the same polar grid, coarser, with the chart point each vertex
+// came from kept as an attribute, because every wave in the shader is still reckoned in chart
+// space and only wrapped at the end.
+const WSPOKE = MOBILE ? 200 : 288, WRING = MOBILE ? 110 : 152;
+const waterGeo = polarGeo(WSPOKE, WRING, ringR);
+{ const pa = waterGeo.attributes.position, na = waterGeo.attributes.normal, N = pa.count;
+  const d = new Float32Array(N), ch = new Float32Array(N * 2), v = new THREE.Vector3();
+  for (let i = 0; i < N; i++) {
+    const x = pa.getX(i), z = pa.getZ(i);
+    d[i] = height(x, z); ch[i * 2] = x; ch[i * 2 + 1] = z;
+    planetUp(x, z, v); na.setXYZ(i, v.x, v.y, v.z);
+    v.multiplyScalar(PLANET.R + SEA); pa.setXYZ(i, v.x, v.y, v.z);
+  }
+  waterGeo.setAttribute('dep', new THREE.BufferAttribute(d, 1));
+  waterGeo.setAttribute('chart', new THREE.BufferAttribute(ch, 2)); }
 const waterMat = new THREE.MeshStandardMaterial({ color: col('#2b7fa4'), transparent: true, opacity: .85, roughness: .08, metalness: .42 });
 waterMat.onBeforeCompile = sh => {
   for (const k in waterUni) sh.uniforms[k] = waterUni[k];
@@ -859,25 +1014,28 @@ waterMat.onBeforeCompile = sh => {
       }
       return c / max(wsum, 0.001);        // normalised: -1 trough, +1 crest
     }`;
-  sh.vertexShader = waves + '\nattribute float dep;\nvarying float vFoam; varying float vDep; varying vec2 vXZ;\n' + sh.vertexShader
+  sh.vertexShader = PLANET_GLSL + waves + '\nattribute float dep;\nattribute vec2 chart;\nvarying float vFoam; varying float vDep; varying vec2 vXZ;\n' + sh.vertexShader
     .replace('#include <defaultnormal_vertex>', `
       {
         float e = 1.4;
-        vec2 p0 = position.xz;
-        vec3 P0 = vec3(p0.x, 0.0, p0.y) + waveDisp(p0);
-        vec3 PX = vec3(p0.x + e, 0.0, p0.y) + waveDisp(p0 + vec2(e, 0.0));
-        vec3 PZ = vec3(p0.x, 0.0, p0.y + e) + waveDisp(p0 + vec2(0.0, e));
+        vec2 p0 = chart;
+        vec3 P0 = planetPos(vec3(p0.x, 0.0, p0.y) + waveDisp(p0));
+        vec3 PX = planetPos(vec3(p0.x + e, 0.0, p0.y) + waveDisp(p0 + vec2(e, 0.0)));
+        vec3 PZ = planetPos(vec3(p0.x, 0.0, p0.y + e) + waveDisp(p0 + vec2(0.0, e)));
         objectNormal = normalize(cross(PZ - P0, PX - P0));
       }
       #include <defaultnormal_vertex>
     `)
     .replace('#include <begin_vertex>', `
       #include <begin_vertex>
-      vec3 wd = waveDisp(position.xz);
+      vec3 wd = waveDisp(chart);
       float shore = smoothstep(-1.0, -9.0, dep);      // waves flatten out into the shallows
-      transformed += wd * shore;
-      vFoam = crestOf(position.xz) * shore;
-      vDep = dep; vXZ = position.xz;
+      // and again at the far pole, where every chart direction converges and a wave train
+      // would arrive as a spike rather than a swell
+      shore *= 1.0 - smoothstep(PLANET_R * 2.0, PLANET_R * 2.9, length(chart));
+      transformed = planetPos(vec3(chart.x, 0.0, chart.y) + wd * shore);
+      vFoam = crestOf(chart) * shore;
+      vDep = dep; vXZ = chart;
     `);
   sh.fragmentShader = `
     uniform float uT; uniform vec4 uWk[4]; uniform vec3 uSky;
@@ -975,24 +1133,30 @@ function waveNormal(x, z, d = .8) {
   return _wn.set(-dx, 2 * d, -dz).normalize();
 }
 const water = new THREE.Mesh(waterGeo, waterMat);
-water.position.y = SEA; water.receiveShadow = false; water.renderOrder = 0; scene.add(water);
+water.receiveShadow = false; water.renderOrder = 0; water.userData.flat = true; scene.add(water);
 
-const abyss = new THREE.Mesh(new THREE.PlaneGeometry(W * 3, W * 3), new THREE.MeshBasicMaterial({ color: col('#0a1a24'), fog: true }));
-abyss.rotation.x = -Math.PI / 2; abyss.position.y = SEA - 16; scene.add(abyss);
+const abyss = new THREE.Mesh(new THREE.SphereGeometry(PLANET.R + SEA - 16, 64, 40), new THREE.MeshBasicMaterial({ color: col('#0a1a24'), fog: true }));
+abyss.userData.flat = true; scene.add(abyss);
 
 // foam ring along the shoreline, alpha driven by terrain depth
-const FSEG = MOBILE ? 150 : 240;
-const foamGeo = new THREE.PlaneGeometry(W * 2, W * 2, FSEG, FSEG); foamGeo.rotateX(-Math.PI / 2);
+const FSPOKE = MOBILE ? 200 : 288, FRING = MOBILE ? 96 : 132;
+const foamGeo = polarGeo(FSPOKE, FRING, t => t * W * 1.5);   // it is only ever seen on a shore
 {
-  const p = foamGeo.attributes.position, d = new Float32Array(p.count);
-  for (let i = 0; i < p.count; i++) d[i] = height(p.getX(i), p.getZ(i));
+  const pa = foamGeo.attributes.position, N = pa.count;
+  const d = new Float32Array(N), ch = new Float32Array(N * 2), v = new THREE.Vector3();
+  for (let i = 0; i < N; i++) {
+    const x = pa.getX(i), z = pa.getZ(i);
+    d[i] = height(x, z); ch[i * 2] = x; ch[i * 2 + 1] = z;
+    planetPos(x, SEA + .12, z, v); pa.setXYZ(i, v.x, v.y, v.z);
+  }
   foamGeo.setAttribute('dep', new THREE.BufferAttribute(d, 1));
+  foamGeo.setAttribute('chart', new THREE.BufferAttribute(ch, 2));
 }
 const foamUni = { uT: { value: 0 }, uOp: { value: 1 } };
 const foam = new THREE.Mesh(foamGeo, new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, uniforms: foamUni,
-  vertexShader: `attribute float dep; varying float vD; varying vec3 vP;
-    void main(){ vD=dep; vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+  vertexShader: `attribute float dep; attribute vec2 chart; varying float vD; varying vec3 vP;
+    void main(){ vD=dep; vP=vec3(chart.x,0.0,chart.y); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
   fragmentShader: `varying float vD; varying vec3 vP; uniform float uT, uOp;
     float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
     float n(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.-2.*f);
@@ -1007,7 +1171,7 @@ const foam = new THREE.Mesh(foamGeo, new THREE.ShaderMaterial({
       gl_FragColor = vec4(vec3(0.95,0.99,1.0), a*0.85*uOp);
     }`
 }));
-foam.position.y = SEA + .12; foam.renderOrder = 1; scene.add(foam);
+foam.renderOrder = 1; foam.userData.flat = true; scene.add(foam);
 
 // ---------- grass field (instanced, wind in the vertex shader) ----------
 const grassUni = { uT: { value: 0 }, uWind: { value: new THREE.Vector3(1, 0, 0) } };   // dir.x, dir.z, strength
@@ -1032,16 +1196,17 @@ grassMat.onBeforeCompile = s => {
 };
 const grass = (() => {
   const n = Q.grass, im = new THREE.InstancedMesh(G.leaf, grassMat, n);
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), q2 = new THREE.Quaternion(), pos = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
   let k = 0, guard = 0;
   while (k < n && guard++ < n * 30) {
     const x = rnd(-W * .96, W * .96), z = rnd(-W * .96, W * .96), h = height(x, z);
     if (h < .6 || h > 15 || slope(x, z) > 1.1) continue;
     const nr = normalAt(x, z);
-    q.setFromUnitVectors(up, nr.lerp(up, .45).normalize());
-    q.multiply(new THREE.Quaternion().setFromAxisAngle(up, rnd(Math.PI * 2)));
+    q2.setFromUnitVectors(up, nr.lerp(up, .45).normalize());
+    q2.multiply(new THREE.Quaternion().setFromAxisAngle(up, rnd(Math.PI * 2)));
+    planetQ(x, z, q).multiply(q2);            // one instanced mesh, so the wrap is baked in
     const tall = rnd(1.3, 3.1) * (h > 12 ? .6 : 1);
-    pos.set(x, h - .1, z); sc.set(rnd(.8, 1.4), tall, 1);
+    planetPos(x, h - .1, z, pos); sc.set(rnd(.8, 1.4), tall, 1);
     m.compose(pos, q, sc); im.setMatrixAt(k, m);
     c.copy(P.grass).lerp(P.grass2, rnd()).offsetHSL(rnd(-.03, .03), rnd(-.1, .1), rnd(-.12, .1));
     if (h < 2.2) c.lerp(P.sand, .35);
@@ -1049,7 +1214,7 @@ const grass = (() => {
     k++;
   }
   im.count = k; im.instanceMatrix.needsUpdate = true; im.castShadow = false; im.receiveShadow = true;
-  im.frustumCulled = false; scene.add(im); return im;
+  im.frustumCulled = false; im.userData.flat = true; scene.add(im); return im;
 })();
 
 // ---------- world state ----------
@@ -1092,7 +1257,7 @@ function setWx(st) {
 const bolt = (() => {
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * 24), 3));
   const m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xf2f6ff, transparent: true, opacity: 1, fog: false, depthWrite: false }));
-  m.visible = false; m.frustumCulled = false; scene.add(m);
+  m.visible = false; m.frustumCulled = false; m.userData.flat = true; scene.add(m);   // warped per strike
   const gl = glow('#dfe8ff', 9, .95); gl.visible = false; scene.add(gl);
   return { m, gl, pts: g.attributes.position };
 })();
@@ -1121,6 +1286,7 @@ function strike() {
     boltFx.q.push([p[i] + dx * .5, p[i + 1] + dy * .5, p[i + 2] + dz * .5, dx / L * 44, dy / L * 44, dz / L * 44]);
   }
   boltFx.emit(boltFx.q.length);
+  for (let i = 0; i < k; i += 3) { planetPos(p[i], p[i + 1], p[i + 2], _wgV); p[i] = _wgV.x; p[i + 1] = _wgV.y; p[i + 2] = _wgV.z; }
   WX.boltLife = .16; WX.flash = 1; WX.strikes++;
   world.effects.push(new Burst(x, gy + 2, z, '#dfe9ff', 14, 1.5));
   if (gy > SEA + .6 && Math.hypot(x - cam.tgt.x, z - cam.tgt.z) > 9) {
@@ -1184,8 +1350,8 @@ const mist = new PSys({ n: 90, life: 6, rate: 0, gy: .12, drag: .6, a0: .07, win
 const meteors = new Streaks({ n: 24, life: .75, size: .5, stretch: 6, alpha: .9, additive: true, c0: '#fff4dc', c1: '#ffffff',
   spawn: (p, v) => {
     const a = rnd(Math.PI * 2), el = rnd(.35, .8);   // somewhere high, streaking mostly sideways
-    p.set(camera.position.x + Math.cos(a) * Math.cos(el) * 620, camera.position.y + Math.sin(el) * 620, camera.position.z + Math.sin(a) * Math.cos(el) * 620);
-    const b = a + rnd(1.2, 2.0); v.set(Math.cos(b) * 520, -rnd(120, 260), Math.sin(b) * 520);
+    p.set(cam.tgt.x + Math.cos(a) * Math.cos(el) * 210, cam.tgt.y + Math.sin(el) * 620, cam.tgt.z + Math.sin(a) * Math.cos(el) * 210);
+    const b = a + rnd(1.2, 2.0); v.set(Math.cos(b) * 180, -rnd(120, 260), Math.sin(b) * 180);
   } });
 WX.W0 = waterUni.uW.value.map(v => v.z);   // resting wave steepness, so storms scale from it
 function count(list, T) { let n = 0; for (const e of list) if (e.alive && e instanceof T) n++; return n; }
@@ -1547,11 +1713,11 @@ function weatherStep(o, dt) {
 class Litter {
   constructor(x, z) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.born = world.clock;
-    this.g = new THREE.Group(); scene.add(this.g);
+    this.g = new THREE.Group(); this.g.position.copy(this.pos); scene.add(this.g);
     const bin = [];
     for (let i = 0; i < 5; i++) {
       const bx = x + rnd(-3.5, 3.5), bz = z + rnd(-3.5, 3.5);
-      const b = mesh(pick(G.blob), i % 2 ? pick(M.canopy) : M.moss, rnd(.9, 2), rnd(.35, .7), rnd(.9, 2), bx, groundY(bx, bz) + .15, bz);
+      const b = mesh(pick(G.blob), i % 2 ? pick(M.canopy) : M.moss, rnd(.9, 2), rnd(.35, .7), rnd(.9, 2), bx - x, groundY(bx, bz) + .15 - this.pos.y, bz - z);
       b.rotation.set(rnd(1), rnd(3), rnd(1)); collect(bin, b);
     }
     for (const m of mergeBin(bin)) this.g.add(m);
@@ -2076,7 +2242,7 @@ class Creature {
       l.knee.rotation.x = Math.max(0, -Math.sin(world.clock * rate + this.phase + l.off - .7)) * amp * 1.1 * this.animK;
     }
   }
-  terrainOK(x, z) { if (Math.abs(x) > W * .96 || Math.abs(z) > W * .96) return false; const h = height(x, z); if (this.flying) return true; if (this.aquatic) return h < SEA - 1.6; return h > SEA + .6 && h < 15.5 && slope(x, z) < 1.25; }
+  terrainOK(x, z) { if (Math.hypot(x, z) > PLANET.wander) return false; const h = height(x, z); if (this.flying) return true; if (this.aquatic) return h < SEA - 1.6; return h > SEA + .6 && h < 15.5 && slope(x, z) < 1.25; }
   valid(x, z) { return this.terrainOK(x, z) && !this.blocked(x, z); }
   blocked(x, z, pad = 0) {
     if (this.flying) return false;
@@ -2711,15 +2877,19 @@ class Ferry {
 class Spout {
   constructor(x, y, z) {
     this.alive = true; this.t = 0; this.life = 2.8; const n = this.n = 80;
+    // The plume is a couple of metres across, so it lives in its own frame hung off the
+    // blowhole: gravity down its local Y is the planet's gravity to well inside a pixel.
+    this.floor = SEA - y;
     this.p = new Float32Array(n * 3); this.v = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
       const a = rnd(Math.PI * 2), r = rnd(0, .9), sp = rnd(9, 19);
-      this.p[i * 3] = x + Math.cos(a) * r; this.p[i * 3 + 1] = y; this.p[i * 3 + 2] = z + Math.sin(a) * r;
+      this.p[i * 3] = Math.cos(a) * r; this.p[i * 3 + 1] = 0; this.p[i * 3 + 2] = Math.sin(a) * r;
       this.v[i * 3] = Math.cos(a) * rnd(.5, 3.2); this.v[i * 3 + 1] = sp; this.v[i * 3 + 2] = Math.sin(a) * rnd(.5, 3.2);
     }
     this.geo = new THREE.BufferGeometry(); this.geo.setAttribute('position', new THREE.BufferAttribute(this.p, 3));
     this.pts = new THREE.Points(this.geo, new THREE.PointsMaterial({ color: 0xe4f6ff, size: .6, transparent: true, opacity: .95, depthWrite: false }));
-    this.pts.frustumCulled = false; scene.add(this.pts);
+    this.pts.frustumCulled = false;
+    this.g = new THREE.Group(); this.g.position.set(x, y, z); scene.add(this.g); this.g.add(this.pts);
     this.gl = glow('#e4f6ff', 7, .55); this.gl.position.set(x, y + 4, z); scene.add(this.gl);
   }
   update(dt) {
@@ -2727,14 +2897,14 @@ class Spout {
     for (let i = 0; i < this.n; i++) {
       const ix = i * 3; this.v[ix + 1] -= 14 * dt; this.v[ix] *= .99; this.v[ix + 2] *= .99;
       this.p[ix] += this.v[ix] * dt; this.p[ix + 1] += this.v[ix + 1] * dt; this.p[ix + 2] += this.v[ix + 2] * dt;
-      if (this.p[ix + 1] < SEA) { this.p[ix + 1] = SEA; this.v[ix + 1] *= -.12; this.v[ix] *= .55; this.v[ix + 2] *= .55; }
+      if (this.p[ix + 1] < this.floor) { this.p[ix + 1] = this.floor; this.v[ix + 1] *= -.12; this.v[ix] *= .55; this.v[ix + 2] *= .55; }
     }
     this.geo.attributes.position.needsUpdate = true;
     this.pts.material.opacity = .95 * (1 - k) * (1 - k);
     this.gl.scale.setScalar(7 + k * 12); this.gl.material.opacity = .55 * (1 - k) * (1 - k);
     if (k >= 1) this.alive = false;
   }
-  dispose() { scene.remove(this.pts); scene.remove(this.gl); this.geo.dispose(); this.pts.material.dispose(); this.gl.material.dispose(); }
+  dispose() { scene.remove(this.g); scene.remove(this.gl); this.geo.dispose(); this.pts.material.dispose(); this.gl.material.dispose(); }
 }
 // Leviathan — a long body that follows its own wake, so the humps travel down it
 class Leviathan extends Creature {
@@ -2743,7 +2913,7 @@ class Leviathan extends Creature {
     this.gait = 1; this.bob = 0; this.trail = []; this.travel = 0; this.acc = 0; this.px = x; this.pz = z;
     this.mode = 'cruise'; this.timer = rnd(10, 24); this.spoutT = rnd(6, 16); this.depth = 1.1; this.amp = 3;
   }
-  terrainOK(x, z) { return Math.abs(x) < W * .97 && Math.abs(z) < W * .97 && height(x, z) < SEA - 7; }
+  terrainOK(x, z) { return Math.hypot(x, z) < PLANET.wander && height(x, z) < SEA - 7; }
   build() {
     const b = this.body;
     b.add(mesh(G.blob[1], M.levi, 1.5, 1.5, 3.2, 0, 0, .6));
@@ -2790,7 +2960,7 @@ class Leviathan extends Creature {
     this.wander();
     if (this.spoutT <= 0 && this.mode !== 'sound') {
       this.spoutT = rnd(14, 32);
-      const p = this.blow.getWorldPosition(new THREE.Vector3());
+      const p = planetChart(this.blow.getWorldPosition(new THREE.Vector3()), new THREE.Vector3());
       if (p.y > SEA - .8) {
         world.effects.push(new Spout(p.x, Math.max(p.y, SEA + .3), p.z));
         if (Math.random() < .55) logMsg('Something long broke the water and blew a plume of spray.');
@@ -3143,7 +3313,8 @@ class Ship {
     this.vel.x *= Math.max(0, 1 - P.drag * dt); this.vel.z *= Math.max(0, 1 - P.drag * dt); this.vel.y *= Math.max(0, 1 - P.vdrag * dt);
     this.yawRate += yaw * P.yawA * dt; this.yawRate *= Math.max(0, 1 - P.yawDrag * dt);
     this.heading += this.yawRate * dt;
-    const nx = clamp(this.pos.x + this.vel.x * dt, -W * .97, W * .97), nz = clamp(this.pos.z + this.vel.z * dt, -W * .97, W * .97);
+    rimClamp(_shipR.set(this.pos.x + this.vel.x * dt, 0, this.pos.z + this.vel.z * dt));
+    const nx = _shipR.x, nz = _shipR.z;
     if (nx !== this.pos.x + this.vel.x * dt) this.vel.x *= -.3; if (nz !== this.pos.z + this.vel.z * dt) this.vel.z *= -.3;
     this.g.position.set(nx, this.pos.y + this.vel.y * dt, nz);
     // the great tree is the one thing tall enough to fly into; everything else is below you
@@ -3263,8 +3434,9 @@ class Ship {
       const demand = { L: sm.throttle, R: sm.throttle, sL: clamp(left, 0, 1) * this.air, sR: clamp(right, 0, 1) * this.air };
       for (const k in this.em) {
         const em = this.em[k]; if (!em.from || !em.to) continue;
-        em.p.setFromMatrixPosition(em.from.matrixWorld);
-        em.d.setFromMatrixPosition(em.to.matrixWorld).sub(em.p).normalize();
+        em.d.setFromMatrixPosition(em.to.matrixWorld).sub(_wgV.setFromMatrixPosition(em.from.matrixWorld)).normalize();
+        planetChart(_wgV, em.p);                       // the jets feed a chart-space particle system
+        em.d.applyQuaternion(planetQ(em.p.x, em.p.z, _wgQ).invert());
         em.k = demand[k];
         const ps = this.jets[k]; ps.rate = (k[0] === 's' ? 110 : 170) * em.k * (flying ? 1 : 0);
         if (ps.rate > 0) ps.pts.visible = true; else if (!flying && this.air < .02 && this.power < .02) ps.pts.visible = false;
@@ -3605,15 +3777,15 @@ motesGeo.setAttribute('sz', new THREE.BufferAttribute(msz, 1));
 const motesUni = { uT: { value: 0 }, uScale: { value: innerHeight * .5 } };
 const motes = new THREE.Points(motesGeo, new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, uniforms: motesUni,
-  vertexShader: `attribute float sz; varying vec3 vC; uniform float uScale;
-    void main(){ vC=color; vec4 mv=modelViewMatrix*vec4(position,1.); gl_PointSize = sz*uScale/max(-mv.z,1.0); gl_Position=projectionMatrix*mv; }`,
+  vertexShader: PLANET_GLSL + `attribute float sz; varying vec3 vC; uniform float uScale;
+    void main(){ vC=color; vec4 mv=modelViewMatrix*vec4(planetPos(position),1.); gl_PointSize = sz*uScale/max(-mv.z,1.0); gl_Position=projectionMatrix*mv; }`,
   fragmentShader: `varying vec3 vC;
     void main(){ vec2 c=gl_PointCoord-0.5; float d=length(c);
       float core=smoothstep(0.5,0.0,d); float halo=smoothstep(0.5,0.12,d);
       gl_FragColor=vec4(vC*(core*1.6+halo*0.5), core*0.9); }`,
   vertexColors: true
 }));
-motes.frustumCulled = false; scene.add(motes);
+motes.frustumCulled = false; motes.userData.flat = true; scene.add(motes);
 function initMotes() {
   for (let i = 0; i < NM; i++) {
     const p = randomLand(1, 13, 2) || { x: 0, z: 0 };
@@ -3718,8 +3890,8 @@ function scatterDecor() {
     d.rotation.set(Math.PI / 2 + rnd(-.2, .2), rnd(3), rnd(3)); collect(bin, d);
     obAdd(p.x, p.z, 1.1, null, height(p.x, p.z) + .7);   // it is lying down; step over it
   }
-  const grp = new THREE.Group();
-  for (const m of mergeBin(bin)) grp.add(m);
+  const grp = new THREE.Group(); grp.userData.flat = true;
+  for (const m of mergeBin(bin)) grp.add(warpGeo(m.geometry) && m);
   scene.add(grp);
 }
 function populate() {
@@ -3855,13 +4027,25 @@ SKY.dusk = { top: new THREE.Color(0x2c3d78), mid: new THREE.Color(0xcf6f85), low
 SKY.day = { top: new THREE.Color(0x2668bd), mid: new THREE.Color(0x8dbfe6), low: new THREE.Color(0xbdd6e7), fog: new THREE.Color(0x9dc0dd), hs: new THREE.Color(0xa0c8f0), hg: new THREE.Color(0x4a4634), sun: new THREE.Color(0xfff0cf) };
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
 const tmpG = new THREE.Color();
+const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new THREE.Vector3(), _skyV2 = new THREE.Vector3();
 function updateSky() {
   const f = (world.t / DAY) % 1, a = f * Math.PI * 2 - Math.PI / 2, e = Math.sin(a);
   world.sunE = e; world.night = smooth(.12, -.18, e);
-  const sd = new THREE.Vector3(Math.cos(a), Math.sin(a), .38).normalize();
-  sun.position.copy(sd).multiplyScalar(300).add(cam.tgt);
-  sun.target.position.copy(cam.tgt); sun.target.updateMatrixWorld();
-  moon.position.copy(sd).multiplyScalar(-300);
+  // The sun keeps the elevation it always had over wherever you are standing, rather than
+  // over one fixed point of the globe: on a world this small a fixed sun would put you in
+  // permanent dusk for half a walk. Every light is stated in the local frame and rotated in.
+  const sd = _skyV.set(Math.cos(a), Math.sin(a), .38).normalize();
+  const lq = planetQ(cam.tgt.x, cam.tgt.z, _skyQ), wt = planetPos(cam.tgt.x, cam.tgt.y, cam.tgt.z, _skyP);
+  const sw = _skyV2.copy(sd).applyQuaternion(lq);
+  sun.position.copy(sw).multiplyScalar(300).add(wt);
+  // the shadow camera still looks along world Y unless told otherwise, and once the sun is a
+  // rotated vector it can land on that axis and the look-at goes degenerate
+  sun.shadow.camera.up.set(0, 1, 0); if (Math.abs(sw.y) > .995) sun.shadow.camera.up.set(1, 0, 0);
+  sun.target.position.copy(wt); sun.target.updateMatrixWorld();
+  moon.position.copy(sw).multiplyScalar(-300).add(wt);
+  hemi.position.copy(_plY).applyQuaternion(lq);
+  bounce.position.copy(BOUNCE_D).applyQuaternion(lq).add(wt);
+  fill.position.copy(FILL_D).applyQuaternion(lq).add(wt);
   sun.intensity = clamp(e * 2.4, 0, 1.7); sun.castShadow = e > .03;
   moon.intensity = clamp(-e * 1.3, 0, .4);
   const dayK = smooth(-.05, .35, e), duskK = 1 - Math.abs(clamp(e / .3, -1, 1));
@@ -3875,7 +4059,13 @@ function updateSky() {
   mist.c0.copy(tmpC.fog); mist.c1.copy(tmpC.fog);
   rain.mat.uniforms.uC0.value.copy(tmpC.fog).lerp(tmpG.setRGB(1, 1, 1), .45); rain.mat.uniforms.uC1.value.copy(tmpC.low).lerp(tmpG, .6);
   skyUni.uSun.value.copy(sd); skyUni.uSunCol.value.copy(tmpC.sun); skyUni.uSunI.value = lerp(.25, 1, dayK) * (1 - oc * .8);
-  scene.fog.color.copy(tmpC.fog); scene.fog.density = lerp(.0050, .0019, dayK) * (170 / W) * (1 + WX.rain * .8 + WX.storm * .5);
+  // Haze was tuned for a flat world where the far shore was the furthest thing there was.
+  // From the air the whole planet is in frame and that density erases it, so the fog thins
+  // out with altitude -- which is also what real haze does, being a thing of the low air.
+  const camAlt = Math.max(0, camera.position.length() - PLANET.R);
+  scene.fog.color.copy(tmpC.fog);
+  scene.fog.density = lerp(.0050, .0019, dayK) * (170 / W) * (1 + WX.rain * .8 + WX.storm * .5)
+    / (1 + Math.max(0, camAlt - 20) * .012);
   hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.34, .72, dayK) * (1 - oc * .3) + WX.flash * 1.5;
   sun.intensity *= 1 - oc * .8; sun.castShadow = sun.castShadow && sun.intensity > .2;
   sun.color.copy(tmpC.sun); bounce.intensity = lerp(.05, .22, dayK); fill.intensity = lerp(.12, .5, dayK);
@@ -3915,6 +4105,7 @@ const CAM_POL = 1.28;
 const cam = { az: .7, pol: CAM_POL, pol0: CAM_POL, r: 20, tgt: new THREE.Vector3(0, 6, 0), idle: 0, rWalk: 0 };   // pol0: the pitch before the weather leans it
 const camS = { pol: CAM_POL, r: 24 };       // what the camera actually flies at
 const _camWant = new THREE.Vector3(), _holeP = new THREE.Vector3(), _holeV = new THREE.Vector3();
+const _camQ = new THREE.Quaternion(), _camW = new THREE.Vector3();
 // Treat the terrain as a heightfield and march the boom: if the shot is blocked,
 // first climb (a drone lifting over a ridge), and only pull in if climbing can't clear it.
 function camClear(pol, r) {
@@ -4228,7 +4419,7 @@ fold('logT', 'log', true);
 const hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
 addEventListener('keydown', e => { if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
-const _prevP = new THREE.Vector3();
+const _prevP = new THREE.Vector3(), _shipR = new THREE.Vector3();
 function updatePlayer(dt) {
   _prevP.copy(player.pos);
   if (player.aboard) {   // he is in the ship; it moves him, and nothing here applies
@@ -4247,18 +4438,19 @@ function updatePlayer(dt) {
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
   if (player.free) {
     if (mag > .1) { cam.idle = 0; const sp = cam.r * .5 * dt;
-      cam.tgt.x = clamp(cam.tgt.x + (sa * ly + ca * lx) * sp, -W, W);
-      cam.tgt.z = clamp(cam.tgt.z + (ca * ly - sa * lx) * sp, -W, W); }
+      cam.tgt.x += (sa * ly + ca * lx) * sp; cam.tgt.z += (ca * ly - sa * lx) * sp; rimClamp(cam.tgt); }
     return;
   }
   if (mag > .1) {
     cam.idle = 0;
     if (player.fly) {
+      // the free camera flies in world space, so its heading comes back into the chart
       const f = new THREE.Vector3(); camera.getWorldDirection(f);
-      const rgt = new THREE.Vector3().crossVectors(f, new THREE.Vector3(0, 1, 0)).normalize();
+      f.applyQuaternion(planetQ(player.pos.x, player.pos.z, _wgQ).invert());
+      const rgt = new THREE.Vector3().crossVectors(f, _plY).normalize();
       const sp = 32 * dt * Math.min(1, mag);
       player.pos.addScaledVector(f, -ly * sp).addScaledVector(rgt, lx * sp);
-      player.pos.x = clamp(player.pos.x, -W * .97, W * .97); player.pos.z = clamp(player.pos.z, -W * .97, W * .97);
+      rimClamp(player.pos);
       player.pos.y = clamp(player.pos.y, SEA - 1, 190);
       player.heading = Math.atan2(-f.x, -f.z);
     } else {
@@ -4279,8 +4471,9 @@ function updatePlayer(dt) {
                       : (inW ? MOVE.swimDrag : onG ? MOVE.drag : MOVE.airDrag);
     const ax = tvx - player.vx, az = tvz - player.vz, al = Math.hypot(ax, az);
     if (al > 1e-4) { const step = Math.min(al, rate * dt); player.vx += ax / al * step; player.vz += az / al * step; }
-    player.pos.x = clamp(player.pos.x + (player.vx + player.pushX) * dt, -W * .97, W * .97);
-    player.pos.z = clamp(player.pos.z + (player.vz + player.pushZ) * dt, -W * .97, W * .97);
+    player.pos.x += (player.vx + player.pushX) * dt;
+    player.pos.z += (player.vz + player.pushZ) * dt;
+    rimClamp(player.pos);
     player.pushX = lerp(player.pushX, 0, Math.min(1, dt * 9)); player.pushZ = lerp(player.pushZ, 0, Math.min(1, dt * 9));
     player.wmag = 0;                      // consumed; refilled next frame if the stick is held
     {
@@ -4474,7 +4667,7 @@ function updateFairy(dt) {
   fairyTrail.rate = p.free ? 0 : 18 + Math.min(34, f.vel.length() * 3.4);
 }
 
-isle.fairy = fairy; isle.stick = stick; isle.cam = cam;   // all defined after the handle, so attached here
+isle.fairy = fairy; isle.stick = stick; isle.cam = cam; isle.camS = camS; isle.planet = PLANET;   // all defined after the handle, so attached here
 
 function updateRig(dt) {
   const p = player;
@@ -4551,7 +4744,7 @@ function buildWaypoint() {
   gm.setAttribute('position', new THREE.BufferAttribute(new Float32Array(WAY.N * 3), 3));
   WAY.trail = new THREE.Points(gm, new THREE.PointsMaterial({ map: glowTex, color: col('#9fe6ff'),
     size: 1.5, sizeAttenuation: true, transparent: true, opacity: .75, blending: THREE.AdditiveBlending, depthWrite: false }));
-  WAY.trail.frustumCulled = false; scene.add(WAY.trail);
+  WAY.trail.frustumCulled = false; WAY.trail.userData.flat = true; scene.add(WAY.trail);
 }
 function setWaypoint(w) {
   if (!WAY.g) buildWaypoint();
@@ -4581,7 +4774,8 @@ function updateWaypoint(dt) {
   for (let i = 0; i < n; i++) {
     const f = ((i / n) + t * .22) % 1, k = 2.5 + f * Math.max(0, d - 4.5);
     const x = p.x + dx / (d || 1) * k, z = p.z + dz / (d || 1) * k;
-    a.array[i * 3] = x; a.array[i * 3 + 1] = groundY(x, z) + .7 + Math.sin(f * 6.283 + t) * .18; a.array[i * 3 + 2] = z;
+    planetPos(x, groundY(x, z) + .7 + Math.sin(f * 6.283 + t) * .18, z, _wgV);
+    a.array[i * 3] = _wgV.x; a.array[i * 3 + 1] = _wgV.y; a.array[i * 3 + 2] = _wgV.z;
   }
   a.needsUpdate = true;
   WAY.trail.material.opacity = .75 * near;
@@ -4606,17 +4800,56 @@ const MAP = {
   light: { x: -.62, z: -.68 },                  // relief lit from the north-west, as maps are
 };
 function buildMapImage() {
-  const N = SEG + 1, pa = terrainGeo.attributes.position, ca = terrainGeo.attributes.color;
-  const H = new Float32Array(N * N), R = new Float32Array(N * N), G = new Float32Array(N * N), B = new Float32Array(N * N);
+  // The terrain mesh is a polar grid wrapped on the planet, so the map reads the chart point
+  // and the chart height each vertex was built from rather than where it ended up in the
+  // world. The spokes fan apart on the way out -- under a pixel between them at the origin,
+  // three units by the sister isle against a raster cell of one and a quarter -- so binning
+  // alone leaves the far islands stippled with holes. Rather than splat each vertex over a
+  // block, which reads as a lattice once the relief shading takes its derivative across the
+  // flat patches, the gaps are grown into from their neighbours and the height is smoothed
+  // before it is shaded. The colour stays crisp.
+  const N = MOBILE ? 288 : 384;
+  const pa = terrainGeo.attributes.chart, ha = terrainGeo.attributes.hgt, ca = terrainGeo.attributes.color;
+  const NN = N * N;
+  const H = new Float32Array(NN), R = new Float32Array(NN), G = new Float32Array(NN), B = new Float32Array(NN);
+  const set = new Uint8Array(NN), u = (N - 1) / (2 * W);
   for (let i = 0; i < pa.count; i++) {
-    const cx = Math.round((pa.getX(i) + W) / (2 * W) * (N - 1)), cy = Math.round((pa.getZ(i) + W) / (2 * W) * (N - 1));
+    const cx = Math.round((pa.getX(i) + W) * u), cy = Math.round((pa.getY(i) + W) * u);
     if (cx < 0 || cy < 0 || cx >= N || cy >= N) continue;
     const k = cy * N + cx;
-    H[k] = pa.getY(i); R[k] = ca.getX(i); G[k] = ca.getY(i); B[k] = ca.getZ(i);
+    H[k] = ha.getX(i); R[k] = ca.getX(i); G[k] = ca.getY(i); B[k] = ca.getZ(i); set[k] = 1;
+  }
+  for (let pass = 0; pass < 8; pass++) {
+    const grew = set.slice(); let any = 0;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const k = y * N + x; if (set[k]) continue;
+      let n = 0, h = 0, r = 0, g2 = 0, b2 = 0;
+      for (let d = 0; d < 4; d++) {
+        const nx = x + (d === 0 ? -1 : d === 1 ? 1 : 0), ny = y + (d === 2 ? -1 : d === 3 ? 1 : 0);
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        const j = ny * N + nx; if (!set[j]) continue;
+        n++; h += H[j]; r += R[j]; g2 += G[j]; b2 += B[j];
+      }
+      if (!n) continue;
+      H[k] = h / n; R[k] = r / n; G[k] = g2 / n; B[k] = b2 / n; grew[k] = 1; any++;
+    }
+    set.set(grew); if (!any) break;
+  }
+  for (let k = 0; k < NN; k++) if (!set[k]) H[k] = -30;
+  // one box blur, for the relief only: the fill leaves flat patches whose derivative is a
+  // grid of hard edges, and hillshading turns that straight into a lattice of dots
+  const HS = new Float32Array(NN);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    let n = 0, a2 = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+      n++; a2 += H[ny * N + nx];
+    }
+    HS[y * N + x] = a2 / n;
   }
   const cv = document.createElement('canvas'); cv.width = cv.height = N;
   const g = cv.getContext('2d'), im = g.createImageData(N, N), d = im.data;
-  const cell = 2 * W / (N - 1), L = MAP.light, ln = Math.hypot(L.x, L.z, 1) || 1;
+  const cell = 1 / u, L = MAP.light, ln = Math.hypot(L.x, L.z, 1) || 1;
   const c = new THREE.Color();
   // Everything on this side of the renderer is linear — col() converts on the way in and the
   // composite pass applies the gamma on the way out. A 2D canvas has no composite pass, so
@@ -4633,7 +4866,7 @@ function buildMapImage() {
     }
     // relief: the slope of the height field against the light
     const xm = Math.max(0, x - 1), xp = Math.min(N - 1, x + 1), ym = Math.max(0, y - 1), yp = Math.min(N - 1, y + 1);
-    const dx = (H[y * N + xp] - H[y * N + xm]) / ((xp - xm) * cell), dz = (H[yp * N + x] - H[ym * N + x]) / ((yp - ym) * cell);
+    const dx = (HS[y * N + xp] - HS[y * N + xm]) / ((xp - xm) * cell), dz = (HS[yp * N + x] - HS[ym * N + x]) / ((yp - ym) * cell);
     const nl = Math.hypot(dx, 1, dz) || 1;
     const sh = clamp((-dx * L.x + 1 - dz * L.z) / (nl * ln), 0, 1);
     let k2 = .70 + .62 * sh;   // flat ground lands at 1.17 either way; this only lifts the shadowed faces
@@ -4768,6 +5001,7 @@ function toggleMap(on) {
   if (MAP.open) drawMap();
 }
 
+isle.water = water; isle.foam = foam; isle.abyss = abyss; isle.terrain = terrain;
 isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap; isle.way = WAY; isle.setWaypoint = setWaypoint; isle.clampView = clampView;   // MAP is a const above, so this cannot move any earlier
 
 // What a tap on the right stick would do right now, if anything. Whatever is within reach
@@ -4839,15 +5073,28 @@ function frame(now) {
     cam.idle += dt; if (cam.idle > 6 && player.moving < .05) cam.az += dt * .03;
   }
   solveCam(dt);
-  camera.position.set(
-    cam.tgt.x + Math.sin(cam.az) * Math.sin(camS.pol) * camS.r,
-    camS.y,
-    cam.tgt.z + Math.cos(cam.az) * Math.sin(camS.pol) * camS.r);
-  camera.lookAt(cam.tgt);
-  sky.position.copy(camera.position);
+  // The boom is still swung in chart terms -- azimuth, pitch, and the ridge solver that
+  // marches it against the height field -- but it is *hung* in the frame standing on the
+  // target, not laid back down on the chart. A forty-unit boom laid on the chart follows the
+  // curve and sinks four units into the hill behind him; a four-hundred-unit one, which the
+  // zoom allows, would swing a hundred degrees round the planet and look back at the far
+  // side. In the local frame it is a straight line out from where he stands, at any length.
+  planetQ(cam.tgt.x, cam.tgt.z, _camQ);
+  planetPos(cam.tgt.x, cam.tgt.y, cam.tgt.z, _camW);
+  camera.position.set(Math.sin(cam.az) * Math.sin(camS.pol) * camS.r,
+                      camS.y - cam.tgt.y,
+                      Math.cos(cam.az) * Math.sin(camS.pol) * camS.r)
+    .applyQuaternion(_camQ).add(_camW);
+  camera.up.copy(_plY).applyQuaternion(_camQ);
+  camera.lookAt(_camW);
+  // The dome is nine hundred units and the planet is two-forty, so from the ground the sky
+  // encloses everything. Climb, and the far limb of the world reaches past it -- so the rig
+  // grows to stay outside whatever is behind you.
+  skyRig.position.copy(camera.position); skyRig.quaternion.copy(_camQ);
+  skyRig.scale.setScalar(Math.max(1, (camera.position.length() + PLANET.R + 80) / 800));
   {   // the see-through hole follows the wanderer's chest on screen
     camera.updateMatrixWorld(); camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
-    const p = _holeP.set(player.pos.x, player.pos.y + RIG.height * .5, player.pos.z);
+    const p = planetPos(player.pos.x, player.pos.y + RIG.height * .5, player.pos.z, _holeP);
     const vz = _holeV.copy(p).applyMatrix4(camera.matrixWorldInverse).z;   // negative in front of the lens
     p.project(camera);
     if (!player.free && !player.aboard && vz < -1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1) {

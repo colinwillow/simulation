@@ -1,8 +1,8 @@
 # Lantern Isle
 
-An autonomous ecosystem simulation in a single HTML file. An island populated by creatures
-that forage, build, hunt and reproduce without scripting — the world starts quiet and,
-over the course of a few in-game days, grows into a lit settlement.
+An autonomous ecosystem simulation in a single HTML file. A small planet with an island on
+it, populated by creatures that forage, build, hunt and reproduce without scripting — the
+world starts quiet and, over the course of a few in-game days, grows into a lit settlement.
 
 It is a **scaffolding**, not a finished game. Every creature is a placeholder built from
 noise-displaced primitives, with a clean seam for swapping in real models later.
@@ -45,6 +45,9 @@ One file, top to bottom, in dependency order:
 1. **Quality tier** (`Q`, `MOBILE`) — segment counts, particle counts, shadow resolution
 2. **Noise + terrain field** — `height(x,z)` is the source of truth for the world's shape.
    Everything else samples it: mesh generation, creature movement, camera collision, water depth.
+2b. **The planet** (`PLANET`, `planetPos`, `planetQ`) — the projection that wraps the flat
+   chart onto a sphere. Nothing above this line knows about it and almost nothing below does
+   either; see **The planet** under Systems.
 3. **Renderer, materials, geometry pools** (`M`, `G`) — shared materials and displaced primitives
 4. **Sky, lights, terrain mesh, water, foam, grass**
 5. **Obstacle field** (`OB`) — spatial hash of solid footprints
@@ -473,6 +476,85 @@ One thing this turned up: the frame loop clamped `dt` only from above, and a rAF
 can trail the `performance.now()` that seeded `last`, so an early frame could run the whole
 sim backwards for one tick. It is clamped at zero now.
 
+### The planet
+
+The world is a sphere of radius **240**, which is `W` — the same number the flat island was
+authored against. Circumference 1508, about four minutes' walk the whole way round, and a
+horizon roughly seventy units out from the camera. You can see the ground fall away at the
+edges of the frame from where you stand, and zooming out far enough puts the whole globe in
+view with the island as a cap on top of it.
+
+**Everything above the wrap is still flat.** `height(x,z)`, the obstacle field, every
+steering behaviour, the buoyancy, the camera solver, the map, and every distance that has
+ever been tuned all work in a flat chart in (x, z), exactly as they did. This is not a
+convenience — it is the whole design. Spherical trigonometry in the AI would have meant
+retuning every constant in the file, and there is no gameplay question the chart cannot
+answer.
+
+The wrap is **azimuthal equidistant**, chart origin at the north pole: a chart point at
+distance `r` from the origin lands at polar angle `r / R`. Distance from the origin is
+therefore exact everywhere — walk 60 units and you have gone 60 units of arc. What it costs
+is spacing *around* the pole, which shrinks by `sin(θ)/θ`:
+
+| chart r | arc | spacing |
+|---|---|---|
+| 0 | 0° | ×1.00 |
+| 120 | 29° | ×0.96 |
+| 240 (far shore) | 57° | ×0.84 |
+| 480 | 115° | ×0.45 |
+| 700 | 167° | ×0.08 |
+
+So the island — everything out to about r 260 — is squeezed at worst 16% east–west, which
+you will never see: objects keep their own size, only their spacing changes. Past r 480 it
+gets severe, and that is six hundred units of empty ocean nobody has a reason to cross.
+`PLANET.rim` stops you a little short of the far pole itself, where the projection is
+singular; `height()` levels the last stretch before it to one depth so every spoke of the
+mesh agrees about the single vertex they all meet at.
+
+`npm run check:terrain` prints that table, and round-trips 600 points through
+`planetPos` → `planetChart` — worst error 3e-13 units.
+
+**How the wrap is actually applied.** Three ways, and only three:
+
+1. **The scene graph.** `scene.add` is wrapped: anything dropped straight into the scene gets
+   an overridden `updateMatrix` that reads its chart `position`/`rotation` and writes the
+   world matrix. So a tree still does `g.position.copy(pos); alignTo(g, x, z, .35);
+   g.rotateY(...)` and lands upright on a sphere, and `alignTo` did not have to change at
+   all — it produces a chart-space tilt, and the planet frame is composed on top of it.
+   Reparent an object under something else (a log picked up onto a bone) and it falls back to
+   the stock compose, because then its transform is somebody else's local space.
+   Opt out with `userData.flat`.
+2. **Geometry built on the sphere.** Terrain, sea, foam: a polar grid (`polarGeo`) of rings
+   and spokes, sampled from `height()` at the chart point and placed through `planetPos`.
+   Rings are packed to about two units under the island and open out to six across the far
+   ocean, so the whole globe costs *fewer* vertices than the old flat square did.
+   `warpGeo` does the same to one merged mesh — the scattered rocks and driftwood, which span
+   the world and so have no single group transform that could place them.
+3. **`PLANET_GLSL`.** The same map in the vertex shader, for the things that place their own
+   points: the Gerstner sea, the shoreline foam, `PSys`, `Streaks`, the motes. They all
+   integrate flat and wrap on the way out. `planetRot(chart, v)` rotates a chart direction
+   into world space, which is what `Streaks` needs for the velocity it stretches along.
+
+**The camera** is solved entirely in chart terms — azimuth, pitch, the boom march against the
+height field — but hung in the frame standing on the *target*, not laid back down on the
+chart. A forty-unit boom laid on the chart follows the curve and sinks four units into the
+hill behind him; the four-hundred-unit one the zoom allows would swing a hundred degrees
+round the planet and look back at the far side.
+
+**Lights and sky** are stated in the local frame at the camera target and rotated in, so the
+sun keeps the elevation it always had over wherever you are standing. A sun fixed to one
+point of a planet this small would put you in permanent dusk halfway through a walk. The sky
+dome and the stars hang off `skyRig`, which follows the camera, carries the local frame, and
+grows once you climb high enough that the far limb of the world reaches past it. Haze thins
+with altitude for the same reason — the old density erased the planet from the air.
+
+**The map** is still drawn in chart space, which is what you want for navigation: bearings
+are true and radial distances are exact. It reads the `chart` and `hgt` attributes kept
+alongside each terrain vertex rather than the vertex positions, which are now on the sphere.
+Because the spokes fan apart on the way out, each vertex is splatted over as many raster
+cells as its own local spacing needs — a fixed splat leaves the sister isle stippled with
+sea.
+
 ### Obstacle field
 Solid things register a footprint circle in a coarse spatial hash (`obAdd`/`obRemove`).
 Creatures use it three ways: rejecting waypoints, steering around things ahead
@@ -621,6 +703,22 @@ run this before it is believed.
   in `map_fragment` and override `roughnessFactor` in `roughnessmap_fragment`.
 - **Winding order.** A radial mesh wound the wrong way faces down and vanishes under
   backface culling — you'll see straight through the object to whatever's inside it.
+  `polarGeo` winds its centre fan the opposite way round from its ring quads, which is
+  correct and looks like a bug.
+- **A group at the chart origin is not at the world origin.** Once `scene.add` wraps chart
+  transforms, a group left at (0,0,0) holding children in absolute world coordinates gets
+  moved to the north pole and takes them with it. Either give the group its own position and
+  build the children local to it (which `Litter` now does, and which incidentally fixed it
+  sinking toward the world origin as it faded), or mark it `userData.flat` and `warpGeo` its
+  geometry, which is what the world-spanning scatter does.
+- **Reading a world matrix back out.** `getWorldPosition` and `setFromMatrixPosition` now
+  return real world coordinates, which are not chart coordinates. Three places do this and
+  all three go back through `planetChart`: the leviathan's blowhole, and the ship's exhaust
+  emitters (whose direction also needs the local frame taken back off it).
+- **Long offsets don't survive the wrap.** Anything that adds hundreds of units to a chart
+  position and expects it to still be nearby is wrong on a sphere: it goes round the planet.
+  This caught the camera boom (fixed by hanging it in the local frame) and the meteors, which
+  were flung 620 units sideways and came out under the ground.
 - **Downward faces go black.** A cone underside lit only by a sun above gets no light.
   There's a dim up-light (`fill`) for this.
 - **Draw calls are the budget, not triangles.** `mergeBin()` bakes static sub-meshes into one
@@ -675,6 +773,8 @@ run this before it is believed.
 | What | Where |
 |---|---|
 | World size | `W` (landform coords scale by `WS`) |
+| Planet radius | `PLANET.R` — bigger flattens the horizon and cuts the east–west squeeze |
+| Terrain / sea mesh density | `TSPOKE`/`TRING`, `WSPOKE`/`WRING`, and `ringR` for the packing |
 | Day length | `DAY` (seconds per full cycle) |
 | Population caps | `MAX` |
 | Tree growth rate | `GROW_T` |
@@ -695,6 +795,54 @@ run this before it is believed.
 - Creatures wall-slide along obstructions rather than turning away, which can make them hug
   terrain and cover less ground than they used to.
 - The floating isle's grove and the great tree's canopy are the heaviest mesh clusters.
+- The far pole is a coordinate singularity in open ocean: the sea's wave trains are faded out
+  before it and `PLANET.rim` stops you short, but nothing *wraps* there yet. Walking over the
+  pole and coming up the other side needs the chart to fold, which is a real change and not
+  worth making until there is a reason to go.
+- The map is drawn in chart space, so it slightly overstates east–west distances out at the
+  sister isle — 16% at the worst, where the sphere squeezes hardest. Bearings and radial
+  distances are exact.
+- Wakes are 120 units long, which was nothing on a flat world and is 8% of this planet's
+  circumference. Isolated by hiding the sea, then the foam: the chevron across the far ocean
+  in a zoomed-out shot is the ferry's Kelvin V, drawn exactly as it always was. It reads fine
+  from the ground and only looks wrong from a height you cannot yet reach, so it is left
+  alone rather than retuned blind.
+
+---
+
+## Where this is going
+
+The sphere is the first piece of a larger shape, written down here so the next change knows
+what it is building toward. Nothing below this paragraph exists yet.
+
+**Many small worlds.** Lantern Isle becomes one planet among several, each with its own
+properties — a water world, a jungle world, different gravity, different species. The ship
+already flies; it becomes the way between them. Most of what that needs is in place: the
+projection is per-planet (`PLANET.R` is one number), `height()` is a pure function of a chart
+point, and the whole simulation is written against a flat chart, so a second world is a
+second chart and a second terrain field rather than a second engine. What it needs that does
+not exist: more than one planet in the scene at once, an interplanetary flight mode where the
+chart stops being the frame of reference, and per-world palettes, weather and species tables.
+
+**Capture.** A plasma net cannon, and a hand for the things small enough to just pick up —
+different creatures wanting different means, some needing a bigger container than others.
+The `ACT` hook the ship boarding uses is the seam for this: the right stick already glows
+when something is in reach and the interaction is a single tap. What is captured hangs below
+the ship from a mechanical arm and tray, and flies with you.
+
+**The lab.** Bring a creature home and the lab — which you have to build — processes its
+genetic makeup, after which you can transform into that animal on cue.
+
+**One base mesh.** This is the part that makes the rest cheap. Every character and animal is
+the same base mesh wrapped differently, so transforming is blend shapes morphing between
+them in real time rather than a model swap. Neither of the two characters made so far is
+wrapped around the base mesh yet. When they are, the rig plumbing that already exists
+(`attachRig`, the measured-state blend tree, the clip library) carries straight over, and the
+morph targets ride alongside it.
+
+**Building and resources.** Buildings that start ecosystems, and resources to collect to
+build them. The cairn is the existing worked example of a thing you build that changes the
+world's state; the ecology already reacts to `world.beacons` and `world.cairns`.
 
 ---
 

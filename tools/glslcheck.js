@@ -8,6 +8,9 @@ const end=body.indexOf('const waterUni = {');
 const src=body.slice(start,end);
 const MOBILE=false;
 const sh={uniforms:{}, vertexShader:THREE.ShaderLib.physical.vertexShader, fragmentShader:THREE.ShaderLib.physical.fragmentShader};
+// the projection chunk the water shader now leans on, lifted from the page the same way
+const PLANET_GLSL=(()=>{const i=body.indexOf('const PLANET_GLSL = `'), j=body.indexOf('`;', i);
+  return body.slice(i+'const PLANET_GLSL = `'.length, j).replace(/\$\{[^}]*\}/g,'240.0000');})();
 const waterUni={uT:{value:0},uW:{value:[]},uWk:{value:[]},uSky:{value:0}};
 const waterMat={}; eval(src); waterMat.onBeforeCompile(sh);
 function resolve(s){ let out=s, prev;
