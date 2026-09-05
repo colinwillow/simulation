@@ -145,7 +145,17 @@ function reportGltf(file) {
   if (wantsToMove) {
     if (!skins.length) bad.push('clips but no armature: nothing can deform this mesh');
     if (!skinned && skins.length) bad.push('a skin is declared but the mesh has no JOINTS_0/WEIGHTS_0');
-    if (!real.length) bad.push('a skeleton but no real clips — every one is an exporter default (CINEMA_4D_Main / mixamo.com)');
+    // A rig with no clips is broken for a creature and perfectly fine for a plant: the
+    // Vibrate tag those are animated with is not a clip and does not survive the export, and
+    // the game drives those joints itself (see VIBE / vibeRig). Say which it is rather than
+    // calling a working asset broken.
+    if (!real.length) {
+      const named = [...bones].map(i => (nodes[i] || {}).name || '');
+      const anim = named.filter(n => /anim/i.test(n)).length;
+      if (anim) note.push('a skeleton with no clips, but ' + anim + ' of its ' + named.length
+        + ' joints are named for the Vibrate tag — the game wobbles those itself (see VIBE)');
+      else bad.push('a skeleton but no real clips — every one is an exporter default (CINEMA_4D_Main / mixamo.com)');
+    }
   }
   if (real.length && !real.some(a => /idle/i.test(a.name))) note.push('no clip whose name contains "idle"');
   if (real.length && !real.some(a => /walk|run/i.test(a.name))) note.push('no clip whose name contains "walk" or "run"');
@@ -156,6 +166,9 @@ function reportGltf(file) {
   P('');
   if (bad.length) { P('  BROKEN for the game:'); for (const b of bad) P('    - ' + b); }
   else if (!wantsToMove) P('  usable as a prop: a static mesh, which is all a plant or a rock needs');
+  // "clips are present" is not true of a Vibrate-tag rig, and saying it would send the next
+  // person looking for the clips that never existed.
+  else if (!real.length) P('  usable as a prop the game animates itself: rig and weights are present, and the joints to drive');
   else P('  usable: rig, clips and weights are all present');
   if (note.length) { P('  worth knowing:'); for (const n of note) P('    - ' + n); }
   return bad.length ? 1 : 0;

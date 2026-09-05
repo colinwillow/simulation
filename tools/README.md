@@ -795,6 +795,37 @@ what a bulb wants. The glow rides `world.night` like every other lit thing on th
 This is a nice trick, not a general answer. It works because the bulbs happen to be a
 separable hue; a second material slot is what to do when they are not.
 
+### The Vibrate tag, in code
+
+`alien_plant_01_game.glb` is rigged but has **no clips**, and that is correct. In Cinema 4D
+the plant is animated by a Vibrate tag — every joint whose name carries `anim` gets a small
+random rotation on each axis, re-rolled continuously — and a tag is not a clip, so none of it
+survives a glTF export. The file arrives with thirty-seven bones and nothing driving them.
+
+`VIBE` / `vibeRig` / `vibeStep` reproduce it. `attachPlantModel` collects the matching bones
+into `plant.vibe` at attach time, each with its own frequencies and phases, and every plant
+class's `update()` carries one line — `if (this.vibe) vibeStep(this.vibe, world.clock, this.pos)`
+— so any future rigged plant works with no further wiring.
+
+Doing it in code rather than baking a clip is the better trade here, not a shortcut: a baked
+clip is a fixed length that loops identically on every instance, where this gives each plant
+its own phases, costs three sines per joint, adds nothing to the file, and can be leant on by
+the weather — amplitude rises with `WX.windK`, so the meadow works harder in a gale. Past
+`VIBE.far` nothing is computed at all.
+
+Knobs: `VIBE.deg` is the tag's amplitude (10°, matching C4D), `VIBE.rate` how fast the wobble
+wanders, `VIBE.wind` how much the weather adds. `VIBE.match` is the name pattern — `anim` or
+`ANIMR`, either way it came through the exporter.
+
+`npm run check:model` recognises this shape and says so rather than calling the file broken;
+`node tools/shot.js --near Bloom --vibe` reports how many joints moved and the widest swing
+in degrees, which is the only way to tell from outside that any of it is running.
+
+**A rigged plant is still scenery.** `prepModel` used to decide what was a body from whether
+it was skinned, which was right until this file arrived — at which point every bloom went
+solid and stopped taking the see-through hole. The caller says now: `markBody()` is called by
+`attachRig` and by the ship, and by nothing else.
+
 ### Swapping a model onto a species
 
 One table entry:
@@ -1433,6 +1464,7 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | How much ground the shadow map covers | `fitShadow` — `clamp(34 + r * 1.5, 48, 150)` |
 | Shadow map resolution | `Q.shadow` (1024 mobile, 2048 desktop) |
 | Whether a plant casts a shadow | `cast: false` in its `PLANT_MODELS` entry, and `noCast()` |
+| How hard a rigged plant wobbles | `VIBE.deg`, `VIBE.rate`, `VIBE.wind` |
 | How the title screen's crane moves | `INTRO.wide` / `INTRO.near` / `INTRO.craneT` |
 | How far the shot swings across the letters | `INTRO.sweep`, `INTRO.rate` |
 | How an animal feels about you | `wary`/`flock`/`notice`/`curious` in its constructor |

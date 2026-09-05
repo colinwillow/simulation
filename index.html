@@ -1810,6 +1810,7 @@ class LanternTree {
     const lit = this.growth >= 1 ? world.night : 0;
     this.glow.scale.setScalar(9 * lit);
     this.fruitG.rotation.z = Math.sin(world.clock * 1.4 + this.pos.x) * .12;   // the crop swings as one
+    if (this.vibe) vibeStep(this.vibe, world.clock, this.pos);
     this.fruitGl.material.size = 1.2 + lit * 3.2;
   }
   fall() {
@@ -2029,7 +2030,10 @@ class MossTuft {
     if (pm) attachPlantModel(this, pm);
   }
   apply() { const s = .15 + .85 * clamp(this.size, 0, 1); this.g.scale.setScalar(s); }
-  update(dt) { if (this.size < 1) { this.size = Math.min(1, this.size + dt * .018); this.apply(); } }
+  update(dt) {
+    if (this.size < 1) { this.size = Math.min(1, this.size + dt * .018); this.apply(); }
+    if (this.vibe) vibeStep(this.vibe, world.clock, this.pos);
+  }
   dispose() { scene.remove(this.g); }
 }
 // The mushroom. It is the one plant that lights the ground under it instead of the air
@@ -2054,6 +2058,7 @@ class Mushroom {
   apply() { this.g.scale.setScalar(.2 + .8 * clamp(this.size, 0, 1)); }
   update(dt) {
     if (this.size < 1) { this.size = Math.min(1, this.size + dt * .03); this.apply(); }
+    if (this.vibe) vibeStep(this.vibe, world.clock, this.pos);
     const lit = .2 + world.night * .95;
     this.glow.scale.setScalar(this.cap * (1 + lit * 1.6));
     this.glow.material.opacity = .1 + lit * .3;
@@ -2091,6 +2096,7 @@ class Bloom {
   apply() { this.g.scale.setScalar(.2 + .8 * this.size); }
   update(dt) {
     if (this.size < 1) { this.size = Math.min(1, this.size + dt * .025); this.apply(); }
+    if (this.vibe) vibeStep(this.vibe, world.clock, this.pos);
     const pulse = 1 + Math.sin(world.clock * 2.4 + this.pos.x) * .05 + this.charge * .22;
     this.head.scale.setScalar(pulse);
     this.head.rotation.y += dt * .12;
@@ -2266,6 +2272,14 @@ function shrinkTexture(t) {
   if (im.close) im.close();                      // release the decoded ImageBitmap
   return (w * h - nw * nh) * 4 * 1.33 / 1048576;   // megabytes saved, mipmaps included
 }
+// Never punch a see-through hole through a body. Which models are bodies is not something
+// the loader can tell: it used to guess from the skeleton, which was right until a plant
+// arrived rigged, at which point every bloom on the island went solid. The caller knows, so
+// the caller says -- attachRig and the ship mark themselves, and everything else is scenery.
+function markBody(root, on = true) {
+  root.traverse(o => { for (const m of [].concat(o.material || [])) if (m) m.userData.noHole = on; });
+  return root;
+}
 function prepModel(root) {
   let saved = 0; const seen = new Set();
   // Which materials belong to a body. When every model in the file was a rig this was all of
@@ -2275,6 +2289,7 @@ function prepModel(root) {
   // instead of going see-through like the primitive one it replaced.
   const onBody = new Set();
   root.traverse(o => { if (o.isSkinnedMesh) for (const m of [].concat(o.material)) if (m) onBody.add(m); });
+  markBody(root, false);
   root.traverse(o => {
     if (!o.isMesh) return;
     o.castShadow = true; o.receiveShadow = true;
@@ -2287,13 +2302,12 @@ function prepModel(root) {
     if (o.isSkinnedMesh) o.frustumCulled = false;
     for (const m of [].concat(o.material)) {
       if (!m) continue;
-      // a rig is a body: never punch a hole through one. Scenery is not, and must take it.
-      if (onBody.has(m)) m.userData.noHole = true;
       // Every one of these arrives double-sided, and nothing in the file needs it: they are
       // watertight sculpts, not foliage cards. Single-sided halves the fragments a plant
       // costs, and means a camera that ends up inside one sees through it rather than
-      // finding a solid wall of backfaces there.
-      else if (m.side === THREE.DoubleSide) { m.side = THREE.FrontSide; m.needsUpdate = true; }
+      // finding a solid wall of backfaces there. A body keeps both sides, being the one
+      // thing you might see the inside of and mind.
+      if (!onBody.has(m) && m.side === THREE.DoubleSide) { m.side = THREE.FrontSide; m.needsUpdate = true; }
       for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
         const t = m[k]; if (!t || seen.has(t)) continue; seen.add(t); saved += shrinkTexture(t);
       }
@@ -2375,7 +2389,7 @@ function cloneModel(root) {
 const RIG_WARNED = new Set();
 function attachRig(parent, cfg, done) {
   loadModel(cfg.url, e => {
-    const inst = cloneModel(e.root);
+    const inst = markBody(cloneModel(e.root));
     const h = e.box.max.y - e.box.min.y;
     const s = h > 1e-4 ? cfg.height / h : 1;
     inst.scale.setScalar(s);
@@ -2584,7 +2598,7 @@ const PLANT_MODELS = {
   // eighty of them were a hundred and eighty thousand triangles of shadow map.
   MossTuft: { url: 'models/alien_plant_02.glb', height: 1.5, cast: false },
   Bloom: {
-    url: 'models/alien_plant_01.glb',
+    url: 'models/alien_plant_01_game.glb',
     height: 3.4,
     glowY: 2.1,
     // The bulbs. A C4D selection tag does not survive the trip through FBX and glTF -- what
@@ -2630,6 +2644,47 @@ function plantGlow(mat, cfg) {
 // in daylight and turns off at night, which is why the island speeds up after dark -- so
 // anything whose shadow nobody would miss should not be in it.
 function noCast(root) { root.traverse(o => { if (o.isMesh) o.castShadow = false; }); return root; }
+// ---------- the vibrate tag, in code ----------
+// These plants are animated in Cinema 4D by a Vibrate tag: every joint whose name carries
+// `anim` gets a small random rotation on each axis, re-rolled continuously, so the thing is
+// never quite still. A tag is not a clip and none of it survives a glTF export -- the file
+// arrives with thirty-seven bones and no animation at all -- so it is reproduced here.
+//
+// Which is the better place for it anyway. A baked clip is a fixed length that loops, the
+// same on every instance; this gives each plant its own phases, costs three sines a joint,
+// needs no keyframes in the file, and can be leant on by the weather, which a clip cannot.
+const VIBE = {
+  match: /anim/i,        // Joint_anim_17, Joint_ANIMR_3 -- either way the name came through
+  deg: 10,               // the tag's amplitude, per axis
+  rate: .5,              // how fast the wobble wanders
+  wind: 2.2,             // how much harder it works in a gale
+  far: 95,               // past this there is nothing to see, so nothing is computed
+};
+// Every joint the tag was on, with its bind rotation and its own frequencies and phases --
+// per instance, so no two of a species wave in step.
+function vibeRig(root) {
+  const out = [];
+  root.traverse(o => {
+    if (!o.isBone || !VIBE.match.test(o.name)) return;
+    out.push({ b: o, r: o.rotation.clone(),
+      fx: rnd(.55, 1.35), fy: rnd(.5, 1.25), fz: rnd(.6, 1.4),
+      px: rnd(6.3), py: rnd(6.3), pz: rnd(6.3) });
+  });
+  return out.length ? out : null;
+}
+function vibeStep(list, t, pos) {
+  if (pos) {
+    const dx = pos.x - cam.tgt.x, dz = pos.z - cam.tgt.z;
+    if (dx * dx + dz * dz > VIBE.far * VIBE.far) return;
+  }
+  const a = VIBE.deg * (Math.PI / 180) * (1 + WX.windK * VIBE.wind), u = t * VIBE.rate;
+  for (let i = 0; i < list.length; i++) {
+    const j = list[i];
+    j.b.rotation.set(j.r.x + Math.sin(u * j.fx + j.px) * a,
+                     j.r.y + Math.sin(u * j.fy + j.py) * a,
+                     j.r.z + Math.sin(u * j.fz + j.pz) * a);
+  }
+}
 function attachPlantModel(plant, cfg) {
   // `url` may be a list, in which case each plant draws one and keeps the index: `foot`
   // and anything else per-variant is looked up by it.
@@ -2660,6 +2715,7 @@ function attachPlantModel(plant, cfg) {
     inst.rotation.y = rnd(Math.PI * 2);
     inst.traverse(o => { if (o.isMesh) { o.castShadow = cfg.cast !== false; o.receiveShadow = true; } });
     plant.g.add(inst); plant.model = inst;
+    plant.vibe = vibeRig(inst);          // null unless the export carried the tag's joints
     if (plant.glow && cfg.glowY !== undefined)
       plant.glow.position.y = num(cfg.glowY) - (plant.glow.parent === plant.head && plant.head ? plant.head.position.y : 0);
   });
@@ -3903,7 +3959,7 @@ class Ship {
       const sz = e.box.getSize(new THREE.Vector3());
       const k = SHIP.span / Math.max(1e-4, Math.max(sz.x, sz.z));
       inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
-      this.g.add(inst); this.inst = inst; this.k = k;
+      this.g.add(markBody(inst)); this.inst = inst; this.k = k;
       envUse(inst, 1);                                 // the one hull you walk right up to
       const b = {}; inst.traverse(m => { if (m.isBone) b[m.name] = m; });
       this.bones = b;

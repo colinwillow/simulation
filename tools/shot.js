@@ -11,6 +11,8 @@
 //   --wait       seconds of world time to let settle before the shutter (default 6)
 //   --w --h      canvas size (default 1280x800)
 //   --tree       stand behind the biggest modelled tree, to check it goes see-through
+//   --near X     stand beside the nearest plant of class X (Bloom, Mushroom, LanternTree...)
+//   --vibe       report whether a rigged plant's procedural joints are actually turning
 //   --probe      also report what the sun's shadow pass costs, in calls and triangles
 //   --title      shoot the title screen instead, before the world is entered
 //   --intro-t    seconds along the title screen's crane to jump to (0 wide, 26 near)
@@ -83,8 +85,19 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
   // The loading card is held until the models are in, so a shot taken before it lifts is a
   // shot of the card. Wait it out.
   await page.waitForFunction('!document.getElementById("boot")', null, { timeout: 240000 }).catch(() => {});
-  await page.evaluate(([at, hour, r, az, title, site, introT, tree]) => {
+  await page.evaluate(([at, hour, r, az, title, site, introT, tree, near]) => {
     const g = window.__g;
+    if (near) {
+      const c = g.world.plants.filter(p => p.alive && p.constructor.name === near && p.model);
+      if (c.length) {
+        const t = c[0], a = Math.random() * Math.PI * 2, d = 5.5;
+        const x = t.pos.x + Math.cos(a) * d, z = t.pos.z + Math.sin(a) * d;
+        g.player.pos.set(x, g.groundY(x, z) + 1, z); g.player.vx = g.player.vz = g.player.vy = 0;
+        g.cam.tgt.set(x, g.player.pos.y + 3.4, z);
+        g.cam.az = Math.atan2(t.pos.x - x, t.pos.z - z); g.cam.r = 15;
+        console.log(near + ' at ' + (t.pos.x | 0) + ',' + (t.pos.z | 0) + ' vibe joints ' + (t.vibe ? t.vibe.length : 0));
+      } else console.warn('no modelled ' + near + ' in this world');
+    }
     // Stand him just past the biggest modelled tree with the camera on the far side of it,
     // which is the shot that shows whether scenery goes see-through or fills the screen.
     if (tree) {
@@ -117,7 +130,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     // The title crane takes the better part of a minute to travel; under swiftshader that is
     // ten real ones. Jump to a point on it instead of waiting for it.
     else if (introT !== null) g.INTRO.t = +introT;
-  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null), has('tree')]);
+  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null), has('tree'), arg('near', null)]);
 
   // Wall clock is meaningless here -- swiftshader runs this at a couple of frames a second,
   // so the settle is counted in world seconds like every other harness in this folder.
@@ -156,6 +169,33 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       + ' | the pass costs ' + (p2.on.calls - p2.off.calls) + ' calls and '
       + ((p2.on.tris - p2.off.tris) / 1000 | 0) + 'k tris');
     console.log('  casters (meshes/triangles): ' + p2.top.join('  '));
+  }
+
+  // Are the procedural joints actually turning? A still frame cannot tell you, so sample a
+  // rigged plant's bones across a second of world time and report the widest swing in degrees.
+  if (has('vibe')) {
+    const snap = () => page.evaluate(() => {
+      const g = window.__g, p = g.world.plants.find(q => q.alive && q.vibe);
+      if (!p) return null;
+      return { n: p.vibe.length, t: g.world.clock,
+        r: p.vibe.map(j => [j.b.rotation.x, j.b.rotation.y, j.b.rotation.z]) };
+    });
+    const a = await snap();
+    if (!a) console.log('vibe: no rigged plant in this world');
+    else {
+      const t0 = await page.evaluate(() => window.__g.world.clock);
+      await page.waitForFunction(`window.__g.world.clock > ${t0 + 1}`, null, { timeout: 300000 });
+      const b = await snap();
+      let worst = 0, moved = 0;
+      for (let i = 0; i < a.r.length; i++) {
+        let d = 0;
+        for (let k = 0; k < 3; k++) d = Math.max(d, Math.abs(a.r[i][k] - b.r[i][k]));
+        if (d > 1e-4) moved++;
+        worst = Math.max(worst, d);
+      }
+      console.log('vibe: ' + a.n + ' joints, ' + moved + ' moved over ' + (b.t - a.t).toFixed(1)
+        + 's of world time, widest swing ' + (worst * 180 / Math.PI).toFixed(1) + ' degrees');
+    }
   }
 
   fs.mkdirSync(path.dirname(path.resolve(OUT)), { recursive: true });
