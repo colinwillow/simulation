@@ -590,6 +590,44 @@ Because the spokes fan apart on the way out, each vertex is splatted over as man
 cells as its own local spacing needs — a fixed splat leaves the sister isle stippled with
 sea.
 
+### Moving on foot
+
+Three things decide how the wanderer moves, and all three were reported by feel before they
+had a number: "he really wants to run", "a steep hill should slow you down", "you should be
+able to walk over rocks". `npm run check:gait` measures each one.
+
+**The ramp.** Acceleration falls away as he approaches his own top speed —
+`MOVE.acc * (1 - MOVE.accFall * smooth(0, 1, speed / MOVE.max))`. The first units come
+quickly, because a tap has to move him, and the last take their time. Measured over two
+seeds, on ground the probe picked as flat: a first step at 0.17-0.23s, walking pace at
+0.33-0.50, a jog at 0.63-0.86, a run at 1.29-1.58. The spread is the ground -- "flat" there
+means under a 3% grade, and a hill is priced in below. At the old flat 62 he did all of it
+in 0.27 seconds, which is why nothing smaller than a run was possible. A half-held stick still settles on its own speed inside half a second, so
+micro-movement is a matter of how far you push rather than how briefly.
+
+Nothing else had to change for the animation: `stepRig` blends on `speed / MOVE.max`, so a
+longer ramp means he walks for longer before the run mixes in, for free.
+
+**Hills.** The gradient is read along the direction he is *walking*, one metre ahead — not
+the slope of the ground under him, which would cost him just as much running along a contour
+as straight up the face. Speed scales by `1 - grade * MOVE.hill`, floored at `MOVE.hillMin`,
+with a small bonus downhill. Measured: 75-81% of flat speed on a 20° face, 62% on 33°, 35%
+(the floor) on 48°, and a flat 17.7 — the downhill cap — going back down any of them. The
+probe reports the grade the *game* reads, a forward difference one metre along the way he is
+walking; its own centre-difference over three units is a different number, and reporting
+that one made the results look inconsistent when they were not.
+
+**Rocks.** `OB_PLAYER.climb` is the whole story. Anything whose top is within it of his feet
+is something he goes *over* rather than *around*: `resolvePlayer` stops treating it as a
+wall, and `standOn` raises his ground to its top so he ends up standing there. At the old
+0.5 that only meant "his feet are already clear of it", so a knee-high boulder was a wall.
+At 1.5 he walks up onto rocks, stumps, mounds and driftwood, and boulders taller than that
+still stop him. Measured by charging rocks of a known height: 0.8 tall — walks up, rises
+0.76; 1.2 — rises 1.14; 2.4 — stopped at 2.8 from centre, which is its radius plus his.
+Trunks, cairns and the great tree register `Infinity` and were never in the conversation.
+
+Only the player reads `climb`; creatures keep their own steering.
+
 ### Obstacle field
 Solid things register a footprint circle in a coarse spatial hash (`obAdd`/`obRemove`).
 Creatures use it three ways: rejecting waypoints, steering around things ahead
@@ -701,6 +739,7 @@ npm run check:model models/*.glb       # what is in a model, and can the game us
 npm run check:ship                     # fly the ship's sortie with no GPU, report every joint
 node tools/sortie.js index.html pilot  # ...or fly it by hand: board, lift, turn, strafe, land, get out
 npm run check:swirl                    # does the lamp's swirl of motes go where the lamp goes
+npm run check:gait                     # the acceleration ramp, what a hill costs, what he can climb onto
 ```
 
 Each also takes an explicit file and frame count, e.g. `node tools/headless.js index.html 2000`.
@@ -840,6 +879,10 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | Beacon / tower thresholds | `BEACON_LVL`, `TOWER_MAX` |
 | Mountain range placement | `RANGE` (line segment + width + height) |
 | Wave size and grouping | `waterUni.uW` / `uG` |
+| How fast he gets going | `MOVE.acc` and `MOVE.accFall` (the ramp), `MOVE.max` (the top) |
+| What a hill costs | `MOVE.hill`, `MOVE.hillMin` |
+| What he can climb onto | `OB_PLAYER.climb` |
+| Waypoint trail spacing | `WAY.gap` (`WAY.N` is only the cap) |
 | Quality tiers | `Q` |
 
 ---

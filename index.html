@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b36';
+const BUILD = 'b37';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -4265,16 +4265,27 @@ addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive
 // every obstacle knows the world Y of its top, and once your feet are within `step` of it
 // the collider stops existing — so you walk over driftwood, clear a boulder or the campfire
 // with a jump, and go round a trunk, a cairn or a cliff whatever you do.
-const OB_PLAYER = { minOb: .9, step: .5 };   // ignore pebbles, and anything your feet are already over
+// `climb` is the whole rock story: anything whose top is within this of your feet is
+// something you go OVER, not around -- you walk up onto it and stand there. At .5 it only
+// meant "your feet are already clear of it", so a knee-high boulder was a wall.
+const OB_PLAYER = { minOb: .9, climb: 1.5 };
 // Where the waterline should cut him, as a fraction of the height the posed body actually
 // occupies: treading he is upright and cut about halfway, swimming he is flat and mostly
 // under with his back out. Read off the clips at load rather than guessed, because the
 // number that matters is a property of the animation, not of the character.
 const SWIM = { tread: .52, fwd: .64 };
 const MOVE = {
-  max: 17, acc: 62, drag: 46,          // ground
-  airAcc: 11, airDrag: 1.2,            // in the air
+  // He leans into it rather than launching. Acceleration falls away as he approaches his
+  // own top speed, so the first units come quickly -- a tap has to move him -- and the last
+  // take their time: a step at 0.12s, walking pace at 0.28, a jog at 0.6, a run at 1.25 and
+  // very nearly flat out at 2.2. At a flat 62 he was doing all of that in a quarter of a
+  // second, which is why he seemed to want to run and nothing smaller than a run was
+  // possible. A half-held stick still settles on its own speed inside half a second.
+  max: 17, acc: 24, accFall: .93, drag: 46,      // ground
+  airAcc: 11, airDrag: 1.2,                      // in the air
   swimMax: 9, swimAcc: 20, swimDrag: 13,
+  // Uphill is work: the fraction of top speed left, against the gradient he is walking into.
+  hill: .58, hillMin: .34, dip: .13, dipMax: 1.12,
 };
 const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1, leadT: 0, landT: 0, airT: 0, vx: 0, vz: 0, pushX: 0, pushZ: 0 };
 // The rig: a real model stands in for the placeholder. RIG.height is the only
@@ -4535,10 +4546,21 @@ function updatePlayer(dt) {
     // Steer velocity toward what the stick asks for, at acc while pushing and drag while
     // letting go. Turning is the same move, so a hard reversal costs the same as a stop.
     const inW = player.swim > .5, onG = player.grounded && !inW;
-    const max = inW ? MOVE.swimMax : MOVE.max;
+    // The gradient along the way he is actually going -- not the slope of the ground under
+    // him, which would slow him just as much running along a contour as straight up the
+    // face. One extra height() when the stick is held, and nothing when it is not.
+    let hillK = 1;
+    if (!inW && player.wmag > .1) {
+      const e = 1.1, x0 = player.pos.x, z0 = player.pos.z;
+      const grade = (height(x0 + player.wx * e, z0 + player.wz * e) - height(x0, z0)) / e;
+      hillK = clamp(1 - Math.max(0, grade) * MOVE.hill + Math.max(0, -grade) * MOVE.dip, MOVE.hillMin, MOVE.dipMax);
+    }
+    const max = (inW ? MOVE.swimMax : MOVE.max) * hillK;
     const want = player.wmag > .1 ? max * player.wmag : 0;
     const tvx = want ? player.wx * want : 0, tvz = want ? player.wz * want : 0;
-    const rate = want ? (inW ? MOVE.swimAcc : onG ? MOVE.acc : MOVE.airAcc)
+    const sp0 = Math.hypot(player.vx, player.vz);
+    const ramp = onG && !inW ? 1 - MOVE.accFall * smooth(0, 1, sp0 / MOVE.max) : 1;
+    const rate = want ? (inW ? MOVE.swimAcc : onG ? MOVE.acc * ramp : MOVE.airAcc)
                       : (inW ? MOVE.swimDrag : onG ? MOVE.drag : MOVE.airDrag);
     const ax = tvx - player.vx, az = tvz - player.vz, al = Math.hypot(ax, az);
     if (al > 1e-4) { const step = Math.min(al, rate * dt); player.vx += ax / al * step; player.vz += az / al * step; }
@@ -4577,7 +4599,8 @@ function updatePlayer(dt) {
     // the actual swell and the swim picks up from there rather than hovering above a trough.
     // deckY, not height: whatever the ship can land on he can stand on, which right now
     // means the floating isle. Step out of a ship parked on it and the ground is there.
-    const deck = deckY(player.pos.x, player.pos.z, player.pos.y);
+    const deck = Math.max(deckY(player.pos.x, player.pos.z, player.pos.y),
+                          standOn(player.pos.x, player.pos.z, player.pos.y));
     const target = lerp(Math.max(deck, wy), Math.max(h, wy - depth), player.swim);
     player.gy = lerp(player.gy, target, Math.min(1, dt * (player.swim > .5 ? 6 : 14)));   // ground snaps; water bobs
     const canLead = RIG.jumpLead > 0 && player.rigH && player.rigH.acts.jumpStart;
@@ -4666,7 +4689,7 @@ function resolvePlayer(x, z, feetY) {
   for (let pass = 0; pass < 3; pass++) {
     obNear(x, z, player.rad + 6, o => {
       if (o.r < OB_PLAYER.minOb) return;
-      if (feetY + OB_PLAYER.step > o.top) return;   // over the top of it: nothing to hit
+      if (feetY + OB_PLAYER.climb > o.top) return;   // low enough to walk up onto: nothing to hit
       const r = o.r + player.rad;
       let dx = x - o.x, dz = z - o.z, d = Math.hypot(dx, dz);
       if (d < r) {
@@ -4677,6 +4700,20 @@ function resolvePlayer(x, z, feetY) {
     });
   }
   return { x, z, nx, nz };
+}
+
+// The highest thing under his feet that he could have got onto: a footprint he is inside
+// whose top is no more than a step above him. Anything that registered a real top is fair
+// game -- rocks, stumps, mounds, driftwood -- while trunks, cairns and the great tree
+// registered Infinity and stay things you walk round.
+function standOn(x, z, feetY) {
+  let top = -1e9;
+  obNear(x, z, player.rad + 3, o => {
+    if (!isFinite(o.top) || o.top <= top || o.top > feetY + OB_PLAYER.climb) return;
+    const r = obRad(o) + player.rad * .5;        // his feet, not his shoulders
+    if (Math.hypot(x - o.x, z - o.z) < r) top = o.top;
+  });
+  return top;
 }
 
 function updateFairy(dt) {
@@ -4794,7 +4831,10 @@ const statsEl = document.getElementById('stats'), eraEl = document.getElementByI
 // A mark you drop on the map and then walk to. It has to be findable from the ground, so it
 // is a beam you can see over a ridge, a bobbing pulse at its foot, a ring on the grass, and
 // a line of motes running from you to it — the beam says where, the motes say which way.
-const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 44 };
+// N is the cap; `gap` is what actually decides how many you see. Spreading a fixed 44 dots
+// over whatever the distance happens to be made a dashed line at arm's length and a solid
+// one across the island. A fixed spacing reads as a trail either way.
+const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 44, gap: 4.6 };
 function buildWaypoint() {
   const g = new THREE.Group(); g.visible = false; scene.add(g); WAY.g = g;
   const uni = { uT: { value: 0 }, uC: { value: col('#7fd8ff') } }; WAY.uni = uni;
@@ -4842,11 +4882,14 @@ function updateWaypoint(dt) {
   WAY.ring.material.opacity = .55 * (1 - pulse * .7);
   WAY.glow.scale.setScalar(5 + pulse * 3 + world.night * 4);
   // the motes run from him to the mark, so the line reads as a direction and not a fence
-  const a = WAY.trail.geometry.attributes.position, n = WAY.N;
+  const a = WAY.trail.geometry.attributes.position;
   const dx = WAY.at.x - p.x, dz = WAY.at.z - p.z, d = Math.hypot(dx, dz);
   const near = Math.min(1, d / 8);
+  const span = Math.max(0, d - 4.5);
+  const n = clamp(Math.round(span / WAY.gap), 2, WAY.N);
+  WAY.trail.geometry.setDrawRange(0, n);       // the rest of the buffer is simply not drawn
   for (let i = 0; i < n; i++) {
-    const f = ((i / n) + t * .22) % 1, k = 2.5 + f * Math.max(0, d - 4.5);
+    const f = ((i / n) + t * .22) % 1, k = 2.5 + f * span;
     const x = p.x + dx / (d || 1) * k, z = p.z + dz / (d || 1) * k;
     planetPos(x, groundY(x, z) + .7 + Math.sin(f * 6.283 + t) * .18, z, _wgV);
     a.array[i * 3] = _wgV.x; a.array[i * 3 + 1] = _wgV.y; a.array[i * 3 + 2] = _wgV.z;
@@ -5083,6 +5126,7 @@ function toggleMap(on) {
 }
 
 isle.water = water; isle.foam = foam; isle.abyss = abyss; isle.terrain = terrain; isle.motesGeo = motesGeo;
+isle.MOVE = MOVE; isle.isClear = obClear; isle.standOn = standOn;
 isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap; isle.way = WAY; isle.setWaypoint = setWaypoint; isle.clampView = clampView;   // MAP is a const above, so this cannot move any earlier
 
 // What a tap on the right stick would do right now, if anything. Whatever is within reach
