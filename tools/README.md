@@ -648,6 +648,33 @@ Trunks, cairns and the great tree register `Infinity` and were never in the conv
 
 Only the player reads `climb`; creatures keep their own steering.
 
+### Swapping a model onto a species
+
+One table entry:
+
+```js
+const CREATURE_RIGS = {
+  Burrower: { url: 'models/creature_green.glb', height: 1.6,
+              idle: 'idle', walk: 'walk_fwd',
+              blinkL: 'eye_L_close', blinkR: 'eye_R_close', yaw: 0 },
+};
+```
+
+The class keeps its whole brain; this only changes what you see. Move a model to another
+species by moving the key. Clips are looked up by *role* rather than by exact name, so a file
+that lacks one simply does not get it — no run means the walk carries on at speed.
+
+**Run `npm run check:model models/whatever.glb` first.** A GLB needs three things to stand in
+for a body: a skin, `JOINTS_0`/`WEIGHTS_0` on the mesh, and at least one clip that is not the
+exporter's default. C4D writes `CINEMA_4D_Main` and Mixamo writes `mixamo.com` for "here is
+this object's transform" — three channels, one keyframe — and that is not a cycle however
+many channels it has.
+
+`attachRig` refuses a model that fails those checks: it removes the instance, warns once per
+file, and never calls back, so the caller keeps the primitive body it already built. A
+species that still walks on placeholder legs is a better failure than one that stops walking
+and slides along as a rigid sculpt, which is what happened before the guard existed.
+
 ### The ship
 
 Left stick is what the hull does — thrust and slide. Right stick is where it points and how
