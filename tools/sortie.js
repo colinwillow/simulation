@@ -24,7 +24,7 @@ global.__t=0; global.performance={now:()=>global.__t};
 const fs=require('fs');
 const file=process.argv[2]||'index.html';
 const html=fs.readFileSync(file,'utf8');
-const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('Lantern Isle'));
+const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('const BUILD'));
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');

@@ -1,7 +1,7 @@
 {
-  "name": "Lantern Isle",
-  "short_name": "Lantern Isle",
-  "description": "An island that keeps its own time.",
+  "name": "Plutopia",
+  "short_name": "Plutopia",
+  "description": "A small planet that keeps its own time.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

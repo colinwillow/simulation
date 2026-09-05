@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Lantern Isle</title>
+<title>Plutopia</title>
 <!-- Add to Home Screen. iOS reads the apple-* tags and the touch icon; everything else
      reads the manifest. The icon is cropped out of its bezel: iOS masks its own corners. -->
 <link rel="manifest" href="manifest.webmanifest">
@@ -11,7 +11,7 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Lantern Isle">
+<meta name="apple-mobile-web-app-title" content="Plutopia">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#070a13">
 <style>
@@ -109,9 +109,9 @@
 </style>
 </head>
 <body>
-<div id="boot">growing an island…</div>
+<div id="boot">growing a world…</div>
 <div id="scrim"></div><div id="scrimB"></div>
-<div id="hud"><div id="hudHead"><h1>Lantern Isle</h1><div class="era" id="era">The Quiet</div></div>
+<div id="hud"><div id="hudHead"><h1>Plutopia</h1><div class="era" id="era">The Quiet</div></div>
   <div id="hudBody" hidden><div id="stats"></div><div id="perf"></div></div></div>
 <button id="logT" class="tog icon" title="the island's notes">notes</button>
 <div id="log"></div>
@@ -129,7 +129,7 @@
   <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
   <div id="btns" hidden><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
 </div>
-<div id="mapv" hidden><h2>Lantern Isle<span id="mapera"></span></h2>
+<div id="mapv" hidden><h2>Plutopia<span id="mapera"></span></h2>
 <div id="mapwrap"><canvas id="mapc"></canvas><div id="mapzoom"></div></div><button id="mapclose" class="tog icon">close</button>
 <div id="maplg"></div><div id="mapfoot">pinch to zoom &middot; drag to pan &middot; tap to set a waypoint</div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -142,8 +142,8 @@
 <script>
 (() => {
 // ============================================================
-//  Lantern Isle v2
-//  Same simulation; new skin. Every species still has one build()
+//  Plutopia
+//  A small planet with an island on it. Every species has one build()
 //  (placeholder geometry) and one think() (behaviour), so real
 //  assets drop in by replacing build() alone.
 // ============================================================
@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b35';
+const BUILD = 'b36';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 

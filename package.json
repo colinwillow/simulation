@@ -1,7 +1,7 @@
 {
-  "name": "lantern-isle",
+  "name": "plutopia",
   "private": true,
-  "description": "Tooling for the Lantern Isle simulation. The game itself needs none of this.",
+  "description": "Tooling for the Plutopia simulation. The game itself needs none of this.",
   "scripts": {
     "check:shader": "node tools/glslcheck.js index.html",
     "check:terrain": "node tools/terrain.js index.html",

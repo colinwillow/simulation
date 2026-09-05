@@ -1,7 +1,7 @@
 // sample the height field on a grid and report the shape of the land
 const fs=require('fs'), THREE=require('three');   // the slice now carries the planet projection, which builds vectors
 const html=fs.readFileSync(process.argv[2],'utf8');
-const js=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('Lantern Isle v2'));
+const js=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('const BUILD'));
 let body=js.replace(/^<script>/,'').replace(/<\/script>$/,'');
 const start=body.indexOf('const W =');
 const end=body.indexOf('// ---------- renderer ----------');

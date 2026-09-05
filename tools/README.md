@@ -1,4 +1,4 @@
-# Lantern Isle
+# Plutopia
 
 An autonomous ecosystem simulation in a single HTML file. A small planet with an island on
 it, populated by creatures that forage, build, hunt and reproduce without scripting — the
@@ -874,7 +874,7 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 The sphere is the first piece of a larger shape, written down here so the next change knows
 what it is building toward. Nothing below this paragraph exists yet.
 
-**Many small worlds.** Lantern Isle becomes one planet among several, each with its own
+**Many small worlds.** Plutopia becomes one planet among several, each with its own
 properties — a water world, a jungle world, different gravity, different species. The ship
 already flies; it becomes the way between them. Most of what that needs is in place: the
 projection is per-planet (`PLANET.R` is one number), `height()` is a pure function of a chart
