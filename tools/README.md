@@ -1084,13 +1084,28 @@ Read it before and after anything that touches colour or light.
 thick the grass grows, which species `populate()` will plant where, and where a structure is
 allowed to stand.
 
-It is **scored, not partitioned**. Seven biomes each say how much they want a point —
-`coast`, `wetland`, `jungle`, `pasture`, `scrub`, `highland`, `ash` — the loudest wins, and
-how far ahead it is of the runner-up comes back as `edge`. Nothing has a border drawn on a
-map; the fields overlap and the answer changes gradually, which is what stops the island
-reading as tiles. In the heart of a region `edge` is 1 and the biome gets its full say; on a
-boundary it is near 0 and almost nothing is refused, so a species thins out rather than
-stopping at a line.
+It is **anchored, not scored**. It used to be scored — each biome saying how much it wanted a
+point, off height and moisture — and that gave a different world every time with nothing
+anywhere you could learn: the swamp was wherever the noise happened to be wet. `REGIONS` is a
+layout instead, read off a drawn map: grasslands and the town in the middle, snow north-east,
+canyons north-west, jungle and swamp down the west side, crystal and mushroom country east,
+savannah south-east. `biomeAt` asks which anchor owns the ground, and `edge` comes out of how
+far ahead the nearest is of the runner-up, so borders stay soft and a species thins out
+instead of stopping at a line. A slow wobble is added to the distance so a border wanders
+rather than being a Voronoi wall.
+
+Two of them still overrule whatever region they fall in, because a beach is a beach and a
+summit is a summit wherever the layout puts them: `coast` below about two units, `highland`
+above about twenty.
+
+**The layout is fitted to the island, not stamped on it.** Read off the drawing as absolute
+coordinates, six of the eight anchors stood in open water — the land is a much smaller lobe
+than a map fills. So the whole arrangement is shrunk until every anchor is on real ground and
+any that are still wet walk to the nearest ground there is. The map's *relationships* are the
+part that mattered and they survive; its scale never meant anything, and this keeps working
+when the height field changes. `REGION_FIT` is the factor that came out, and `REGION_WOBBLE`
+scales with it — at full scale thirty-four units is a soft edge, on a layout fitted to a third
+of that it is wider than the gap between two anchors and every border becomes confetti.
 
 The one axis the height field does not already provide is `moisture(x, z)`: broad noise
 bands across the island, the lagoon soaking the ground around it, and low ground sitting

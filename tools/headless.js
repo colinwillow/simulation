@@ -20,7 +20,7 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('cons
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__REGIONS=REGIONS;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
 eval(src);
 // The title screen parks the camera out at the planet and flies the ship round it. That is
 // the first thing a player sees and the last thing a harness wants: every tool here measures
@@ -75,10 +75,17 @@ console.log('leviathans',c(w.creatures,C2.Leviathan),'walkers',c(w.creatures,C2.
 // Did the structures get built at all, and where. The steading, the stone ring and the ruin
 // each ask for a lot of clear ground in a particular biome; when they cannot find any they
 // used to build nothing and say nothing about it.
+{ // what is actually standing at each anchor, and how much land it owns
+  const R = global.__REGIONS;
+  console.log('regions: ' + R.map(r => {
+    const h = global.__h(r.x, r.z);
+    return r.name + '@' + (r.x|0) + ',' + (r.z|0) + ' h' + h.toFixed(0) + ' ' + global.__bio(r.x, r.z).name;
+  }).join(' | '));
+}
 console.log('title at',w.titleSpot?(w.titleSpot.x.toFixed(0)+','+w.titleSpot.z.toFixed(0)):'NOWHERE',
   '| nearest site',(w.sites||[]).length?Math.min(...(w.sites||[]).map(o=>Math.hypot(o.x-(w.titleSpot||o).x,o.z-(w.titleSpot||o).z))).toFixed(0):'-');
 console.log('sites',(w.sites||[]).length,(w.sites||[]).map(o=>o.x.toFixed(0)+','+o.z.toFixed(0)).join(' ')||'NONE BUILT',
-  '| biomes here',['coast','wetland','jungle','pasture','scrub','highland','ash'].map(n=>{
+  '| biomes here',['coast','wetland','jungle','pasture','scrub','highland','crystal','fungal','desert'].map(n=>{
     let k=0; for(let i=0;i<3000;i++){ const x=(Math.random()-.5)*2*global.__W, z=(Math.random()-.5)*2*global.__W;
       if(global.__h(x,z)>0.6 && global.__bio(x,z).name===n) k++; }
     return n+' '+k; }).join(' '));

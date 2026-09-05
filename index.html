@@ -252,13 +252,29 @@ function segDT(px, pz, ax, az, bx, bz) {          // distance to a line segment,
   const cx = ax + vx * t, cz = az + vz * t;
   _sd = Math.hypot(px - cx, pz - cz); _st = t;
 }
+// How much of the island is stepped, and how hard. `at`/`gain` pick the districts out of the
+// noise -- lower `at` means more of the island is plateau; `step` is the height of one tread,
+// `sharp` how much of it is spent climbing (small is a cliff), `k` how completely the terrace
+// replaces the rolling ground underneath it.
+// sharp was .05 to begin with -- a true vertical face -- and the terrain mesh cannot draw
+// one. Under the island the polar grid is about two units across, so a vertical riser between
+// three-unit treads renders as a visible staircase with a grey band of "rock" colouring on
+// every step. Real cliffs need geometry, not a height field at this density. .14 is strata:
+// you can read the levels, and the risers are slopes rather than stairs.
+const PLATEAU = { at: .30, gain: 5, step: 3.4, sharp: .14, k: .9 };
 const MESA = { x: -104 * WS, z: 94 * WS, r: 42 * WS, h: 18 };
 const LAGOON = { x: -30 * WS, z: 52 * WS, r: 42 * WS, d: 13 };
 const CHASM = { x: -62 * WS, z: -58 * WS, r: 15 * WS, d: 25 };
 const STACKS = [{ x: 122, z: -54, r: 8, h: 25 }, { x: 138, z: -38, r: 5, h: 16 }, { x: -66, z: -132, r: 7, h: 22 }, { x: 100, z: 100, r: 6.5, h: 18 }, { x: -146, z: 6, r: 5.5, h: 14 }]
   .map(o => ({ x: o.x * WS, z: o.z * WS, r: o.r * WS, h: o.h }));
-// soft terracing: flat treads, rounded risers — strata instead of a smooth ramp
-function terraceF(h, step) { const f = h / step, i = Math.floor(f), fr = f - i; return (i + smooth(.3, .7, fr)) * step; }
+// Terracing: flat treads with risers between them. `sharp` is how much of a tread is spent
+// climbing -- .2 is a rounded strata effect, .05 is a cliff face you cannot walk up. The
+// island used only the rounded kind, weakly, on mid slopes, which is why it read as rolling
+// noise everywhere instead of as a place with levels in it.
+function terraceF(h, step, sharp = .2) {
+  const f = h / step, i = Math.floor(f), fr = f - i;
+  return (i + smooth(.5 - sharp, .5 + sharp, fr)) * step;
+}
 function height(x, z) {
   const nx = x / W, nz = z / W;
   let mask = 0;
@@ -301,6 +317,19 @@ function height(x, z) {
   // strata on the mid slopes
   const tw = smooth(7, 13, h) * (1 - smooth(26, 34, h)) * .45;
   if (tw > 0) h = lerp(h, terraceF(h, 2.8), tw);
+  // Plateau country. Broad districts of the island -- picked by noise slow enough that one
+  // covers a good walk -- step up in flat treads with near-vertical faces between them,
+  // while the rest stays rolling. This is the thing that makes a map read as designed rather
+  // than generated: somewhere to stand, an edge to stand on, and a way round.
+  //
+  // It fades out at the shore (so there is always a beach to land on) and below the snowline
+  // (so the range keeps its own shape), and the treads are wide enough -- PLATEAU.step -- that
+  // each one is ground you can live on rather than a stair.
+  {
+    const pk = clamp((fbm(nx * 1.55 + 61.3, nz * 1.55 + 29.7, 3) - PLATEAU.at) * PLATEAU.gain, 0, 1)
+      * smooth(1.2, 4.5, h) * (1 - smooth(26, 36, h));
+    if (pk > 0) h = lerp(h, terraceF(h, PLATEAU.step, PLATEAU.sharp), pk * PLATEAU.k);
+  }
   // fine detail — new in v2, this is what kills the blocky read
   h += (fbm(nx * 26 + 2.2, nz * 26 + 7.4, 4) - .5) * 1.5 * clamp(mask + .3, 0, 1);
   h += (fbm(nx * 60, nz * 60, 3) - .5) * .55;
@@ -338,32 +367,77 @@ function moisture(x, z, h) {
   const lag = smooth(LAGOON.r * 2.1, LAGOON.r * .5, Math.hypot(x - LAGOON.x, z - LAGOON.z));
   return clamp((n - .18) * 1.5 + lag * .45 + smooth(9, 1.5, h) * .18, 0, 1);
 }
-const BIOMES = ['coast', 'wetland', 'jungle', 'pasture', 'scrub', 'highland', 'ash'];
+// The island has *places* in it, at known positions, rather than conditions that happen to
+// coincide. Scoring biomes off height and moisture alone gave a different world every time
+// and put nothing anywhere you could learn: the swamp was wherever the noise was wet. These
+// are anchors on the chart, laid out from the outline map -- grasslands and the town in the
+// middle, snow to the north-east, canyons north-west, jungle and swamp down the west side,
+// crystal and mushroom country east, savannah south-east.
+//
+// `pull` is how far the region reaches, in units. `edge` still comes out of how far ahead the
+// nearest anchor is of the runner-up, so borders are soft, and a slow wobble is added to the
+// distance so they wander instead of being Voronoi cells with straight walls.
+const RS = W / 170;
+const REGIONS = [
+  { name: 'pasture',  x:   -34, z:  -26, pull: 1.15 },   // Central Grasslands, and the town
+  { name: 'highland', x:    30, z: -104, pull: 1.00 },   // Snowy Mountains
+  { name: 'desert',   x:  -112, z:  -92, pull:  .92 },   // Desert & Canyons
+  { name: 'jungle',   x:  -116, z:  -18, pull:  .95 },   // Jungle Forest
+  { name: 'wetland',  x:  -104, z:   72, pull:  .95 },   // Swamp & Wetlands
+  { name: 'crystal',  x:    74, z:  -22, pull:  .88 },   // Crystal Fields
+  { name: 'fungal',   x:   134, z:  -26, pull:  .85 },   // Mushroom Biome
+  { name: 'scrub',    x:   104, z:   44, pull: 1.00 },   // Savannah & Dry Grassland
+].map(r => ({ ...r, x: r.x * RS, z: r.z * RS, pull: r.pull * RS }));
+// Declared above the fitting pass below, which assigns it: a `let` referenced before its own
+// declaration is a dead zone that takes the whole rest of the file with it, and `node --check`
+// cannot see it. That has now cost this file four debugging sessions.
+let REGION_FIT = 1;
+// The layout is the map's *arrangement*; the island is whatever the height field made. Read
+// off the drawing as absolute coordinates, six of the eight anchors stood in open water --
+// so fit the arrangement to the land instead of guessing a scale for it. Shrink the whole
+// layout until every anchor is on real ground, then walk any that are still wet to the
+// nearest ground there is. The relationships survive, which is the only part that mattered,
+// and they go on surviving a change to the terrain.
+(() => {
+  const dry = (x, z) => height(x, z) > 3.5;
+  let s = 1;
+  for (; s > .18; s -= .03) if (REGIONS.every(r => dry(r.x * s, r.z * s))) break;
+  for (const r of REGIONS) { r.x *= s; r.z *= s; r.pull *= Math.max(s, .55); }
+  REGION_FIT = s;
+  for (const r of REGIONS) {
+    if (dry(r.x, r.z)) continue;
+    for (let rad = 8; rad <= 150 && !dry(r.x, r.z); rad += 8)
+      for (let i = 0; i < 24; i++) {
+        const a = i / 24 * Math.PI * 2, x = r.x + Math.cos(a) * rad, z = r.z + Math.sin(a) * rad;
+        if (dry(x, z)) { r.x = x; r.z = z; break; }
+      }
+  }
+})();
+// How far a border wanders off the straight line. It has to shrink with the layout: at full
+// scale thirty-four units is a soft edge, and on a layout fitted down to a third of that it
+// is larger than the gap between two anchors, which turns every border into confetti.
+const REGION_WOBBLE = 34 * Math.max(REGION_FIT, .35);
 const _bio = { name: 'pasture', k: 0, edge: 0, wet: 0, s: {} };
 function biomeAt(x, z, h, sl, out) {
   out = out || _bio;
   if (h === undefined) h = height(x, z);
   if (sl === undefined) sl = slope(x, z);
-  const wet = out.wet = moisture(x, z, h), S = out.s;
-  const flat = 1 - clamp((sl - .2) * 2.4, 0, 1);
-  S.coast    = smooth(SEA + 4.4, SEA + .3, h) * 1.2;
-  S.ash      = smooth(CHASM.r * 3.6, CHASM.r * 1.2, Math.hypot(x - CHASM.x, z - CHASM.z)) * 1.45;
-  S.highland = smooth(12, 21, h) * 1.15 + clamp((sl - .75) * .8, 0, .5);
-  // A swamp is low AND genuinely wet. Reading `wet` straight and letting it run to twelve
-  // units up made it 38% of the island's land and pasture 6%, which is not an island with a
-  // marsh on it -- it is a marsh with an island in it.
-  S.wetland  = smooth(.5, .82, wet) * smooth(7.5, 1.5, h) * flat * 1.3;
-  S.jungle   = smooth(.4, .74, wet) * smooth(2.4, 7, h) * (1 - smooth(14, 21, h)) * 1.25;
-  // and the meadow takes a band of moisture rather than one value of it
-  S.pasture  = (1 - Math.abs(wet - .42) * 1.15) * flat * smooth(2.2, 5.5, h) * (1 - smooth(11, 17, h)) * 1.4;
-  S.scrub    = smooth(.5, .12, wet) * smooth(2.8, 7, h) * (1 - smooth(15, 23, h)) * 1.15;
-  let bn = 'scrub', bk = -1e9, sec = -1e9;
-  for (let i = 0; i < BIOMES.length; i++) {
-    const v = S[BIOMES[i]];
-    if (v > bk) { sec = bk; bk = v; bn = BIOMES[i]; } else if (v > sec) sec = v;
+  out.wet = moisture(x, z, h);
+  // which anchor owns this ground, and by how much
+  const wob = (fbm(x * .0085 + 51.7, z * .0085 + 13.1, 3) - .5) * REGION_WOBBLE;
+  let bn = 'pasture', d0 = 1e9, d1 = 1e9;
+  for (let i = 0; i < REGIONS.length; i++) {
+    const r = REGIONS[i];
+    const d = (Math.hypot(x - r.x, z - r.z) + wob) / r.pull;
+    if (d < d0) { d1 = d0; d0 = d; bn = r.name; } else if (d < d1) d1 = d;
   }
-  out.name = bn; out.k = clamp(bk, 0, 1);
-  out.edge = clamp((bk - sec) * 3.2, 0, 1);        // 0 on a boundary, 1 in the heart of one
+  // A beach is a beach and a summit is a summit wherever they fall: those two are still
+  // decided by the ground, and they overrule whichever region they are standing in.
+  let k = clamp(1 - d0 / (W * 1.15), .25, 1), edge = clamp((d1 - d0) / 46, 0, 1);
+  const cst = smooth(SEA + 4.4, SEA + .3, h), alp = smooth(15, 24, h);
+  if (alp > .5) { bn = 'highland'; k = alp; edge = clamp((alp - .5) * 2.4, 0, 1); }
+  if (cst > .5) { bn = 'coast'; k = cst; edge = clamp((cst - .5) * 2.4, 0, 1); }
+  out.name = bn; out.k = k; out.edge = edge;
   return out;
 }
 // A site in a named biome, for anything that has to be built somewhere specific. Falls
@@ -383,10 +457,10 @@ function randomFor(w, minH = 1.4, maxH = 12, maxSl = .8, tries = 120, clear = 2.
   return null;
 }
 const FLORA = {
-  tree:     { jungle: 1, wetland: .55, scrub: .42, pasture: .26, coast: .16, highland: .12, ash: .1 },
-  moss:     { wetland: 1, jungle: .9, pasture: .42, coast: .34, scrub: .2, highland: .12, ash: .07 },
-  bloom:    { pasture: 1, wetland: .72, jungle: .5, scrub: .3, coast: .24, highland: .1, ash: .05 },
-  mushroom: { jungle: 1, wetland: .95, ash: .5, pasture: .14, scrub: .1, coast: .1, highland: .05 },
+  tree:     { jungle: 1, wetland: .55, scrub: .42, pasture: .26, coast: .16, highland: .12, crystal: .2, fungal: .35, desert: .05 },
+  moss:     { wetland: 1, jungle: .9, pasture: .42, coast: .34, scrub: .2, highland: .12, crystal: .16, fungal: .3, desert: .04 },
+  bloom:    { pasture: 1, wetland: .72, jungle: .5, scrub: .3, coast: .24, highland: .1, crystal: .8, fungal: .5, desert: .06 },
+  mushroom: { fungal: 1, jungle: .9, wetland: .85, crystal: .6, pasture: .14, scrub: .1, coast: .1, highland: .05, desert: .03 },
 };
 function randomBiome(name, minH = 1.4, maxH = 14, maxSl = .6, tries = 900, clear = 3, minEdge = .12) {
   let best = null, bestK = -1;
@@ -1162,7 +1236,12 @@ const BIOME_LOOK = {
   // bare cold rock and snow
   highland: { ground: col('#8e97a2'), k: .48, rock: col('#7a828c'), tint: col('#dae6f2'), glow: .8 },
   // the crystal flats by the chasm: violet ground, magenta flora, everything glowing
-  ash:      { ground: col('#54406e'), k: .70, rock: col('#584a72'), tint: col('#e0aef6'), glow: 2.6 },
+  // Crystal Fields: violet ground, magenta flora, everything lit from inside
+  crystal:  { ground: col('#54406e'), k: .70, rock: col('#6a5a8e'), tint: col('#e0aef6'), glow: 2.6 },
+  // Mushroom country: deeper, bluer, and the brightest glow on the island
+  fungal:   { ground: col('#3d3a5e'), k: .72, rock: col('#4e4a70'), tint: col('#c2a2f0'), glow: 3.0 },
+  // Desert & Canyons: bare red rock, almost nothing growing
+  desert:   { ground: col('#b06a44'), k: .66, rock: col('#8e5238'), tint: col('#f0c49a'), glow: .35 },
 };
 // A polar grid instead of a square one: rings running out from the chart origin and spokes
 // running round it, which is the shape the projection wants. Rings are packed tight over the
@@ -1493,7 +1572,8 @@ const grass = (() => {
   // single biggest reason the island read as one place: the pasture should be deep in it and
   // the ash flat should be nearly bare, and that difference is visible from a long way off.
   const GRASS_BIOME = { pasture: [1, 1.25], wetland: [.95, 1.45], jungle: [.7, 1.1],
-    scrub: [.34, .72], coast: [.5, .85], highland: [.16, .5], ash: [.08, .45] };
+    scrub: [.34, .72], coast: [.5, .85], highland: [.16, .5],
+    crystal: [.22, .6], fungal: [.3, .7], desert: [.06, .4] };
   while (k < n && guard++ < n * 30) {
     const x = rnd(-W * .96, W * .96), z = rnd(-W * .96, W * .96), h = height(x, z);
     const sl0 = slope(x, z);
