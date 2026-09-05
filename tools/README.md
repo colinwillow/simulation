@@ -1008,6 +1008,60 @@ through it rather than finding a wall of backfaces.
 `node tools/shot.js --tree` stands the wanderer just past the biggest modelled tree with the
 camera on the far side of it, which is the shot that shows whether any of this is working.
 
+### Art direction
+
+The island read as a pile of assets for a long time, and `shot.js --palette` says exactly
+why. Before any of this:
+
+```
+mean saturation 0.30, mean lightness 0.50, near-grey 23%
+hues:  yellow 26%  chartreuse 21%  orange 10%  cyan 10%  green 4%  red 3%
+lightness deciles:  0  3  9  18  20  24  12  6  5  1
+```
+
+Two separate faults. **No value structure** — nothing at all in the darkest tenth, one percent
+in the brightest, 62% of the image inside three middle values, so no depth and no silhouettes.
+And **no key colour** — six hues all present in quantity, none subordinate to any other.
+
+The fix for the second one is *not* using fewer colours everywhere. It is what a good game map
+does: **each region commits to two or three of its own and is different from its neighbour**,
+so any single frame is coherent even though the world is not monochrome. That is what
+`BIOME_LOOK` is — a full palette per region rather than a stain:
+
+| field | what it colours |
+|---|---|
+| `ground` / `k` | the terrain there, and how hard |
+| `rock` | cliff faces and boulders, keyed off slope |
+| `tint` | what a *plant model* standing there is pulled toward |
+| `glow` | how much of that region's flora is lit from inside |
+
+`tint` is the one that does the heavy lifting. Six models out of a generator each arrive with
+their own idea of what colour a plant is; `worldTint` splits every texel two ways off the map
+itself — the warm, bright parts are what the thing glows with and keep all their colour, and
+everything else is its body, desaturated toward `TINT.keep` and multiplied by the region's
+tint. So the same 113 kB moss tuft reads deep green in the swamp, ochre on the savanna and
+magenta on the crystal flats. `tintFor` clones one material per (model, region) — at most
+seven regions times a handful of models, and they were separate draw calls anyway.
+
+**`tint` must be a shade, not a colour.** It multiplies the texel, so picking it at the same
+value as the ground colour — which the first pass did — multiplies every canopy down to
+near-black and turns an island of six colours into an island of one. Keep them up around 0.85
+lightness and let the hue carry the region.
+
+The value structure came from three places: `MODEL.ambientLift` down from .45 (it was lifting
+the blacks on every model, so nothing could ever be in shadow), less hemisphere and fill in the
+light rig, and a real contrast curve with a soft shoulder in the composite grade.
+
+After:
+
+```
+mean saturation 0.27, mean lightness 0.47, near-grey 29%
+hues:  cyan 17%  orange 15%  green 13%  yellow 9%  chartreuse 8%  spring 7%
+lightness deciles:  5  6  12  17  15  15  13  10  7  0
+```
+
+Read it before and after anything that touches colour or light.
+
 ### Biomes
 
 `biomeAt(x, z)` is the field everything downstream reads: the terrain's vertex colours, how
@@ -1482,7 +1536,9 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | Flame sizes | `SHIP.jet` / `SHIP.side` / `SHIP.lift` / `SHIP.head` / `SHIP.bulb` |
 | Quality tiers | `Q` |
 | Texture ceiling at load | `TEX_CAP` (2048; a ceiling, not a target) |
-| How much colour a biome puts on the ground | `BIOME_GROUND[name].k` |
+| A region's whole palette | `BIOME_LOOK[name]` — `ground`, `rock`, `tint`, `glow` |
+| How much a plant keeps of its own colour | `TINT.keep` |
+| Where the glow key sits | `TINT.lo` / `hi` / `k` / `lum` |
 | How thick the grass is in a biome | `GRASS_BIOME[name]` = `[density, height]` |
 | Where a species is willing to grow | `FLORA[species][biome]` |
 | How wet the island is overall | the constants in `moisture()` |

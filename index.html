@@ -552,20 +552,30 @@ function envUse(root, k = 1) {
 })();
 
 // ---------- palette ----------
+// P is the *neutral* base only. It is deliberately low in saturation now, because almost
+// nothing on the island should be coloured by it any more: colour is a property of the region
+// you are standing in, and BIOME_LOOK below is where it lives.
+//
+// A frame read back before any of this said: nothing at all in the darkest lightness decile,
+// one percent in the brightest, and six hues all present in quantity with none of them
+// dominant. The second half of that is not fixed by using fewer colours everywhere -- it is
+// fixed by each region committing to two or three of its own and being different from its
+// neighbour, so that whatever you are looking at is coherent even though the map is not
+// monochrome. The first half is fixed by letting things be dark: see MODEL.ambientLift.
 const P = {
-  sand: col('#d8c191'), sandWet: col('#a68a5e'), mud: col('#8a6f4b'),
-  grass: col('#77a75c'), grass2: col('#3f7a46'), grassDry: col('#a8ad63'),
-  rock: col('#7a736c'), rock2: col('#585049'), snow: col('#eef1f6'),
-  bark: col('#63432e'), bark2: col('#3f2a1d'),
-  canopy: col('#2e6f5e'), canopy2: col('#478a58'), canopy3: col('#1f5a52'),
-  lantern: col('#ffb85c'), moss: col('#8fc46a'), moss2: col('#6ea855'),
+  sand: col('#cbb693'), sandWet: col('#8d7f66'), mud: col('#6b5a45'),
+  grass: col('#6d9a63'), grass2: col('#4a7a55'), grassDry: col('#9a9c68'),
+  rock: col('#7c7a78'), rock2: col('#565452'), snow: col('#eef3f8'),
+  bark: col('#5b4636'), bark2: col('#38291f'),
+  canopy: col('#3a7a5e'), canopy2: col('#4f9163'), canopy3: col('#2b6155'),
+  lantern: col('#ffb85c'), moss: col('#7fb478'), moss2: col('#639a6b'),
   bloomStem: col('#3e7a4a'), bloom: col('#ff5aa8'), bloomB: col('#c85ce8'),
-  stone: col('#837f7a'), wood: col('#a5763f'), reed: col('#84a35a'),
+  stone: col('#837f7a'), wood: col('#9a7448'), reed: col('#7c9a63'),
   grazer: col('#93a173'), grazer2: col('#5d6b48'),
   weaver: col('#e0874a'), weaver2: col('#f7dcaa'),
   burrower: col('#63507a'), burrower2: col('#b58fcf'),
   skimmer: col('#3fd1c0'), drifter: col('#c8b6ff'),
-  hull: col('#5b3f2e'), sail: col('#ece0c6'), eye: col('#0d0d10')
+  hull: col('#5b3f2e'), sail: col('#cdc3a8'), eye: col('#0d0d10')
 };
 const std = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: .82, metalness: 0 }, o));
 // ---------- see-through ----------
@@ -1124,14 +1134,35 @@ const FOG_HIGH = new THREE.Color(0x1b2b46);
 //
 // What each biome does to the ground under it: `col` is the stain laid over whatever the
 // height field already chose, and `k` is how hard.
-const BIOME_GROUND = {
-  coast:    { col: col('#cdb488'), k: .22 },
-  wetland:  { col: col('#4a7148'), k: .52 },
-  jungle:   { col: col('#2c6a4c'), k: .54 },
-  pasture:  { col: col('#8fbb62'), k: .30 },
-  scrub:    { col: col('#a99a5c'), k: .44 },
-  highland: { col: col('#7d7770'), k: .22 },
-  ash:      { col: col('#57463d'), k: .62 },
+// A region is a colour, not a label. Each of these commits to a hue and holds it across the
+// ground, the rock, the plants standing in it and the haze over it -- which is the whole
+// mechanism behind a map that reads as designed rather than scattered. Look at any frame and
+// you should see two or three hues that belong together; walk for a minute and you should be
+// somewhere that looks like a different place.
+//
+//   ground  what the terrain is stained, and how hard
+//   rock    what the cliffs and boulders go to there
+//   tint    what a plant model standing in this region is pulled toward (see worldTint)
+//   glow    how much of that region's flora is lit from inside
+// `tint` multiplies the plant's own texel, so it has to be a *shade* -- high in value, with
+// the hue doing all the work. Picking it at the same value as the ground colour, which is
+// what the first pass did, multiplied every canopy down to near-black and turned an island of
+// six colours into an island of one. Keep these bright; let the hue carry the region.
+const BIOME_LOOK = {
+  // pale coral sand and turquoise shallows
+  coast:    { ground: col('#d6c49a'), k: .40, rock: col('#a09580'), tint: col('#f0e6c8'), glow: .6 },
+  // deep still green, the darkest ground on the island
+  wetland:  { ground: col('#3a6b54'), k: .60, rock: col('#4a5a52'), tint: col('#a6dcb4'), glow: 1.2 },
+  // heavy canopy green, and the one place lit from underneath
+  jungle:   { ground: col('#33734f'), k: .64, rock: col('#4e6152'), tint: col('#96e0a6'), glow: 1.7 },
+  // open meadow: the bright, empty, restful one you cross between the others
+  pasture:  { ground: col('#8cba63'), k: .50, rock: col('#8c8a80'), tint: col('#dcefac'), glow: .6 },
+  // dry ochre savanna
+  scrub:    { ground: col('#c0a555'), k: .58, rock: col('#a58d68'), tint: col('#f2dc9e'), glow: .55 },
+  // bare cold rock and snow
+  highland: { ground: col('#8e97a2'), k: .48, rock: col('#7a828c'), tint: col('#dae6f2'), glow: .8 },
+  // the crystal flats by the chasm: violet ground, magenta flora, everything glowing
+  ash:      { ground: col('#54406e'), k: .70, rock: col('#584a72'), tint: col('#e0aef6'), glow: 2.6 },
 };
 // A polar grid instead of a square one: rings running out from the chart origin and spokes
 // running round it, which is the shape the projection wants. Rings are packed tight over the
@@ -1192,9 +1223,11 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
     // and then the region it is in gets a say. Only a stain -- the height field still
     // decides sand, rock and snow -- but enough of one that walking from the pasture into
     // the jungle is a thing you can see from across the valley.
-    const bg = BIOME_GROUND[biomeAt(x, z, h, sl).name];
+    const bg = BIOME_LOOK[biomeAt(x, z, h, sl).name];
     const bk = _bio.k * (.4 + .6 * _bio.edge);
-    c.lerp(bg.col, bg.k * bk);
+    // the region's own colour, and its own rock on anything steep enough to be a face
+    c.lerp(bg.rock, clamp((sl - .5) * 1.5, 0, .8) * bk);
+    c.lerp(bg.ground, bg.k * bk);
     // Three scales of mottle, and this is the whole surface now that there is no map: broad
     // patches you read from a hillside, clumps at walking distance, and a fine grain that
     // keeps a flat meadow from going to one solid colour. Hue moves as well as lightness,
@@ -1476,7 +1509,7 @@ const grass = (() => {
     m.compose(pos, q, sc); im.setMatrixAt(k, m);
     gxz[k * 2] = x; gxz[k * 2 + 1] = z;        // the chart point, so a clearing can find it again
     c.copy(P.grass).lerp(P.grass2, rnd()).offsetHSL(rnd(-.03, .03), rnd(-.1, .1), rnd(-.12, .1));
-    c.lerp(BIOME_GROUND[_bio.name].col, .45 * _bio.k);
+    c.lerp(BIOME_LOOK[_bio.name].ground, .6 * _bio.k);
     if (h < 2.2) c.lerp(P.sand, .35);
     im.setColorAt(k, c);
     k++;
@@ -2213,7 +2246,11 @@ class Cairn {
 // body vanishing; emitting a fraction of its own colour gives it a floor. Keep the lift
 // well under the 0.88 bloom threshold or models start to glow at night.
 const MODEL = {
-  forceOpaque: true, ambientLift: .45, rateMin: .6, rateMax: 2.6,
+  // The ambient lift stops a dark surface with no light on it going to pure black, which
+  // reads as the body vanishing. At .45 it also stopped anything ever being *dark*: a frame
+  // read back had nothing at all in its lowest lightness decile, which is most of why the
+  // island looked flat. A tenth is enough to keep a silhouette from disappearing.
+  forceOpaque: true, ambientLift: .2, rateMin: .6, rateMax: 2.6,
   // Where the walk gives way to the run, as a fraction of the thing's own top speed —
   // not of the clip's authored pace, which is a different number entirely and much smaller.
   runAt: .42, runFull: .74,
@@ -2613,23 +2650,71 @@ const PLANT_MODELS = {
 // Kills the generic ambient lift, which would light the whole plant evenly, and replaces it
 // with the keyed one. The material is shared across every instance of the URL, which is what
 // we want: they all glow alike, and it costs one program.
-const PLANT_GLOW = [];
-function plantGlow(mat, cfg) {
+// Six models out of a generator, each with its own idea of what colour a plant is, standing
+// on a ground that had a seventh. This is the thing that makes them one world.
+//
+// It splits every texel two ways off the map itself: the *warm and bright* parts are what the
+// thing glows with, and everything else is its body. The body is desaturated hard and pulled
+// toward the world's own cool surface tint, so a pink Tripo trunk becomes wet blue-grey wood;
+// the glowing parts keep every bit of their colour and are added to emissive, so they are the
+// only saturated thing in frame. Same map, no re-export, and it costs one keyed mix.
+//
+// The alternative was asking for the models to be re-authored, which is a week of somebody's
+// life for a result that would still drift the next time a generator was used.
+const TINT = {
+  keep: .5,                              // how much of the body's own saturation survives
+  col: col('#dfe8ea'),                   // and what the rest of it is pulled toward
+  lo: .05, hi: .30, k: 1.5,              // the glow key: warmth from, warmth to, how hard
+  lum: [.34, .78],                       // and only where the texel is bright as well as warm
+};
+// One material per (model, region). A material is shared by every instance of a URL, so a
+// per-region tint cannot be a uniform on it -- but there are only ever seven regions and a
+// handful of plant models, so the cheap answer is the right one: clone it once per region the
+// first time a plant of that species grows there. The same moss tuft then reads deep green in
+// the swamp, ochre on the savanna and magenta on the crystal flats, off one 113 kB file.
+// Every tinted material's glow uniform, so the whole island can be brightened at dusk from
+// one place. It is a list rather than a shared uniform because each region tints at its own
+// strength -- BIOME_LOOK.glow -- and `k` here is that region's share of it.
+const GLOW_UNI = [];
+const TINTED = new Map();
+function tintFor(mat, biome, cfg) {
+  const key = mat.uuid + '|' + biome;
+  let m = TINTED.get(key);
+  if (!m) {
+    const look = BIOME_LOOK[biome] || BIOME_LOOK.pasture;
+    m = mat.clone(); m.userData = Object.assign({}, mat.userData);
+    worldTint(m, Object.assign({ col: look.tint, k: TINT.k * look.glow }, cfg || {}));
+    TINTED.set(key, m);
+  }
+  return m;
+}
+function worldTint(mat, cfg) {
+  cfg = Object.assign({}, TINT, cfg || {});
   mat.emissive.setScalar(0); mat.emissiveMap = null;
-  const uni = { uLo: { value: cfg.lo }, uHi: { value: cfg.hi }, uK: { value: cfg.k } };
+  const uni = {
+    uLo: { value: cfg.lo }, uHi: { value: cfg.hi }, uK: { value: cfg.k },
+    uKeep: { value: cfg.keep }, uTint: { value: cfg.col },
+    uLumA: { value: cfg.lum[0] }, uLumB: { value: cfg.lum[1] },
+  };
   mat.onBeforeCompile = sh => {
     holePatch(sh);                       // an instance hook shadows the prototype's; chain it
     for (const k in uni) sh.uniforms[k] = uni[k];
-    sh.fragmentShader = 'uniform float uLo, uHi, uK;\n' + sh.fragmentShader.replace(
-      '#include <emissivemap_fragment>',
-      `#include <emissivemap_fragment>
+    sh.fragmentShader = 'uniform float uLo, uHi, uK, uKeep, uLumA, uLumB;\nuniform vec3 uTint;\nfloat _glowK;\n'
+      + sh.fragmentShader
+        .replace('#include <color_fragment>', `#include <color_fragment>
       {
+        float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
         float warm = min(diffuseColor.r - diffuseColor.b, diffuseColor.g - diffuseColor.b);
-        totalEmissiveRadiance += diffuseColor.rgb * smoothstep(uLo, uHi, warm) * uK;
-      }`);
+        _glowK = smoothstep(uLo, uHi, warm) * smoothstep(uLumA, uLumB, lum);
+        // the body: nearly all the way to grey, then stained the world's colour
+        vec3 body = mix(vec3(lum), diffuseColor.rgb, uKeep) * uTint;
+        diffuseColor.rgb = mix(body, diffuseColor.rgb, _glowK);
+      }`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      totalEmissiveRadiance += diffuseColor.rgb * _glowK * uK;`);
   };
   mat.needsUpdate = true;
-  PLANT_GLOW.push({ uni, k: cfg.k });
+  GLOW_UNI.push({ uni, k: cfg.k });
   return uni;
 }
 // Hangs a static model on a plant and darkens the primitives it stood in for. No rig, no
@@ -2696,10 +2781,7 @@ function attachPlantModel(plant, cfg) {
     // Shrinking a footprint is safe -- the hash cells it was filed under still contain it,
     // and the distance test does the rest. Growing one would not be, so this only shrinks.
     if (cfg.foot && plant.ob) plant.ob.r *= Math.min(1, cfg.foot[vi] === undefined ? 1 : cfg.foot[vi]);
-    if (cfg.glow && !e.root.userData.plantGlow) {
-      e.root.userData.plantGlow = true;
-      e.root.traverse(o => { if (o.isMesh && o.material) plantGlow(o.material, cfg.glow); });
-    }
+    const region = biomeAt(plant.pos.x, plant.pos.z).name;
     // the parts the class means to go on using, and everything under them
     const kept = new Set();
     for (const k of cfg.keep || []) { const o = plant[k]; if (o) o.traverse(c => kept.add(c)); }
@@ -2713,7 +2795,10 @@ function attachPlantModel(plant, cfg) {
     const H = num(cfg.height, 1), h = e.box.max.y - e.box.min.y, s = h > 1e-4 ? H / h : 1;
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.rotation.y = rnd(Math.PI * 2);
-    inst.traverse(o => { if (o.isMesh) { o.castShadow = cfg.cast !== false; o.receiveShadow = true; } });
+    inst.traverse(o => { if (o.isMesh) {
+      o.castShadow = cfg.cast !== false; o.receiveShadow = true;
+      o.material = tintFor(o.material, region, cfg.glow);   // it belongs to wherever it grew
+    } });
     plant.g.add(inst); plant.model = inst;
     plant.vibe = vibeRig(inst);          // null unless the export carried the tag's joints
     if (plant.glow && cfg.glowY !== undefined)
@@ -4893,7 +4978,11 @@ function placeProp(url, x, z, yaw, H, blend = .75) {
     const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
     const k = H / Math.max(1e-4, sz.y);
     inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
-    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    const reg = biomeAt(x, z).name;
+    inst.traverse(o => { if (o.isMesh) {
+      o.castShadow = true; o.receiveShadow = true;
+      o.material = tintFor(o.material, reg, { keep: .45, k: .8 });   // built of local stuff
+    } });
     envUse(inst, .45);
     g.add(inst); scene.add(g);
     obAdd(x, z, Math.max(sz.x, sz.z) * k * .40, null, gy + sz.y * k * .92);
@@ -5162,6 +5251,7 @@ function scatterRocks() {
     e.root.traverse(o => { if (o.isMesh) parts.push({ geo: o.geometry, mat: o.material, m: o.matrixWorld.clone() }); });
     if (!parts.length) return;
     const sz = e.box.getSize(new THREE.Vector3()), h0 = Math.max(1e-4, sz.y), w0 = Math.max(sz.x, sz.z);
+    // a boulder is made of the region it is lying in, same as the cliff behind it
     const bin = [], place = new THREE.Matrix4(), q = new THREE.Quaternion(), spin = new THREE.Quaternion();
     const pos = new THREE.Vector3(), scl = new THREE.Vector3(), nrm = new THREE.Vector3();
     for (let i = 0; i < ROCKS.n; i++) {
@@ -5172,7 +5262,8 @@ function scatterRocks() {
       q.setFromUnitVectors(_plY, nrm).multiply(spin.setFromAxisAngle(_plY, rnd(Math.PI * 2)));
       pos.set(p.x, gy - sunk - e.box.min.y * s, p.z);
       place.compose(pos, q, scl.setScalar(s));
-      for (const pt of parts) bin.push({ geo: pt.geo, mat: pt.mat, matrix: place.clone().multiply(pt.m) });
+      const reg = biomeAt(p.x, p.z).name;
+      for (const pt of parts) bin.push({ geo: pt.geo, mat: tintFor(pt.mat, reg, { keep: .3, k: .5 }), matrix: place.clone().multiply(pt.m) });
       obAdd(p.x, p.z, w0 * s * .42, null, gy - sunk + H * .96);
     }
     if (!bin.length) return;
@@ -5301,7 +5392,7 @@ const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quadScene = new THREE.Scene();
 const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null); quad.frustumCulled = false; quadScene.add(quad);
 const VS = `varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }`;
-const brightMat = new THREE.ShaderMaterial({ uniforms: { tD: { value: null }, uTh: { value: .88 }, uKnee: { value: .22 } }, vertexShader: VS, fragmentShader: `
+const brightMat = new THREE.ShaderMaterial({ uniforms: { tD: { value: null }, uTh: { value: .76 }, uKnee: { value: .24 } }, vertexShader: VS, fragmentShader: `
   uniform sampler2D tD; uniform float uTh,uKnee; varying vec2 vUv;
   void main(){ vec3 c=texture2D(tD,vUv).rgb; float l=dot(c,vec3(0.2126,0.7152,0.0722));
     float s=smoothstep(uTh-uKnee,uTh+uKnee,l); gl_FragColor=vec4(c*s,1.0); }` });
@@ -5325,8 +5416,14 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
     float l = dot(c, vec3(0.2126,0.7152,0.0722));
     c = mix(c, c*vec3(0.94,0.98,1.10), (1.0-smoothstep(0.0,0.45,l))*0.3);
     c = mix(c, c*vec3(1.05,1.00,0.93), smoothstep(0.55,1.0,l)*0.4);
-    c = (c - 0.5)*1.09 + 0.5;                             // contrast, to undo the haze
-    c = mix(vec3(l), c, 1.18 + uNight*0.12);              // saturation
+    // Contrast, and where the value range comes from. A frame read back had nothing in its
+    // darkest tenth and one percent in its brightest -- almost all of it inside three middle
+    // values, which is an image with no depth in it. This pulls the ends apart: the toe goes
+    // down, the shoulder rolls off rather than clipping.
+    c = (c - 0.5)*1.15 + 0.5;
+    c = max(c, 0.0);
+    c = c / (1.0 + c*0.18);                               // soft shoulder, so nothing blows
+    c = mix(vec3(l), c, 1.2 + uNight*0.14);               // saturation
     vec2 q = vUv-0.5; float v = 1.0 - dot(q,q)*(0.85+uVig*0.9);
     c *= clamp(v,0.0,1.0);
     c += (h(vUv*vec2(1920.0,1080.0)+uT)-0.5)*0.012;        // dither / faint grain
@@ -5355,8 +5452,15 @@ function renderPost() {
 const SKY = {
   night: { top: new THREE.Color(0x05070f), mid: new THREE.Color(0x0b1330), low: new THREE.Color(0x161f3c), fog: new THREE.Color(0x0b1224), hs: new THREE.Color(0x2a3766), hg: new THREE.Color(0x0a0c14), sun: new THREE.Color(0x93a8ff) }
 };
-SKY.dusk = { top: new THREE.Color(0x2c3d78), mid: new THREE.Color(0xcf6f85), low: new THREE.Color(0xf3ab6a), fog: new THREE.Color(0xd99a76), hs: new THREE.Color(0xf0a070), hg: new THREE.Color(0x3a2a24), sun: new THREE.Color(0xff9c4a) };
-SKY.day = { top: new THREE.Color(0x2668bd), mid: new THREE.Color(0x8dbfe6), low: new THREE.Color(0xbdd6e7), fog: new THREE.Color(0x9dc0dd), hs: new THREE.Color(0xa0c8f0), hg: new THREE.Color(0x4a4634), sun: new THREE.Color(0xfff0cf) };
+// Day is not noon on a beach. It is a deep, cool, high overcast -- the light a forest floor
+// gets -- so that a lantern fruit reads as a light source at three in the afternoon and not
+// only at midnight. Dusk keeps its warmth, because it is the one moment the world is allowed
+// to be warm, and it is the handover between the two lighting states.
+// A deep blue overhead going to a clean pale horizon, rather than the white haze it was.
+// The top has to hold its colour: it is a third of most frames, and a washed one gives the
+// whole image away.
+SKY.dusk = { top: new THREE.Color(0x2a3a72), mid: new THREE.Color(0xc06a80), low: new THREE.Color(0xeda269), fog: new THREE.Color(0xc98a6c), hs: new THREE.Color(0xe09a70), hg: new THREE.Color(0x342630), sun: new THREE.Color(0xff9c4a) };
+SKY.day  = { top: new THREE.Color(0x1e5cb0), mid: new THREE.Color(0x6aa6d4), low: new THREE.Color(0x93bdd6), fog: new THREE.Color(0x8fb8d4), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x3d4436), sun: new THREE.Color(0xfff2d8) };
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
 const tmpG = new THREE.Color();
 const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new THREE.Vector3(), _skyV2 = new THREE.Vector3();
@@ -5383,7 +5487,7 @@ function updateSky() {
   hemi.position.copy(_plY).applyQuaternion(lq);
   bounce.position.copy(BOUNCE_D).applyQuaternion(lq).add(wt);
   fill.position.copy(FILL_D).applyQuaternion(lq).add(wt);
-  sun.intensity = clamp(e * 2.4, 0, 1.7); sun.castShadow = e > .03;
+  sun.intensity = clamp(e * 1.95, 0, 1.15); sun.castShadow = e > .03;
   moon.intensity = clamp(-e * 1.3, 0, .4);
   const dayK = smooth(-.05, .35, e), duskK = 1 - Math.abs(clamp(e / .3, -1, 1));
   for (const k in tmpC) { tmpC[k].copy(SKY.night[k]).lerp(SKY.day[k], dayK); tmpC[k].lerp(SKY.dusk[k], duskK * .9); }
@@ -5403,10 +5507,14 @@ function updateSky() {
   scene.fog.color.copy(tmpC.fog);
   scene.fog.density = lerp(.0050, .0019, dayK) * (170 / W) * (1 + WX.rain * .8 + WX.storm * .5)
     / (1 + Math.max(0, camAlt - 20) * .012);
-  hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.34, .72, dayK) * (1 - oc * .3) + WX.flash * 1.5;
+  // Less fill, deeper shadow. The old rig lit every face of everything and left no dark side
+  // for a glow to sit against.
+  // Less fill than it had, because the old rig lit every face of everything and left no dark
+  // side for anything to be read against -- but not so little that the island goes gloomy.
+  hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.26, .58, dayK) * (1 - oc * .3) + WX.flash * 1.5;
   sun.intensity *= 1 - oc * .8; sun.castShadow = sun.castShadow && sun.intensity > .2;
   fitShadow(camS.r);
-  sun.color.copy(tmpC.sun); bounce.intensity = lerp(.05, .22, dayK); fill.intensity = lerp(.12, .5, dayK);
+  sun.color.copy(tmpC.sun); bounce.intensity = lerp(.04, .17, dayK); fill.intensity = lerp(.08, .34, dayK);
   // Height above the sea under the lens, not above the ground: on a mountain top you are
   // still standing in the air you breathe, and the sky should not go black on a walk up it.
   skyUni.uHigh.value = lerp(skyUni.uHigh.value, smooth(60, 250, camS.y - SEA), Math.min(1, .06));
@@ -5418,7 +5526,7 @@ function updateSky() {
   M.skimmer.emissiveIntensity = lerp(.2, 1.4, world.night);
   M.drifter.emissiveIntensity = lerp(.15, 1.2, world.night);
   M.burrower2.emissiveIntensity = lerp(.2, 1.3, world.night);
-  for (const g of PLANT_GLOW) g.uni.uK.value = g.k * lerp(.35, 1, world.night);
+  for (const g of GLOW_UNI) g.uni.uK.value = g.k * lerp(.55, 1.35, world.night);
   M.shipLamp.emissiveIntensity = lerp(.55, 2.2, world.night);
   M.shipHead.emissiveIntensity = lerp(.4, 2.8, world.night);
   M.membrane.emissiveIntensity = lerp(.1, .8, world.night);
