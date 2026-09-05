@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b40';
+const BUILD = 'b41';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2217,6 +2217,16 @@ function stepRig(r, dt, speed, grounded, ctx) {
 // brain — this only changes what you see. Move the green creature to another species by
 // moving this key; the rest of the wiring is generic.
 const CREATURE_RIGS = {
+  // Broad, horned, and a wide stance -- the mossback's primitive body already had horns on
+  // it, so this is the species it was shaped for. Its clips are named for what they are
+  // rather than for their role (Walking, Warrior_Idle), which is fine: they are looked up by
+  // role, and 'Warrior_Idle' matches idle on the whole-word pass.
+  Grazer: {
+    url: 'models/purple_horny.glb',
+    height: 2.4,          // a mossback stands about this tall at the shoulder
+    idle: 'idle', walk: 'walk',
+    yaw: 0,               // checked in game: modelled facing +Z, which is already forward
+  },
   Burrower: {
     url: 'models/creature_green.glb',
     height: 1.6,          // a mudlark's own build, roughly

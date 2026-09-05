@@ -654,11 +654,17 @@ One table entry:
 
 ```js
 const CREATURE_RIGS = {
+  Grazer:   { url: 'models/purple_horny.glb',  height: 2.4,
+              idle: 'idle', walk: 'walk', yaw: 0 },
   Burrower: { url: 'models/creature_green.glb', height: 1.6,
               idle: 'idle', walk: 'walk_fwd',
               blinkL: 'eye_L_close', blinkR: 'eye_R_close', yaw: 0 },
 };
 ```
+
+`yaw` is worth measuring rather than guessing: walk the skeleton's bind pose and see which way
+the head sits. `mixamorig_Head` on the purple creature is at z +17.6 against a joint range of
+0 to +27.7, so it faces +Z, which is already forward and needs no turn.
 
 The class keeps its whole brain; this only changes what you see. Move a model to another
 species by moving the key. Clips are looked up by *role* rather than by exact name, so a file
