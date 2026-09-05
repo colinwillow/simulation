@@ -882,6 +882,43 @@ world-space coordinate, so `uv = chart / tile` is a tiling parameterisation with
 no unwrap — and a `land` mask off the same height and slope thresholds the colours use fades
 the map in and out.
 
+### Seeing past scenery
+
+Two mechanisms, and they divide the work:
+
+- **`camInside`**, in `camClear` — the lens is never allowed to end up *inside* something.
+  It tests the obstacle field at the camera position only, not along the whole boom, because
+  things between the lens and the wanderer are the hole's job and pulling the camera in for
+  every trunk in a grove would make it jump about all day.
+- **the see-through hole** — a dithered porthole punched through any surface that is both
+  nearer than the wanderer and within a circle around him on screen. It widens as the boom
+  shortens, because a pinched camera is one with something big and close in front of it.
+
+**Only a body opts out.** `prepModel` marks `noHole` on the materials of *skinned* meshes —
+the rigs, and the ship, which is skinned too — and everything else takes the hole. It used
+to mark every model material, back when every model in the file was a rig; the trees, plants,
+rocks and buildings that arrived later inherited a rule that was never about them, and an
+elder tree between the lens and the wanderer filled the whole screen with the inside of its
+canopy where the primitive one it replaced would have gone transparent.
+
+Two traps in here, both of which have already been sprung:
+
+- **An instance `onBeforeCompile` completely shadows the prototype's.** The hole lives on
+  `MeshStandardMaterial.prototype.onBeforeCompile`, so any material that assigns its own hook
+  silently loses it — which made the glowing plants the only solid things on the island.
+  `holePatch(sh)` is pulled out for exactly this; call it first from any new hook.
+- **A creature's materials are shared with the scenery** — a mossback and a moss tuft are both
+  `M.moss` — so a creature takes a private opted-out copy via `solid()` rather than marking
+  the shared one.
+
+Every model in the repo arrives **double-sided**, and nothing here needs it: they are
+watertight sculpts, not foliage cards. `prepModel` flips the non-body ones to `FrontSide`,
+which halves the fragments a plant costs and means a camera that does get inside one sees
+through it rather than finding a wall of backfaces.
+
+`node tools/shot.js --tree` stands the wanderer just past the biggest modelled tree with the
+camera on the far side of it, which is the shot that shows whether any of this is working.
+
 ### Biomes
 
 `biomeAt(x, z)` is the field everything downstream reads: the terrain's vertex colours, how
@@ -1345,6 +1382,7 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | The size of the letters in the meadow | `TITLE.span` |
 | How far apart the built sites stand | `SITE_APART` (relaxes to 52, then 38) |
 | How dark the worn ground is | `M_WORN.color` |
+| How big the see-through hole is | the `lerp(.34, .17, ...)` on `uHoleR` |
 | How the title screen's crane moves | `INTRO.wide` / `INTRO.near` / `INTRO.craneT` |
 | How far the shot swings across the letters | `INTRO.sweep`, `INTRO.rate` |
 | How an animal feels about you | `wary`/`flock`/`notice`/`curious` in its constructor |

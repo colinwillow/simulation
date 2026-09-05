@@ -575,8 +575,10 @@ const std = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color:
 // It lives in the shared material shader rather than per object because the trees are
 // merged into a few big meshes on shared materials — there is no object to fade.
 const holeUni = { uHoleC: { value: new THREE.Vector2(-1e5, -1e5) }, uHoleR: { value: 0 }, uHoleZ: { value: 0 } };
-THREE.MeshStandardMaterial.prototype.onBeforeCompile = function (sh) {
-  if (this.userData.noHole) return;
+// Pulled out of the prototype hook so a material with an onBeforeCompile of its own can
+// still take the hole. Assigning one to an instance shadows the prototype's completely --
+// which is how the glowing plants ended up as the only solid things on the island.
+function holePatch(sh) {
   sh.uniforms.uHoleC = holeUni.uHoleC; sh.uniforms.uHoleR = holeUni.uHoleR; sh.uniforms.uHoleZ = holeUni.uHoleZ;
   sh.fragmentShader = `
     uniform vec2 uHoleC; uniform float uHoleR, uHoleZ;
@@ -590,6 +592,10 @@ THREE.MeshStandardMaterial.prototype.onBeforeCompile = function (sh) {
         if (holeDither(gl_FragCoord.xy) < k * 0.92) discard;
       }
     }`);
+}
+THREE.MeshStandardMaterial.prototype.onBeforeCompile = function (sh) {
+  if (this.userData.noHole) return;
+  holePatch(sh);
 };
 // The hole is for scenery standing between the lens and the wanderer. It is not for the
 // wanderer, and not for anything else alive: seeing his own eyeballs through the back of his
@@ -2247,6 +2253,13 @@ function shrinkTexture(t) {
 }
 function prepModel(root) {
   let saved = 0; const seen = new Set();
+  // Which materials belong to a body. When every model in the file was a rig this was all of
+  // them, and the line below said so; now the trees, the plants, the rocks and the buildings
+  // are models too, and they inherited a rule that was never about them -- so an elder tree
+  // between the lens and the wanderer filled the whole screen with the inside of its canopy
+  // instead of going see-through like the primitive one it replaced.
+  const onBody = new Set();
+  root.traverse(o => { if (o.isSkinnedMesh) for (const m of [].concat(o.material)) if (m) onBody.add(m); });
   root.traverse(o => {
     if (!o.isMesh) return;
     o.castShadow = true; o.receiveShadow = true;
@@ -2255,7 +2268,13 @@ function prepModel(root) {
     o.frustumCulled = false;
     for (const m of [].concat(o.material)) {
       if (!m) continue;
-      m.userData.noHole = true;          // a rig is a body: never punch a hole through it
+      // a rig is a body: never punch a hole through one. Scenery is not, and must take it.
+      if (onBody.has(m)) m.userData.noHole = true;
+      // Every one of these arrives double-sided, and nothing in the file needs it: they are
+      // watertight sculpts, not foliage cards. Single-sided halves the fragments a plant
+      // costs, and means a camera that ends up inside one sees through it rather than
+      // finding a solid wall of backfaces there.
+      else if (m.side === THREE.DoubleSide) { m.side = THREE.FrontSide; m.needsUpdate = true; }
       for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
         const t = m[k]; if (!t || seen.has(t)) continue; seen.add(t); saved += shrinkTexture(t);
       }
@@ -2560,9 +2579,10 @@ const PLANT_MODELS = {
 // we want: they all glow alike, and it costs one program.
 const PLANT_GLOW = [];
 function plantGlow(mat, cfg) {
-  mat.emissive.setScalar(0); mat.emissiveMap = null; mat.userData.noHole = true;
+  mat.emissive.setScalar(0); mat.emissiveMap = null;
   const uni = { uLo: { value: cfg.lo }, uHi: { value: cfg.hi }, uK: { value: cfg.k } };
   mat.onBeforeCompile = sh => {
+    holePatch(sh);                       // an instance hook shadows the prototype's; chain it
     for (const k in uni) sh.uniforms[k] = uni[k];
     sh.fragmentShader = 'uniform float uLo, uHi, uK;\n' + sh.fragmentShader.replace(
       '#include <emissivemap_fragment>',
@@ -4762,7 +4782,7 @@ function placeTitle() {
     const sz = e.box.getSize(new THREE.Vector3());
     const k = TITLE.span / Math.max(1e-4, Math.max(sz.x, sz.z));
     inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
-    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.userData.noHole = true; } });
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     envUse(inst, .8);
     g.add(inst); scene.add(g); world.title = g;
     obAdd(spot.x, spot.z, TITLE.span * .42, null, groundY(spot.x, spot.z) + sz.y * k);
@@ -4788,7 +4808,7 @@ function placeProp(url, x, z, yaw, H, blend = .75) {
     const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
     const k = H / Math.max(1e-4, sz.y);
     inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
-    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.userData.noHole = true; } });
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     envUse(inst, .45);
     g.add(inst); scene.add(g);
     obAdd(x, z, Math.max(sz.x, sz.z) * k * .40, null, gy + sz.y * k * .92);
@@ -5408,10 +5428,25 @@ const _camWant = new THREE.Vector3(), _holeP = new THREE.Vector3(), _holeV = new
 const _camQ = new THREE.Quaternion(), _camW = new THREE.Vector3();
 // Treat the terrain as a heightfield and march the boom: if the shot is blocked,
 // first climb (a drone lifting over a ridge), and only pull in if climbing can't clear it.
+// Is the lens inside something solid? The march below only knows the height field, which is
+// why the boom happily parked itself inside a mushroom the size of a shed and filled the
+// screen with the inside of it. Only the lens is tested, not the whole boom: things
+// *between* the lens and the wanderer are what the see-through hole is for, and pulling the
+// camera in for every trunk in a grove would make it jump about all day.
+function camInside(x, y, z) {
+  let hit = false;
+  obNear(x, z, 3, o => {
+    if (hit || y > o.top) return;
+    const r = obRad(o) + 1.1, dx = x - o.x, dz = z - o.z;
+    if (dx * dx + dz * dz < r * r) hit = true;
+  });
+  return hit;
+}
 function camClear(pol, r) {
   const sx = Math.sin(cam.az) * Math.sin(pol) * r, sy = Math.cos(pol) * r, sz = Math.cos(cam.az) * Math.sin(pol) * r;
   const cx = cam.tgt.x + sx, cy = cam.tgt.y + sy, cz = cam.tgt.z + sz;
   if (cy < deckY(cx, cz, cy) + 2.6) return false;
+  if (camInside(cx, cy, cz)) return false;
   for (let i = 3; i <= 9; i++) {
     const t = i / 10, py = lerp(cam.tgt.y, cy, t);
     if (py < deckY(lerp(cam.tgt.x, cx, t), lerp(cam.tgt.z, cz, t), py) + 1.4) return false;
@@ -6486,7 +6521,11 @@ function frame(now) {
     p.project(camera);
     if (!INTRO.on && !player.free && !player.aboard && vz < -1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1) {
       holeUni.uHoleC.value.set((p.x * .5 + .5) * rtScene.width, (p.y * .5 + .5) * rtScene.height);
-      holeUni.uHoleR.value = rtScene.height * .17; holeUni.uHoleZ.value = -vz;
+      // Wider when the boom is short. A pinched camera is a camera with something big and
+      // close in front of it, and a porthole seventeen percent of the screen across is not
+      // much use when the other eighty-three are the inside of a canopy.
+      holeUni.uHoleR.value = rtScene.height * lerp(.34, .17, smooth(8, 24, camS.r));
+      holeUni.uHoleZ.value = -vz;
     } else holeUni.uHoleR.value = 0;
   }
 

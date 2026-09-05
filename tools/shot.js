@@ -10,6 +10,7 @@
 //   --hour       time of day, 0..24
 //   --wait       seconds of world time to let settle before the shutter (default 6)
 //   --w --h      canvas size (default 1280x800)
+//   --tree       stand behind the biggest modelled tree, to check it goes see-through
 //   --title      shoot the title screen instead, before the world is entered
 //   --intro-t    seconds along the title screen's crane to jump to (0 wide, 26 near)
 //
@@ -81,8 +82,24 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
   // The loading card is held until the models are in, so a shot taken before it lifts is a
   // shot of the card. Wait it out.
   await page.waitForFunction('!document.getElementById("boot")', null, { timeout: 240000 }).catch(() => {});
-  await page.evaluate(([at, hour, r, az, title, site, introT]) => {
+  await page.evaluate(([at, hour, r, az, title, site, introT, tree]) => {
     const g = window.__g;
+    // Stand him just past the biggest modelled tree with the camera on the far side of it,
+    // which is the shot that shows whether scenery goes see-through or fills the screen.
+    if (tree) {
+      const ts = g.world.plants.filter(p => p.alive && p.model && p.h);
+      ts.sort((a, b) => b.h - a.h);
+      const t = ts[0];
+      if (t) {
+        const a = Math.random() * Math.PI * 2, d = 7;
+        const x = t.pos.x + Math.cos(a) * d, z = t.pos.z + Math.sin(a) * d;
+        g.player.pos.set(x, g.groundY(x, z) + 1, z); g.player.vx = g.player.vz = g.player.vy = 0;
+        g.cam.tgt.set(x, g.player.pos.y + 3.4, z);
+        g.cam.az = Math.atan2(t.pos.x - x, t.pos.z - z);
+        g.cam.r = 16;
+        console.log('tree ' + t.constructor.name + ' h=' + t.h.toFixed(1) + ' at ' + (t.pos.x | 0) + ',' + (t.pos.z | 0));
+      } else console.warn('no modelled tree to stand behind');
+    }
     if (site !== null) {
       const s = (g.world.sites || [])[+site];
       if (s) at = s.x + ',' + s.z; else console.warn('no site ' + site);
@@ -99,7 +116,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     // The title crane takes the better part of a minute to travel; under swiftshader that is
     // ten real ones. Jump to a point on it instead of waiting for it.
     else if (introT !== null) g.INTRO.t = +introT;
-  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null)]);
+  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null), has('tree')]);
 
   // Wall clock is meaningless here -- swiftshader runs this at a couple of frames a second,
   // so the settle is counted in world seconds like every other harness in this folder.
