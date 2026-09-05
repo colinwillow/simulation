@@ -628,6 +628,39 @@ Trunks, cairns and the great tree register `Infinity` and were never in the conv
 
 Only the player reads `climb`; creatures keep their own steering.
 
+### The ship's flames and lamps
+
+A jet is a solid thing with a shape, not a cloud of dots. `FLAME_GEO` is a unit cone growing
+along -Z from its origin, so a mesh parented straight to a nozzle bone is sized with
+`scale.set(radius, radius, length)` and follows the vectoring for free — swing a nozzle out
+for a turn and its flame swings with it, which is most of why the ship reads as steering
+rather than sliding. `flameMat()` shades it additively, white-hot at the throat falling to
+red down its length, with shock diamonds standing in the plume the way they do in a real
+nozzle. The particles that used to *be* the exhaust are the smoke it leaves behind now:
+bigger, dimmer, slower.
+
+The same cone with its diamonds turned off (`uDia: 0`) is a headlight. There is no extra
+light in the scene doing that — a spot per headlight would recompile every material on the
+island for two pools of light you only see at night. They come up at dusk and only fully
+when someone is flying it; a parked ship with its beams on all night reads as abandoned.
+
+Five flames: the two mains, the two attitude jets on the flanks, and a belly jet for coming
+off a pad. The belly one deliberately does **not** read `sm.pitch` — that carries the forward
+throttle's share of the vectoring, so reading it lit the underside all the way round a lap.
+It answers to the spool against the ground, a commanded climb, and a sortie's own lift and
+let-down.
+
+The six light bones get an actual lamp each: a small emissive bead the bloom pass can catch,
+so the parts meant to glow are lit objects rather than a sprite floating near them. They
+never move relative to the hull, so all six bake into one mesh in ship space — one draw call,
+the same as the halo they sit inside.
+
+All of it is built in `buildFx()` rather than in the model's load callback, because the
+headless harness fakes a skeleton and has no glTF loader: putting it there is what lets
+`node tools/sortie.js index.html pilot` assert on the flames and the headlights at all.
+Its stand-in skeleton carries the six lamp bones at their measured positions for the same
+reason.
+
 ### Obstacle field
 Solid things register a footprint circle in a coarse spatial hash (`obAdd`/`obRemove`).
 Creatures use it three ways: rejecting waypoints, steering around things ahead
@@ -883,6 +916,7 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | What a hill costs | `MOVE.hill`, `MOVE.hillMin` |
 | What he can climb onto | `OB_PLAYER.climb` |
 | Waypoint trail spacing | `WAY.gap` (`WAY.N` is only the cap) |
+| Flame sizes | `SHIP.jet` / `SHIP.side` / `SHIP.lift` / `SHIP.head` / `SHIP.bulb` |
 | Quality tiers | `Q` |
 
 ---

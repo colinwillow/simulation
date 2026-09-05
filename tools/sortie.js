@@ -74,10 +74,14 @@ mk('hatch_pivot',0,2.82,-.09);
 for(const [n,x,z] of [['leg_L',2.09,.56],['leg_R',-2.19,.56],['leg_back',0,-1.97]]){ const hip=mk(n,x,.83,z); const pv=mk(n+'_pivot',.4,-.7,0,hip); mk(n+'_foot',.1,-.1,0,pv); }
 for(const [n,x] of [['back_jet_L',1.01],['back_jet_R',-1]]){ const j=mk(n,x,1.82,-2.03); const f=mk(n+'_flame',0,0,-.82,j); mk(n+'_flame_direction',0,0,-.48,f); }
 for(const [n,x] of [['side_jet_L',1.64],['side_jet_R',-1.63]]){ const j=mk(n,x,1.57,-1.76); mk(n+'_direction',Math.sign(x)*.34,0,0,j); }
+// the six lamp bones, at their measured places: the front pair are the headlights, and
+// without them here the harness could not see either the bulbs or the beams
+for(const [n,x,y,z] of [['light_L_1_',1.62,-.33,2.40],['light_L_2',2.09,.14,1.33],['light_L_3',1.82,.71,-.25],
+                        ['light_R_1',-1.62,-.31,2.46],['light_R_2',-2.31,-.09,1.52],['light_R_3',-1.81,.69,-.23]]) mk(n,x,y,z);
 S.bones=b; S.hatch0=0; S.gear0={};
 for(const n in SH.gear) S.gear0[n]={hip:b[n].rotation.clone(),pad:b[n+'_pivot'].rotation.clone()};
 for(const n of ['back_jet_L','back_jet_R']) S.gear0[n]={hip:b[n].rotation.clone()};
-S.buildJets();
+S.buildFx();
 const P=global.__p; P.pos.x=S.pos.x+30; P.pos.z=S.pos.z; S.next=0;
 SH.sortie=true;   // off by default in the game now: it is his ship. The lap test still wants it.
 // optional: `node tools/sortie.js index.html tree` parks the great tree's column beside the
@@ -148,6 +152,20 @@ if(process.argv[3]==='pilot'){
   out.runningForward={speed:+sp().toFixed(1),noseY:+nose().y.toFixed(3),nosesDown:nose().y<-.01,
     nose:+S.nose.toFixed(3),exhaustY:+S.em.L.d.y.toFixed(3),jetsTiltedDown:S.em.L.d.y<-.02};
   ST.L.y=0; hold(2.5);
+  // The flames. Each cone reads the same demand its own particles do, so a nozzle and its
+  // plume can never disagree about how hard that jet is working.
+  {
+    const u=k=>S.flame[k]?+S.flame[k].material.uniforms.uK.value.toFixed(2):null;
+    ST.L.y=-1; hold(2);
+    out.flamesUnderThrottle={mains:[u('L'),u('R')],smoothedThrottle:+S.sm.throttle.toFixed(2),
+      bothLit:u('L')>.3&&u('R')>.3,lengthL:+S.flame.L.scale.z.toFixed(2)};
+    ST.L.y=0; ST.R.x=1; hold(2);
+    out.flamesUnderStrafe={sideL:u('sL'),sideR:u('sR'),onlyOneSide:(u('sL')>.15)!==(u('sR')>.15)};
+    ST.R.x=0; hold(1.5);
+    ST.R.y=-1; hold(1.5);
+    out.bellyFlameWhileClimbing={lit:+S.flame.lift.material.uniforms.uK.value.toFixed(2),visible:S.flame.lift.visible};
+    ST.R.y=0; hold(1);
+  }
   // come down: push down until it lands, note when the gear drops
   let gearCmdAlt=null, gearDownAlt=null, tDown=0, atTouch=null;
   for(let i=0;i<1200;i++){ ST.R.y=1; step(); tDown+=.033;
@@ -159,6 +177,10 @@ if(process.argv[3]==='pilot'){
   const canLeave=S.grounded&&S.power<.15; S.leave();
   out.leave={couldLeave:canLeave,aboard:P.aboard,playerVisible:P.g.visible,shipState:S.state,colliderBack:!!S.ob,playerDistFromShip:+Math.hypot(P.pos.x-S.pos.x,P.pos.z-S.pos.z).toFixed(1),playerOnGround:+(P.pos.y-global.__gY(P.pos.x,P.pos.z)).toFixed(2)};
   hold(3); out.hatchAfterLeave=+S.open.toFixed(2); out.nextSortieIn=+(S.next-W2.clock).toFixed(0);
+  // parked at night: the belly jet must be out, and the headlights down to a standing glow
+  W2.t = W2.t - (W2.t % 110) + 86; hold(1.2);
+  out.parkedAtNight={bellyFlame:+S.flame.lift.material.uniforms.uK.value.toFixed(2),
+    bellyDust:+S.jets.lift.rate.toFixed(0), headlights:+(S.headK||0).toFixed(2)};
   // The floating isle is a deck: get back in, drop onto it from above, and it must stop
   // there rather than sinking through to sea level -- which is what it did, because the
   // only floor the pilot knew about was the terrain.

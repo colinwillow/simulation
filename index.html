@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b37';
+const BUILD = 'b38';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -449,6 +449,9 @@ const M = {
   barkA: std(P.bark, { roughness: .95 }), barkB: std(P.bark2, { roughness: .95 }),
   canopy: [std(P.canopy, { roughness: .78 }), std(P.canopy2, { roughness: .78 }), std(P.canopy3, { roughness: .78 })],
   lantern: std(P.lantern, { emissive: col('#ff9a2e'), emissiveIntensity: .5, roughness: .35 }),
+  // the ship's own lamps: six on the hull, and the pair at the nose that are its headlights
+  shipLamp: std(col('#bffbf2'), { emissive: col('#4fe8d6'), emissiveIntensity: 1.4, roughness: .3 }),
+  shipHead: std(col('#fff6e2'), { emissive: col('#ffe9b4'), emissiveIntensity: 1.6, roughness: .3 }),
   moss: std(P.moss, { roughness: .9 }), moss2: std(P.moss2, { roughness: .9 }),
   bloomStem: std(P.bloomStem, { roughness: .8 }),
   bloom: [std(P.bloom, { emissive: col('#ff2f8a'), emissiveIntensity: .4, roughness: .55 }), std(P.bloomB, { emissive: col('#a72fe8'), emissiveIntensity: .4, roughness: .55 })],
@@ -3119,6 +3122,12 @@ const SHIP = {
                     // lifts the canopy: measured on the 2317 vertices the hatch owns, -.95
                     // raises them 1.1 to 1.35 and +.95 drops them 1.45 down through the floor.
   rad: 2.7,         // what you bump into
+  // the flames, all in world units: the mouth radius and how far the cone stands off
+  jet:  { rad: .40, len: 3.0 },                 // the two mains
+  side: { rad: .22, len: 1.1 },                 // the attitude jets on the flanks
+  lift: { rad: .72, len: 3.6, y: 1.15 },        // the belly jet, for coming off the ground
+  bulb: .10,                                    // the lamps on the six light bones
+  head: { rad: .78, len: 10, at: ['light_L_1_', 'light_R_1'] },    // headlights, on the front pair
   // The landing gear. Each hip is a lever with the foot on the end and no authored 'up'
   // pose, so the fold is chosen from the geometry: about the hip's lateral hinge, in the
   // direction that swings the foot outward and up, until the pad lies flat against the
@@ -3155,6 +3164,41 @@ const PILOT = {
   waterAlt: 1.4,                                // over water it hovers this far above the swell; there is nothing to land on
   flareAt: 13,                                  // and inside this, the descent is bled off so it settles rather than arrives
 };
+// A jet is a solid thing with a shape, not a cloud of dots. This is the flame itself: an
+// open cone standing off the nozzle mouth, additive, white-hot at the throat and falling to
+// red down its length, with shock diamonds standing in it the way they do in a real nozzle.
+// The particles that used to *be* the exhaust are the smoke it leaves behind now.
+//
+// The geometry is a unit cone growing along -Z from the origin, so a mesh can be parented
+// straight to a nozzle bone and sized with scale.set(radius, radius, length).
+const FLAME_GEO = (() => {
+  const g = new THREE.CylinderGeometry(.34, 1, 1, 14, 1, true);
+  g.translate(0, -.5, 0); g.rotateX(Math.PI / 2);
+  return g;
+})();
+// uK is how hard it is running, and it is the only thing that changes per frame. uDia turns
+// the shock diamonds off for the headlight beams, which want a smooth cone rather than a
+// throat: the same shape lights the road in front of a car and burns out of the back of a jet.
+function flameMat(hot, cool, dia = 1, alpha = 1) {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: { uT: { value: 0 }, uK: { value: 0 }, uDia: { value: dia }, uA: { value: alpha },
+                uHot: { value: col(hot) }, uCool: { value: col(cool) } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `
+      uniform float uT, uK, uDia, uA; uniform vec3 uHot, uCool; varying vec2 vUv;
+      void main(){
+        float m = vUv.y;                                  // 1 at the mouth, 0 at the tail
+        float core = pow(m, 1.7);
+        float dia = mix(1.0, 0.55 + 0.45 * sin(m * 34.0 - uT * 3.0), uDia);
+        float flick = mix(1.0, 0.82 + 0.18 * sin(uT * 47.0 + vUv.x * 12.0), uDia);
+        float a = core * dia * flick * uK * uA;
+        if (a < 0.004) discard;
+        gl_FragColor = vec4(mix(uCool, uHot, pow(m, 2.2)) * (0.6 + core * 1.5), a);
+      }`
+  });
+}
 // The floor a ship can put its feet on, or the wanderer can stand on: the terrain, and the
 // floating isle when you are over it and above its deck. `groundY` deliberately stays the
 // terrain alone -- every creature, mote and blade of grass reads it, and none of them has
@@ -3196,22 +3240,49 @@ class Ship {
       this.hatch0 = b.hatch_pivot ? b.hatch_pivot.rotation.x : 0;
       for (const n in SHIP.gear) { const hip = b[n], pad = b[n + '_pivot']; if (hip) this.gear0[n] = { hip: hip.rotation.clone(), pad: pad ? pad.rotation.clone() : null }; }
       for (const n of ['back_jet_L', 'back_jet_R']) if (b[n]) this.gear0[n] = { hip: b[n].rotation.clone() };
-      // the six hull lights as one Points rather than six sprites
-      const pts = [];
-      for (const n of ['light_L_1_', 'light_L_2', 'light_L_3', 'light_R_1', 'light_R_2', 'light_R_3']) {
-        const o2 = b[n]; if (!o2) continue;
-        inst.updateMatrixWorld(true);
-        pts.push(this.g.worldToLocal(new THREE.Vector3().setFromMatrixPosition(o2.matrixWorld)));
-      }
-      if (pts.length) { this.lights = glowPoints('#6ff0e0', 1.3, .5, pts); this.g.add(this.lights); }
-      this.buildJets();
+      this.buildFx();
     });
     this.ob = obAdd(x, z, SHIP.rad, this, this.pos.y + 3.4);
   }
-  // Exhaust. Each emitter reads its position and axis off the model's own flame bones
-  // every frame, so the particles follow the nozzles wherever the vectoring points them.
-  buildJets() {
-    const b = this.bones, mk = (from, to) => ({ from: b[from], to: b[to], p: new THREE.Vector3(), d: new THREE.Vector3(0, 0, -1), k: 0 });
+  // Everything the ship emits or glows with, in one place: the lamps on the hull, the
+  // headlights, the flames, and the particle systems behind them. It lives here rather than
+  // in the loader callback so the headless harness -- which fakes a skeleton and has no
+  // glTF loader -- covers all of it by calling this directly.
+  //
+  // Each exhaust emitter reads its position and axis off the model's own flame bones every
+  // frame, so the particles follow the nozzles wherever the vectoring points them.
+  buildFx() {
+    const b = this.bones;
+    // The six light bones get an actual lamp each: a small emissive bead the bloom pass can
+    // catch, so the parts meant to glow are lit objects rather than a sprite floating near
+    // them. They never move relative to the hull, so all six bake into one mesh in ship
+    // space -- one draw call, the same as the halo they sit inside.
+    this.g.updateMatrixWorld(true);
+    const pts = [], bin = [];
+    for (const n of ['light_L_1_', 'light_L_2', 'light_L_3', 'light_R_1', 'light_R_2', 'light_R_3']) {
+      const o2 = b[n]; if (!o2) continue;
+      const lp = this.g.worldToLocal(new THREE.Vector3().setFromMatrixPosition(o2.matrixWorld));
+      pts.push(lp);
+      const r = SHIP.bulb * (SHIP.head.at.indexOf(n) >= 0 ? 1.5 : 1);
+      collect(bin, mesh(G.sph, SHIP.head.at.indexOf(n) >= 0 ? M.shipHead : M.shipLamp, r, r, r, lp.x, lp.y, lp.z));
+    }
+    for (const m of mergeBin(bin)) { m.userData.noHole = true; this.g.add(m); }
+    if (pts.length) { this.lights = glowPoints('#6ff0e0', 1.3, .5, pts); this.g.add(this.lights); }
+    // Headlights: the same cone as a jet flame with its shock diamonds turned off, thrown
+    // forward out of the front pair of lamps. No extra light in the scene does this -- a
+    // spot per headlight would recompile every material on the island for two pools of
+    // light you only ever see at night.
+    this.heads = [];
+    for (const n of SHIP.head.at) {
+      const bone = b[n]; if (!bone) continue;
+      const c = new THREE.Mesh(FLAME_GEO, flameMat('#fff4d6', '#9fd8ff', 0, .26));
+      c.rotation.y = Math.PI;                        // the cone grows along -Z; a headlight throws +Z
+      c.renderOrder = 2; c.frustumCulled = false;
+      const ws = bone.getWorldScale(new THREE.Vector3()).x || 1;
+      c.scale.set(SHIP.head.rad / ws, SHIP.head.rad / ws, SHIP.head.len / ws);
+      bone.add(c); this.heads.push(c);
+    }
+    const mk = (from, to) => ({ from: b[from], to: b[to], p: new THREE.Vector3(), d: new THREE.Vector3(0, 0, -1), k: 0 });
     this.em = {
       L: mk('back_jet_L_flame', 'back_jet_L_flame_direction'), R: mk('back_jet_R_flame', 'back_jet_R_flame_direction'),
       sL: mk('side_jet_L', 'side_jet_L_direction'), sR: mk('side_jet_R', 'side_jet_R_direction'),
@@ -3219,8 +3290,8 @@ class Ship {
     // The exhaust leaves the nozzle at a modest world speed on purpose: the ship is doing
     // thirty, so anything much faster than it strings out into nothing, while this hangs in
     // the air behind as a trail. A third of the ship's own velocity carries it along.
-    const main = em => new PSys({ n: MOBILE ? 90 : 140, life: .5, rate: 0, gy: .5, drag: 2.4, additive: true, a0: .95,
-      c0: '#fff3d2', c1: '#ff7a26', s0: 1.25, s1: .2,
+    const main = em => new PSys({ n: MOBILE ? 90 : 140, life: .62, rate: 0, gy: .5, drag: 2.4, additive: true, a0: .8,
+      c0: '#ffe7b0', c1: '#c8481a', s0: 2.2, s1: .35,
       spawn: (p, v) => { p.copy(em.p).addScaledVector(em.d, rnd(0, .4)).add(new THREE.Vector3(rnd(-.2, .2), rnd(-.2, .2), rnd(-.2, .2)));
         v.copy(em.d).multiplyScalar(7 + em.k * 9).addScaledVector(this.vel, .35).add(new THREE.Vector3(rnd(-1.2, 1.2), rnd(-1.2, 1.2), rnd(-1.2, 1.2))); } });
     const side = em => new PSys({ n: MOBILE ? 48 : 72, life: .36, rate: 0, gy: .2, drag: 2.6, additive: true, a0: .85,
@@ -3228,7 +3299,44 @@ class Ship {
       spawn: (p, v) => { p.copy(em.p).add(new THREE.Vector3(rnd(-.12, .12), rnd(-.12, .12), rnd(-.12, .12)));
         v.copy(em.d).multiplyScalar(6 + em.k * 7).addScaledVector(this.vel, .35).add(new THREE.Vector3(rnd(-.8, .8), rnd(-.8, .8), rnd(-.8, .8))); } });
     this.jets = { L: main(this.em.L), R: main(this.em.R), sL: side(this.em.sL), sR: side(this.em.sR) };
+    // The belly jet: what actually lifts a thing like this off a pad. Chart-space spawn off
+    // the ship's own position rather than a bone, because there is no bone under there.
+    this.jets.lift = new PSys({ n: MOBILE ? 70 : 110, life: .5, rate: 0, gy: 1.2, drag: 3.4, additive: true, a0: .9,
+      c0: '#fff6de', c1: '#ff8a34', s0: 2.1, s1: .3,
+      spawn: (p, v) => {
+        const a = rnd(Math.PI * 2), r = rnd(0, .9);
+        p.set(this.pos.x + Math.cos(a) * r, this.pos.y + SHIP.lift.y, this.pos.z + Math.sin(a) * r);
+        v.set(Math.cos(a) * rnd(.6, 3.4), -rnd(9, 16), Math.sin(a) * rnd(.6, 3.4));
+      } });
     for (const k in this.jets) this.jets[k].pts.visible = false;
+    // ---- the flames themselves ----
+    // Each cone hangs off the bone it belongs to, so it follows the vectoring for free: swing
+    // a nozzle out for a turn and its flame swings with it, which is most of why the ship
+    // reads as steering rather than sliding.
+    const cone = (bone, sz, hot, cool, rotY, rotX) => {
+      if (!bone) return null;
+      const m = new THREE.Mesh(FLAME_GEO, flameMat(hot, cool));
+      if (rotY) m.rotation.y = rotY; if (rotX) m.rotation.x = rotX;
+      m.renderOrder = 2; m.frustumCulled = false; m.visible = false;
+      const ws = bone.getWorldScale(new THREE.Vector3()).x || 1;
+      m.userData.ws = ws;                      // the bone is inside the model's own scale
+      m.scale.set(sz.rad / ws, sz.rad / ws, sz.len / ws);
+      bone.add(m); return m;
+    };
+    this.flame = {
+      L: cone(b.back_jet_L_flame, SHIP.jet, '#fff0c6', '#ff5a12'),
+      R: cone(b.back_jet_R_flame, SHIP.jet, '#fff0c6', '#ff5a12'),
+      // the side jets fire out along their own X, so their cones are turned a quarter round
+      sL: cone(b.side_jet_L, SHIP.side, '#eaf6ff', '#2f7dff', -Math.PI / 2),
+      sR: cone(b.side_jet_R, SHIP.side, '#eaf6ff', '#2f7dff', Math.PI / 2),
+    };
+    // and the belly one, on the hull rather than a bone, pointing straight down
+    const lf = new THREE.Mesh(FLAME_GEO, flameMat('#fff2cf', '#ff6a18'));
+    lf.rotation.x = -Math.PI / 2; lf.position.y = SHIP.lift.y;
+    lf.userData.ws = 1;                        // this one hangs off the hull, already in world units
+    lf.scale.set(SHIP.lift.rad, SHIP.lift.rad, SHIP.lift.len);
+    lf.renderOrder = 2; lf.frustumCulled = false; lf.visible = false;
+    this.g.add(lf); this.flame.lift = lf;
   }
   // ---- the sortie: a path, and controls read off it ----
   planFlight() {
@@ -3313,6 +3421,10 @@ class Ship {
     if (keys[' ']) up += 1; if (keys.shift) up -= 1;
     if (keys.e) str += 1; if (keys.q) str -= 1;
     fwd = clamp(fwd, -1, 1); yaw = clamp(yaw, -1, 1); up = clamp(up, -1, 1); str = clamp(str, -1, 1);
+    // What the belly jet answers to. Deliberately not sm.pitch: that carries the forward
+    // throttle's share of the vectoring too, so reading it lit the underside all the way
+    // round a lap. This is the climb alone, plus a little for actually rising.
+    this.upCmd = clamp(up * .9 + Math.max(0, this.vel.y) * .06, 0, 1);
     const gy = deckY(this.pos.x, this.pos.z, this.pos.y), wy = height(this.pos.x, this.pos.z) < SEA - .3 ? waveY(this.pos.x, this.pos.z) : -1e9;
     const alt = this.pos.y - Math.max(gy, wy);
     // ---- on the ground: nothing answers until the jets are up, and they take their time ----
@@ -3486,11 +3598,48 @@ class Ship {
     this.open = lerp(this.open, want, Math.min(1, dt * (want ? 2.2 : 1.5)));
     if (b.hatch_pivot) b.hatch_pivot.rotation.x = this.hatch0 + smooth(0, 1, this.open) * SHIP.hatch;
     if (this.lights) this.lights.material.size = 1.3 * (.5 + world.night * .9 + this.open * .5 + this.air * .6);
+    // ---- headlights ----
+    // They come up at dusk and only when someone is flying it: a parked ship with its beams
+    // on all night reads as abandoned rather than waiting.
+    if (this.heads) {
+      const want = world.night * (pil ? 1 : .18) * (1 - WX.flash * .6);
+      this.headK = lerp(this.headK || 0, want, Math.min(1, dt * 2.2));
+      for (const c of this.heads) {
+        c.visible = this.headK > .02;
+        c.material.uniforms.uK.value = this.headK;
+        c.material.uniforms.uT.value = t;
+      }
+    }
     // ---- exhaust ----
     if (this.em) {
       this.g.updateMatrixWorld(true);
       const left = Math.max(0, sm.strafe) + Math.max(0, sm.yaw), right = Math.max(0, -sm.strafe) + Math.max(0, -sm.yaw);
       const demand = { L: sm.throttle, R: sm.throttle, sL: clamp(left, 0, 1) * this.air, sR: clamp(right, 0, 1) * this.air };
+      // The belly jet is on whenever it is holding itself up: the jets spooling against a
+      // pad before it unsticks, a commanded climb once it is off, and a sortie's own lift
+      // and let-down. The dust it kicks is a separate question -- that needs ground close
+      // enough to kick.
+      const liftK = clamp(
+        this.state === 'lift' ? 1 - clamp(this.t / SHIP.liftT, 0, 1) * .4 :
+        this.state === 'land' ? .55 * (1 - clamp(this.t / SHIP.landT, 0, 1)) :
+        pil ? (this.grounded ? this.spool : (this.upCmd || 0)) : 0, 0, 1);
+      // the flames read the same demand the particles do, so a nozzle and its plume can
+      // never disagree about how hard it is working
+      const alt2 = this.pos.y - groundY(this.pos.x, this.pos.z);
+      for (const k in this.flame) {
+        const f = this.flame[k]; if (!f) continue;
+        const want = k === 'lift' ? liftK : (demand[k] || 0) * (k[0] === 's' ? 1 : (flying ? 1 : this.power));
+        f.material.uniforms.uK.value = lerp(f.material.uniforms.uK.value, want, Math.min(1, dt * 9));
+        f.material.uniforms.uT.value = t;
+        const kk = f.material.uniforms.uK.value;
+        f.visible = kk > .02;
+        // it lengthens as it works, and shivers, so a held throttle is never a still shape
+        f.scale.z = (k === 'lift' ? SHIP.lift.len : k[0] === 's' ? SHIP.side.len : SHIP.jet.len)
+          * (.45 + .55 * kk) * (1 + Math.sin(t * 23 + (k === 'R' ? 2.1 : 0)) * .07) / f.userData.ws;
+      }
+      this.jets.lift.rate = 150 * liftK * clamp(1 - alt2 / 26, 0, 1);
+      if (this.jets.lift.rate > 0) this.jets.lift.pts.visible = true;
+      else if (liftK < .02) this.jets.lift.pts.visible = false;
       for (const k in this.em) {
         const em = this.em[k]; if (!em.from || !em.to) continue;
         em.d.setFromMatrixPosition(em.to.matrixWorld).sub(_wgV.setFromMatrixPosition(em.from.matrixWorld)).normalize();
@@ -4146,6 +4295,8 @@ function updateSky() {
   M.skimmer.emissiveIntensity = lerp(.2, 1.4, world.night);
   M.drifter.emissiveIntensity = lerp(.15, 1.2, world.night);
   M.burrower2.emissiveIntensity = lerp(.2, 1.3, world.night);
+  M.shipLamp.emissiveIntensity = lerp(.55, 2.2, world.night);
+  M.shipHead.emissiveIntensity = lerp(.4, 2.8, world.night);
   M.membrane.emissiveIntensity = lerp(.1, .8, world.night);
   // the creatures' private copies are the same paint, so they take the same nightly lift
   for (const [src, c] of NOHOLE) c.emissiveIntensity = src.emissiveIntensity;
