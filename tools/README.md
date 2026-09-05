@@ -714,6 +714,24 @@ plants are not rigged: the entry is a mesh and a height, and the class keeps its
 sway, its pulse and its glow. The primitives it stood in for are hidden once the model lands,
 so a plant that never loads still looks like something.
 
+```js
+LanternTree: { url: 'models/alien_tree_01.glb',
+               height: p => p.h * 1.34, keep: ['fruitG'],
+               keepY: p => p.h * 1.02, glowY: p => p.h * 1.02 },
+MossTuft:    { url: 'models/alien_plant_02.glb', height: 1.5 },
+Bloom:       { url: 'models/alien_plant_01.glb', height: 3.4, glowY: 2.1,
+               glow: { lo: .16, hi: .38, k: 2.2 } },
+```
+
+`height` and `keepY` take a number **or a function of the plant**, so a species that varies
+its own size goes on varying it — an elder lantern tree stands twice a young one, and it
+still does with a model on it.
+
+`keep` names the parts that *are* the species rather than a stand-in for its shape. A lantern
+tree's crop of fruit is the whole reason the species exists — creatures harvest it, and it is
+what lights the island at night — while the trunk under it is just a trunk. The kept parts are
+lifted out of the primitive canopy onto the model at `keepY`; everything else goes dark.
+
 **Selection tags do not survive C4D → FBX → Blender → glTF.** What arrives is one mesh, one
 primitive, one material, with nothing marking which polygons were tagged. If you want part of
 a model to behave differently, it has to come through as its own *material* — assign a second

@@ -51,7 +51,15 @@
     justify-content:center;max-width:min(92vw,62vh);font-family:ui-monospace,Menlo,Consolas,monospace}
   #maplg i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:-1px;font-style:normal}
   #mapfoot{margin-top:9px;font-size:11px;opacity:.45;font-style:italic}
-  #boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#070a13;font-style:italic;letter-spacing:.05em;z-index:5;transition:opacity 1.2s}
+  #boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:14px;background:#070a13;font-style:italic;letter-spacing:.05em;z-index:5;transition:opacity 1.2s}
+  /* The title card is the first thing fetched, before a single triangle exists, so it is a
+     115 KB webp rather than the 1.8 MB png it was drawn as. */
+  /* Both caps, or a phone in landscape gives the card the whole screen and pushes the line
+     underneath it off the bottom. */
+  #boot img{max-width:min(86vw,760px);max-height:60vh;width:auto;height:auto;
+    filter:drop-shadow(0 8px 40px rgba(0,0,0,.6))}
+  #boot span{opacity:.62;font-size:14px}
   #sticks .stick{position:fixed;bottom:calc(26px + env(safe-area-inset-bottom));
     width:132px;height:132px;border-radius:50%;z-index:4;touch-action:none;
     background:radial-gradient(circle,rgba(255,214,150,.09),rgba(240,235,220,.04) 58%,rgba(240,235,220,0) 74%);
@@ -109,7 +117,7 @@
 </style>
 </head>
 <body>
-<div id="boot">growing a world…</div>
+<div id="boot"><img src="images/title_image_01.webp" alt="Plutopia"><span>growing a world…</span></div>
 <div id="scrim"></div><div id="scrimB"></div>
 <div id="hud"><div id="hudHead"><h1>Plutopia</h1><div class="era" id="era">The Quiet</div></div>
   <div id="hudBody" hidden><div id="stats"></div><div id="perf"></div></div></div>
@@ -163,7 +171,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b45';
+const BUILD = 'b46';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1499,6 +1507,8 @@ class LanternTree {
     this.fruitGl = glowPoints('#ffbe6a', 2.6, .5, lights); this.fruitG.add(this.fruitGl);
     this.glow = glow('#ffb45c', 0, .45); this.glow.position.y = h + .3; this.g.add(this.glow);
     scene.add(this.g); this.applyScale();
+    const pm = PLANT_MODELS[this.constructor.name];
+    if (pm) attachPlantModel(this, pm);
     this.ob = obAdd(x, z, elder ? 2.1 : 1.25, this);
   }
   applyScale() { const s = .12 + .88 * this.growth; this.g.scale.setScalar(s); }
@@ -2232,6 +2242,16 @@ function stepRig(r, dt, speed, grounded, ctx) {
 // for a species. Plants are not rigged, so this is only a mesh: the class keeps its growth,
 // its sway, its pulse and its glow.
 const PLANT_MODELS = {
+  // The tree is a taller plant of the same family. Its own height is kept -- an elder stands
+  // twice a young one -- and the crop of lantern fruit is lifted out of the primitive canopy
+  // and hung in the model's, because the fruit is the species and the trunk was scenery.
+  LanternTree: {
+    url: 'models/alien_tree_01.glb',
+    height: p => p.h * 1.34,
+    keep: ['fruitG'],
+    keepY: p => p.h * 1.02,
+    glowY: p => p.h * 1.02,
+  },
   // Ground cover, and the one there are most of: 115 of these at 2,254 triangles is a
   // quarter of a million, which is what the primitive tufts already cost between them.
   MossTuft: { url: 'models/alien_plant_02.glb', height: 1.5 },
@@ -2269,24 +2289,39 @@ function plantGlow(mat, cfg) {
   PLANT_GLOW.push({ uni, k: cfg.k });
   return uni;
 }
-// Hangs a static model on a plant and hides the primitives it stood in for. No rig, no
+// Hangs a static model on a plant and darkens the primitives it stood in for. No rig, no
 // clips: everything that moves about a plant is the class's own doing.
+//
+// `keep` names the parts that ARE the species rather than a stand-in for its shape -- a
+// lantern tree's crop of fruit is the reason the species exists, and the trunk under it is
+// just a trunk. Those are lifted onto the model at `keepY` and everything else goes dark.
+// `height` and `keepY` take a number or a function of the plant, so a species that varies its
+// own size (an elder tree against a young one) keeps varying it.
 function attachPlantModel(plant, cfg) {
   loadModel(cfg.url, e => {
     if (!plant.alive) return;
-    if (!e.root.userData.plantGlow) {
+    const num = (v, d) => v === undefined ? d : (typeof v === 'function' ? v(plant) : v);
+    if (cfg.glow && !e.root.userData.plantGlow) {
       e.root.userData.plantGlow = true;
       e.root.traverse(o => { if (o.isMesh && o.material) plantGlow(o.material, cfg.glow); });
     }
+    // the parts the class means to go on using, and everything under them
+    const kept = new Set();
+    for (const k of cfg.keep || []) { const o = plant[k]; if (o) o.traverse(c => kept.add(c)); }
+    plant.g.traverse(o => { if ((o.isMesh || o.isPoints) && !kept.has(o)) o.visible = false; });
+    for (const k of cfg.keep || []) {
+      const o = plant[k]; if (!o) continue;
+      plant.g.add(o);                                  // off the primitive canopy, onto the model
+      o.position.y = num(cfg.keepY, o.position.y);
+    }
     const inst = cloneModel(e.root);
-    const h = e.box.max.y - e.box.min.y, s = h > 1e-4 ? cfg.height / h : 1;
+    const H = num(cfg.height, 1), h = e.box.max.y - e.box.min.y, s = h > 1e-4 ? H / h : 1;
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.rotation.y = rnd(Math.PI * 2);
     inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     plant.g.add(inst); plant.model = inst;
-    for (const c of plant.g.children) if (c !== inst && c !== plant.head) c.visible = false;
-    if (plant.head) for (const c of plant.head.children) if (c !== plant.glow) c.visible = false;
-    if (plant.glow) plant.glow.position.y = cfg.glowY - (plant.head ? plant.head.position.y : 0);
+    if (plant.glow && cfg.glowY !== undefined)
+      plant.glow.position.y = num(cfg.glowY) - (plant.glow.parent === plant.head && plant.head ? plant.head.position.y : 0);
   });
 }
 
