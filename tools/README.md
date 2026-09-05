@@ -1248,6 +1248,31 @@ sixty-eight.
 It reads height above the **sea**, not above the ground: on a mountain top you are still
 standing in the air you breathe, and the sky should not go black on a walk up a hill.
 
+### The sky
+
+Thin atmosphere on a world a long way from anything. The zenith is nearly space even at
+noon — deep indigo going almost black — and only the last few degrees above the horizon hold
+any haze. `SKY.day.top` is the knob that sets how far that goes.
+
+The stars **never go all the way out**: a third of their brightness survives noon, which is
+the single cheapest thing that says this is not Earth. Behind them is a galaxy — `uNeb`, a
+band of noise across one axis of the dome, brightest at night and from altitude.
+
+Two bodies hang in the sky, drawn in the dome's fragment shader by `orb()`: a banded gas
+giant and a small pale moon. Each is a disc lit from the sun like everything else, so it
+carries a real phase rather than being a sticker — the normal is the sphere's, exact for a
+body seen from far enough away, one square root. They live in the dome's own frame, which is
+rotated to wherever you are standing, so they keep their place in the sky as you walk.
+
+Two things learned putting them there. **They have to hang low.** The walking camera's pitch
+is fixed at `CAM_POL` and the frame only reaches about eleven degrees above the horizon; the
+first pair sat at twenty-two and twelve degrees and one of them was simply never on screen.
+And **the night side needs a floor** — at 5% the phase was physically correct and read as a
+hole cut in the sky.
+
+`uOrbA` / `uOrbB` are the directions, the `orb()` call sites carry the angular radius and
+tint, and the second argument to the banded one turns the stripes on.
+
 ### The environment map
 
 `images/HDRI_01_2K.jpg` is a 2048×1024 equirect panorama, prefiltered through
@@ -1256,9 +1281,18 @@ here is procedural, runs a full day-night cycle and has weather in it, and a fix
 photograph lighting the whole island would flatten all of that and light the world at noon at
 midnight.
 
-It is opt-in per model instead — `envUse(root, k)` — and only two things use it: the ship's
-hull and the letters in the meadow, the two surfaces you walk right up to, where a real
-reflection beats any amount of roughness tuning. `updateSky` scales every registered
+It is opt-in per model instead — `envUse(root, k)` — and **only three things use it**: the
+ship's hull, the letters in the meadow and the buildings. That is three or four materials out
+of several hundred, which is worth knowing before blaming it for anything: it cannot be
+responsible for how the world as a whole looks, and when the game read as glossy the cause
+was elsewhere.
+
+Where it was: the models' own material values. `alien_plant_01_game` arrives at **roughness
+0.36** — wet plastic — and the ship at 0.70 with a quarter metalness. A specular highlight
+sliding over a hand-painted texture is exactly what breaks a flat, drawn look, so `prepModel`
+now forces `MODEL.rough.prop` (0.93) on scenery, `MODEL.rough.body` (0.74) on rigs and the
+hull, and caps metalness at `MODEL.metalCap`. Whatever a generator hands over, the island
+stays matte. `updateSky` scales every registered
 material's `envMapIntensity` with the sun, so the hull goes dark at night with everything
 else. `ENV.k` is the global strength.
 

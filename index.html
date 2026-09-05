@@ -1135,20 +1135,47 @@ const skyUni = {
   // Climb -- in the ship, or on the title screen, where the shot is a hundred units up --
   // and the dome darkens toward space instead of staying the same pale daylight haze it is
   // at sea level, which is the single thing that made every high shot look washed out.
-  uHigh: { value: 0 }
+  uHigh: { value: 0 },
+  // Two bodies hanging in the sky, and how much of the galaxy shows behind them. They live
+  // in the dome's own frame, which is rotated to wherever you are standing, so they keep
+  // their place in the sky as you walk -- which is what a moon does.
+  // Low, deliberately. The walking camera's pitch is fixed at CAM_POL and the frame reaches
+  // about eleven degrees above the horizon; the first pair sat at twenty-two and twelve, so
+  // one of them was never on screen and the other only just. Down here they hang over the sea
+  // where you cannot miss them, which is the better picture anyway.
+  uOrbA: { value: new THREE.Vector3(.46, .135, -.88).normalize() },
+  uOrbB: { value: new THREE.Vector3(-.72, .075, .69).normalize() },
+  uNeb: { value: 0 }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
   vertexShader: `varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
   fragmentShader: `
     uniform vec3 uTop,uMid,uLow,uSunCol; uniform vec3 uSun; uniform float uSunI;
-    uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh; uniform vec2 uWind; varying vec3 vD;
+    uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh,uNeb; uniform vec2 uWind; varying vec3 vD;
+    uniform vec3 uOrbA,uOrbB;
     // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hsh(i),hsh(i+vec2(1.0,0.0)),f.x), mix(hsh(i+vec2(0.0,1.0)),hsh(i+vec2(1.0,1.0)),f.x), f.y); }
     float fbm(vec2 p){ float v=0.0, a=0.5; for(int i=0;i<4;i++){ v+=a*vno(p); p=p*2.03+vec2(17.3,9.1); a*=0.5; } return v; }
     vec3 hue(float h){ return clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0, 0.0, 1.0); }
+    // A body in the sky: a disc, lit from the sun like everything else, so it carries a real
+    // phase instead of being a flat sticker. The normal below is the sphere's, at this point
+    // of the disc -- exact for a sphere seen from far enough away, and one square root.
+    vec4 orb(vec3 d, vec3 dir, float ang, vec3 tint, float bands, vec3 sn){
+      float c = dot(d, dir), ca = cos(ang);
+      if (c < ca) return vec4(0.0);
+      float sa = clamp(sqrt(max(0.0, 1.0 - c*c)) / sin(ang), 0.0, 1.0);   // 0 centre, 1 limb
+      vec3 u = normalize(d - dir*c + vec3(1e-5));
+      vec3 n = normalize(dir*sqrt(max(0.0, 1.0 - sa*sa)) + u*sa);
+      float lam = clamp(dot(n, sn), 0.0, 1.0);
+      // The night side keeps a floor. At 0.05 the phase was physically right and read as a
+      // hole cut in the sky; a body that big should still be a body when it is not lit.
+      vec3 col = tint * (0.17 + 0.83*lam*lam);
+      if (bands > 0.5) col *= 0.70 + 0.46*(0.5 + 0.5*sin(n.y*13.0 + vno(vec2(n.y*6.0, 0.7))*4.0));
+      return vec4(col, smoothstep(1.0, 0.955, sa));
+    }
     void main(){
       vec3 d = normalize(vD);
       float h = d.y;
@@ -1180,6 +1207,20 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         float t = (ang - 40.4) / 2.2;
         float bw = smoothstep(0.0, 0.2, t) * smoothstep(1.0, 0.8, t);
         c += hue((1.0 - t) * 0.72) * bw * uRainbow * smoothstep(0.0, 0.08, h) * 0.52 * (1.0 - cl * 0.7);
+      }
+      // The galaxy, in a band across one axis of the sky. It is behind the clouds and behind
+      // the bodies, so it goes in before both.
+      if (uNeb > 0.003) {
+        float g = fbm(d.xz*2.3 + d.y*1.7 + 5.0);
+        float band = exp(-pow(abs(dot(d, vec3(0.36, 0.58, -0.73)))*2.4, 2.0));
+        c += mix(vec3(0.34,0.17,0.55), vec3(0.10,0.36,0.46), fbm(d.xz*1.1 + 9.0))
+             * g*g*g * band * uNeb * (1.0 - cl*0.85);
+      }
+      {   // the two bodies, the far one first so the near one draws over it
+        vec4 ob = orb(d, uOrbB, 0.052, vec3(0.80,0.82,0.90), 0.0, sn);
+        c = mix(c, ob.rgb, ob.a * (1.0 - cl*0.9));
+        vec4 oa = orb(d, uOrbA, 0.145, vec3(0.86,0.62,0.44), 1.0, sn);
+        c = mix(c, oa.rgb, oa.a * (1.0 - cl*0.9));
       }
       c += uFlash * vec3(0.85, 0.92, 1.05) * (0.45 + 0.9 * cl);
       // thinner air with height, and thinnest straight up: the horizon keeps its haze
@@ -2399,6 +2440,7 @@ const MODEL = {
   // read back had nothing at all in its lowest lightness decile, which is most of why the
   // island looked flat. A tenth is enough to keep a silhouette from disappearing.
   forceOpaque: true, ambientLift: .2, rateMin: .6, rateMax: 2.6,
+  rough: { body: .74, prop: .93 }, metalCap: .06,
   // Where the walk gives way to the run, as a fraction of the thing's own top speed —
   // not of the clip's authored pace, which is a different number entirely and much smaller.
   runAt: .42, runFull: .74,
@@ -2493,6 +2535,16 @@ function prepModel(root) {
       // finding a solid wall of backfaces there. A body keeps both sides, being the one
       // thing you might see the inside of and mind.
       if (!onBody.has(m) && m.side === THREE.DoubleSide) { m.side = THREE.FrontSide; m.needsUpdate = true; }
+      // Matte, because this world is meant to read flat and drawn rather than lit. What the
+      // generators hand over is all over the place -- one plant arrived at roughness .36,
+      // which is wet plastic, and the ship at .70 with a quarter metalness -- and a specular
+      // highlight sliding over a hand-painted texture is exactly what breaks a cel look.
+      // The hull is allowed to stay a little glossier than a leaf; nothing keeps metalness.
+      if (m.roughness !== undefined) {
+        m.roughness = Math.max(m.roughness, onBody.has(m) ? MODEL.rough.body : MODEL.rough.prop);
+        m.metalness = Math.min(m.metalness || 0, MODEL.metalCap);
+        m.needsUpdate = true;
+      }
       for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
         const t = m[k]; if (!t || seen.has(t)) continue; seen.add(t); saved += shrinkTexture(t);
       }
@@ -5617,8 +5669,13 @@ const SKY = {
 // A deep blue overhead going to a clean pale horizon, rather than the white haze it was.
 // The top has to hold its colour: it is a third of most frames, and a washed one gives the
 // whole image away.
-SKY.dusk = { top: new THREE.Color(0x2a3a72), mid: new THREE.Color(0xc06a80), low: new THREE.Color(0xeda269), fog: new THREE.Color(0xc98a6c), hs: new THREE.Color(0xe09a70), hg: new THREE.Color(0x342630), sun: new THREE.Color(0xff9c4a) };
-SKY.day  = { top: new THREE.Color(0x1e5cb0), mid: new THREE.Color(0x6aa6d4), low: new THREE.Color(0x93bdd6), fog: new THREE.Color(0x8fb8d4), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x3d4436), sun: new THREE.Color(0xfff2d8) };
+// A thin atmosphere on a world a long way from anything. Overhead is nearly space even at
+// noon -- deep indigo going almost black at the zenith -- and only the last few degrees above
+// the horizon hold any haze. That is where the "outer spacey" read comes from, and it is why
+// the stars never go all the way out. `hs` and `hg` stay brighter than the dome on purpose:
+// they light the island, and a dark sky is not an excuse for a dark world.
+SKY.dusk = { top: new THREE.Color(0x1a1f52), mid: new THREE.Color(0x8e4f74), low: new THREE.Color(0xd88f5e), fog: new THREE.Color(0xa8734f), hs: new THREE.Color(0xe09a70), hg: new THREE.Color(0x342630), sun: new THREE.Color(0xff9c4a) };
+SKY.day  = { top: new THREE.Color(0x0a1030), mid: new THREE.Color(0x24406e), low: new THREE.Color(0x7d93a8), fog: new THREE.Color(0x5f7893), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x3d4436), sun: new THREE.Color(0xfff2d8) };
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
 const tmpG = new THREE.Color();
 const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new THREE.Vector3(), _skyV2 = new THREE.Vector3();
@@ -5677,7 +5734,10 @@ function updateSky() {
   // still standing in the air you breathe, and the sky should not go black on a walk up it.
   skyUni.uHigh.value = lerp(skyUni.uHigh.value, smooth(60, 250, camS.y - SEA), Math.min(1, .06));
   scene.fog.color.lerp(FOG_HIGH, skyUni.uHigh.value * .55);
-  stars.material.uniforms.uOp.value = Math.max(world.night, skyUni.uHigh.value * .85);
+  // The stars never go all the way out: thin air, and it is the single cheapest thing that
+  // says this is not Earth. A third of their brightness survives noon.
+  skyUni.uNeb.value = lerp(.10, .85, Math.max(world.night, skyUni.uHigh.value * .8)) * (1 - WX.cloud * .7);
+  stars.material.uniforms.uOp.value = Math.max(.34, Math.max(world.night, skyUni.uHigh.value * .85));
   stars.material.uniforms.uT.value = world.clock; stars.rotation.y = world.clock * .004;
   M.lantern.emissiveIntensity = lerp(.4, 3.2, world.night);
   for (const m of M.bloom) m.emissiveIntensity = lerp(.3, 1.6, world.night);
