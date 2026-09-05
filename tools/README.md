@@ -951,6 +951,51 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 The sphere is the first piece of a larger shape, written down here so the next change knows
 what it is building toward. Nothing below this paragraph exists yet.
 
+### Decided: split the file into modules, as step one of multi-world
+
+Not before, and not later. The trigger is the second planet — do it as the first commit of
+that work, while there is still only one world in the file.
+
+**Why then.** `height()`, `CENTERS`, `RANGE`, `MESA`, `LAGOON`, `STACKS` — the shape of this
+particular island — currently share a scope with the renderer. A second planet turns that
+into data, so the content/engine seam appears on its own and the cut is natural rather than
+arbitrary. Splitting first and adding worlds second means one refactor instead of two.
+
+**Why not now.** A 276-symbol export refactor produces no new behaviour and carries real
+risk: a `const` referenced above its declaration silently takes the rest of the file with it,
+which has happened twice, and circular imports make that class of failure worse before it
+gets better. Nothing about the current file is blocking the work in front of it.
+
+**What it is, concretely.** Native ES modules — `import`/`export` and a
+`<script type="module">` in a thin `index.html`. **Still no build step**: browsers have
+shipped this since 2018 and GitHub Pages serves it unchanged, so the push-to-preview loop
+that this project runs on does not change at all. Not a bundler (one runtime dependency, and
+it is already a CDN tag). Not JSX (the entire UI is ninety lines of CSS and a handful of
+divs; there is no component tree to express).
+
+Rough shape, following the section comments the file already has:
+
+    src/core/     noise, the planet projection, world constants
+    src/world/    terrain, water, grass, sky, weather
+    src/life/     the Creature base and the species
+    src/player/   movement, rig, camera, input
+    src/ship/
+    src/ui/       map, HUD, sticks
+    index.html    CSS, markup, one <script type="module" src="src/main.js">
+
+**What it actually buys.** Not performance — the runtime is identical, and cold start is a
+hair slower for a few more requests. Two things: the file becomes readable by a person, and
+the seven check tools stop being held together with string matching. Every one of them
+currently slices the `<script>` block out of the HTML with a regex and `eval`s it; two slice
+*sub-ranges* by searching for literal source text. That has broken twice — once when the
+planet projection was inserted into a range `terrain.js` was slicing, once when the game was
+renamed and all six lost the file at once. With modules they would just import what they
+test.
+
+**What protects the refactor.** The seven check scripts: terrain field, water shader, 6000
+sim frames, the ship's sortie and piloted run, the gait probe, the mote swirl, and the model
+parser. Run all of them either side of the split; a regression has somewhere to show up.
+
 **Many small worlds.** Plutopia becomes one planet among several, each with its own
 properties — a water world, a jungle world, different gravity, different species. The ship
 already flies; it becomes the way between them. Most of what that needs is in place: the
