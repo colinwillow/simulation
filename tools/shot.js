@@ -14,6 +14,7 @@
 //   --near X     stand beside the nearest plant of class X (Bloom, Mushroom, LanternTree...)
 //   --vibe       report whether a rigged plant's procedural joints are actually turning
 //   --probe      also report what the sun's shadow pass costs, in calls and triangles
+//   --palette    report what the frame is made of: hue spread, saturation, value range
 //   --title      shoot the title screen instead, before the world is entered
 //   --intro-t    seconds along the title screen's crane to jump to (0 wide, 26 near)
 //
@@ -30,7 +31,7 @@ const WAIT = +arg('wait', 6);
 
 // The game's script is one IIFE, so nothing inside it is reachable from the page. Splice a
 // handle onto the window just before it closes -- the same trick the headless tools use.
-const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q};';
+const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep};';
 function indexHTML() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const cut = html.lastIndexOf('})();');
@@ -171,6 +172,42 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     console.log('  casters (meshes/triangles): ' + p2.top.join('  '));
   }
 
+  // What the frame is actually made of, in colour. "It looks like a mess" is a real note but
+  // not an actionable one; this turns it into numbers -- where the hues sit, how saturated
+  // they are, and how much of the value range is being used. A frame with one dominant hue,
+  // a couple of accents and a wide value spread reads as art directed. A flat histogram with
+  // everything at the same lightness reads as a pile of assets.
+  // What a skinned plant actually costs per frame, so the question "can we rig all of them?"
+  // gets a number instead of a shrug. Times the three things a rigged plant adds -- the
+  // wobble itself, the bone matrix walk, and the skeleton's per-frame texture upload -- and
+  // scales them to however many plants there are.
+  if (has('skincost')) {
+    const c = await page.evaluate(() => {
+      const g = window.__g;
+      const rigged = g.world.plants.filter(p => p.alive && p.vibe);
+      if (!rigged.length) return null;
+      const sk = [];
+      for (const p of rigged) p.model.traverse(o => { if (o.isSkinnedMesh) sk.push(o); });
+      const bones = sk.reduce((n, m) => n + m.skeleton.bones.length, 0);
+      const time = (n, f) => { const t0 = performance.now(); for (let i = 0; i < n; i++) f(); return (performance.now() - t0) / n; };
+      const N = 400;
+      const wob = time(N, () => { for (const p of rigged) g.vibeStep(p.vibe, g.world.clock, null); });
+      const mat = time(N, () => { for (const p of rigged) p.model.updateMatrixWorld(true); });
+      const upd = time(N, () => { for (const m of sk) m.skeleton.update(); });
+      return { plants: rigged.length, meshes: sk.length, bones, wob, mat, upd, total: g.world.plants.length };
+    });
+    if (!c) console.log('skincost: nothing rigged in this world');
+    else {
+      const per = (c.wob + c.mat + c.upd) / c.plants;
+      console.log('skincost: ' + c.plants + ' rigged plants, ' + c.bones + ' bones, '
+        + (c.wob + c.mat + c.upd).toFixed(2) + ' ms/frame'
+        + ' (wobble ' + c.wob.toFixed(2) + ', matrices ' + c.mat.toFixed(2) + ', skeletons ' + c.upd.toFixed(2) + ')');
+      console.log('  = ' + (per * 1000).toFixed(0) + ' microseconds per plant, so all '
+        + c.total + ' rigged would be about ' + (per * c.total).toFixed(1) + ' ms/frame of CPU'
+        + ' (a 60fps budget is 16.7)');
+    }
+  }
+
   // Are the procedural joints actually turning? A still frame cannot tell you, so sample a
   // rigged plant's bones across a second of world time and report the widest swing in degrees.
   if (has('vibe')) {
@@ -210,6 +247,50 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       sites: (g.world.sites || []).map(s => [s.x | 0, s.z | 0]), clock: g.world.clock | 0 };
   });
   console.log(OUT, JSON.stringify(info));
+  // What the frame is actually made of, in colour. "It looks like a mess" is a real note but
+  // not an actionable one; this turns it into numbers -- where the hues sit, how saturated
+  // they are, and how much of the value range is in use. One dominant hue, a couple of
+  // accents and a wide value spread reads as art directed; a flat hue histogram with
+  // everything at one lightness reads as a pile of assets.
+  //
+  // It reads the PNG, not the live canvas: the renderer is created without
+  // preserveDrawingBuffer, so drawing the canvas into a 2D context after the frame gives
+  // black, which is what the first version of this dutifully reported.
+  if (has('palette')) {
+    const b64 = fs.readFileSync(OUT).toString('base64');
+    const pal = await page.evaluate(async src => {
+      const im = new Image();
+      await new Promise((ok, no) => { im.onload = ok; im.onerror = no; im.src = src; });
+      const w = 400, h = Math.round(w * im.height / im.width);
+      const c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
+      const g2 = c2.getContext('2d'); g2.drawImage(im, 0, 0, w, h);
+      const d = g2.getImageData(0, 0, w, h).data;
+      const hues = new Array(12).fill(0), vals = new Array(10).fill(0);
+      let n = 0, satSum = 0, satHi = 0, vSum = 0, grey = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i] / 255, gg = d[i + 1] / 255, b = d[i + 2] / 255;
+        const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), l = (mx + mn) / 2;
+        const sa = mx === mn ? 0 : (l > .5 ? (mx - mn) / (2 - mx - mn) : (mx - mn) / (mx + mn));
+        let hu = 0;
+        if (mx !== mn) {
+          if (mx === r) hu = ((gg - b) / (mx - mn) + (gg < b ? 6 : 0));
+          else if (mx === gg) hu = (b - r) / (mx - mn) + 2;
+          else hu = (r - gg) / (mx - mn) + 4;
+          hu /= 6;
+        }
+        n++; satSum += sa; vSum += l;
+        if (sa < .12) grey++; else { hues[Math.min(11, hu * 12 | 0)]++; if (sa > .45) satHi++; }
+        vals[Math.min(9, l * 10 | 0)]++;
+      }
+      return { n, hues, vals, sat: satSum / n, val: vSum / n, grey: grey / n, satHi: satHi / n };
+    }, 'data:image/png;base64,' + b64);
+    const NAMES = ['red', 'orange', 'yellow', 'chartreuse', 'green', 'spring', 'cyan', 'azure', 'blue', 'violet', 'magenta', 'rose'];
+    const top = pal.hues.map((v, i) => [NAMES[i], v / pal.n]).sort((a, b) => b[1] - a[1]);
+    console.log('palette: mean saturation ' + pal.sat.toFixed(2) + ', mean lightness ' + pal.val.toFixed(2)
+      + ', near-grey ' + (pal.grey * 100 | 0) + '%, strongly saturated ' + (pal.satHi * 100 | 0) + '%');
+    console.log('  hues:  ' + top.slice(0, 6).map(([k, v]) => k + ' ' + (v * 100).toFixed(0) + '%').join('   '));
+    console.log('  lightness deciles: ' + pal.vals.map(v => (v / pal.n * 100).toFixed(0)).join(' '));
+  }
   for (const p of [...new Set(problems)].slice(0, 12)) console.log('  !', p);
   await browser.close(); server.close();
 })();

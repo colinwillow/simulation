@@ -826,6 +826,19 @@ it was skinned, which was right until this file arrived — at which point every
 solid and stopped taking the see-through hole. The caller says now: `markBody()` is called by
 `attachRig` and by the ship, and by nothing else.
 
+### What a rigged plant costs
+
+Measured with `node tools/shot.js --skincost`, on fifteen rigged blooms carrying 555 bones
+between them: **0.18 ms/frame** — the wobble 0.05, the bone matrix walk 0.09, the skeletons'
+own update 0.03. That is **12 microseconds per plant**, so rigging all 231 of them would be
+about **2.7 ms/frame of CPU**, against a 16.7 ms budget at 60fps and a 50 ms one at the 20fps
+a phone was actually getting.
+
+So it is affordable and it is not free, and the honest recommendation is the obvious one:
+rig the few plants that carry a scene and leave the field static. Thirty-seven joints is also
+a lot for one plant — eight to twelve would read identically at a third of the file, which
+went 33 kB static to 113 kB rigged.
+
 ### Swapping a model onto a species
 
 One table entry:
@@ -1302,7 +1315,26 @@ node tools/shot.js --out shots/title.png  --title --wait 12      # the title scr
 It prints draw calls, triangles, the biome you are standing in, and where every site ended
 up — so it doubles as the fastest way to find out whether a structure got built at all.
 `--probe` adds what the sun's shadow pass costs and who is casting into it; `--tree` stands
-the wanderer behind the biggest modelled tree to check that scenery goes see-through.
+the wanderer behind the biggest modelled tree to check that scenery goes see-through;
+`--near <Class>` stands him beside a named plant; `--vibe` reports whether a rigged plant's
+procedural joints are turning; `--skincost` times what a skinned plant costs per frame and
+extrapolates it to every plant in the world.
+
+`--palette` reads the screenshot back and reports what the frame is made of: where the hues
+sit, the mean saturation, and the lightness histogram. "It looks like a mess" is a real note
+and a useless one; this turns it into numbers. One dominant hue with a couple of accents and
+a wide value spread is what art direction looks like from the outside. A flat hue histogram
+with two-thirds of the pixels in three middle lightness deciles is what a pile of assets
+looks like — which is what it reported the first time it was run:
+
+```
+palette: mean saturation 0.30, mean lightness 0.50, near-grey 23%, strongly saturated 16%
+  hues:  yellow 26%   chartreuse 21%   orange 10%   cyan 10%   green 4%   red 3%
+  lightness deciles: 0 3 9 18 20 24 12 6 5 1
+```
+
+Nothing in the darkest decile, one percent in the brightest, six hues all present in
+quantity and none of them dominant. Read it before and after any art change.
 
 Two things about it. It runs on swiftshader at a couple of frames a second, so **`--wait` is
 world seconds, never wall clock** — the same rule as every other harness here. And every shot
