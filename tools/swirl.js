@@ -19,7 +19,7 @@ global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,ge
   // three's TextureLoader goes through createElementNS for its <img>, and an img it can
   // never load is fine here: nothing headless samples a texture.
   createElementNS(ns, t){ if(t==='img') return {addEventListener(){},removeEventListener(){},style:{},set src(v){},get src(){return '';}}; return this.createElement(t); },
-  getElementById(id){ return els[id]||(els[id]=this.createElement('div')); }, body:{appendChild(){}} };
+  getElementById(id){ return els[id]||(els[id]=this.createElement('div')); }, body:{appendChild(){},classList:{add(){},remove(){},toggle(){}}} };
 let cbs=[]; global.requestAnimationFrame=f=>cbs.push(f); global.addEventListener=()=>{}; global.setInterval=()=>{}; global.setTimeout=()=>{};
 global.window=global;
 global.__t=0; global.performance={now:()=>global.__t};
@@ -28,8 +28,12 @@ const html=fs.readFileSync(process.argv[2]||'index.html','utf8');
 const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('const BUILD'));
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__p=player;global.__fairy=fairy;global.__mp=mp;global.__NM=NM;global.__gY=groundY;global.__DAY=DAY;global.__attr=attractors;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__p=player;global.__fairy=fairy;global.__mp=mp;global.__NM=NM;global.__gY=groundY;global.__DAY=DAY;global.__attr=attractors;'+src.slice(cut);
 eval(src);
+// The title screen parks the camera out at the planet and flies the ship round it. That is
+// the first thing a player sees and the last thing a harness wants: every tool here measures
+// the game being played, so each of them starts it.
+global.__INTRO.on = false;
 const W=global.__w, P=global.__p, F=global.__fairy, mp=global.__mp, NM=global.__NM, gY=global.__gY, DAY=global.__DAY;
 const step=()=>{ const f=cbs.shift(); global.__t+=33; f(global.__t); };
 const hold=s=>{ for(let i=0;i<Math.round(s/.033);i++) step(); };

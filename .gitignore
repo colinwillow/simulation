@@ -1,1 +1,4 @@
 node_modules/
+
+# Screenshots from tools/shot.js -- working images, a megabyte each.
+shots/

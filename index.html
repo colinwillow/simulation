@@ -114,10 +114,36 @@
   #logT{position:fixed;left:calc(16px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));z-index:3;opacity:.7}
   #log{bottom:46px}
   @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:206px}#logT{bottom:176px}#mini{width:92px;height:92px}}
+  /* The title screen is the game, seen from a long way off, so the interface has to get
+     out of the way of it -- and come back on its own once you are in. */
+  body.intro #sticks,body.intro #ui,body.intro #logT,body.intro #log,body.intro #hint,body.intro #hud{
+    opacity:0;pointer-events:none}
+  #sticks,#ui,#logT,#log,#hint,#hud{transition:opacity 1.1s ease-out}
+  #intro{position:fixed;inset:0;z-index:4;pointer-events:none;transition:opacity .7s ease-out;
+    display:flex;flex-direction:column;align-items:center;justify-content:flex-end}
+  #intro.go{opacity:0}
+  /* a soft floor to sit the control on, so it reads against sky or meadow either way */
+  #intro::before{content:'';position:absolute;left:0;right:0;bottom:0;height:42vh;
+    background:linear-gradient(to top,rgba(6,9,18,.62),rgba(6,9,18,0));pointer-events:none}
+  #introFoot{position:relative;display:flex;flex-direction:column;align-items:center;gap:12px;
+    pointer-events:auto;padding-bottom:calc(52px + env(safe-area-inset-bottom))}
+  #startB{font:inherit;font-size:15px;letter-spacing:.34em;text-transform:uppercase;
+    color:#fff3dc;background:rgba(255,214,150,.07);border:1px solid rgba(255,214,150,.5);
+    border-radius:999px;padding:13px 40px 13px 44px;cursor:pointer;
+    box-shadow:0 0 30px rgba(255,190,120,.18),inset 0 0 22px rgba(255,196,128,.09);
+    animation:startpulse 2.6s ease-in-out infinite}
+  @keyframes startpulse{0%,100%{box-shadow:0 0 26px rgba(255,190,120,.16),inset 0 0 20px rgba(255,196,128,.08)}
+    50%{box-shadow:0 0 44px rgba(255,205,140,.4),inset 0 0 26px rgba(255,196,128,.16)}}
+  #introHint{font-size:12.5px;font-style:italic;opacity:.6;letter-spacing:.04em;text-align:center;
+    padding:0 24px}
 </style>
 </head>
-<body>
+<body class="intro">
 <div id="boot"><img src="images/title_image_01.webp" alt="Plutopia"><span>growing a world…</span></div>
+<div id="intro" hidden><div id="introFoot">
+  <button id="startB">enter</button>
+  <div id="introHint">it has been going without you &middot; tap anywhere to land</div>
+</div></div>
 <div id="scrim"></div><div id="scrimB"></div>
 <div id="hud"><div id="hudHead"><h1>Plutopia</h1><div class="era" id="era">The Quiet</div></div>
   <div id="hudBody" hidden><div id="stats"></div><div id="perf"></div></div></div>
@@ -171,9 +197,9 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b48';
+const BUILD = 'b49';
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
+const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, mushroom: 54, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -279,6 +305,89 @@ function slope(x, z) { const e = 1.5; const dx = height(x + e, z) - height(x - e
 function groundY(x, z) { return Math.max(height(x, z), SEA); }
 function isLand(x, z) { return height(x, z) > SEA + 0.6; }
 function normalAt(x, z) { const e = 1.2, dx = height(x + e, z) - height(x - e, z), dz = height(x, z + e) - height(x, z - e); return new THREE.Vector3(-dx, 2 * e, -dz).normalize(); }
+
+// ---------- biomes ----------
+// The island used to be one meadow with a mountain in it: the same grass, the same trees,
+// the same density, everywhere the height field allowed. A biome is a claim on a patch of
+// ground -- what colour it is, what grows there, how thickly, and what somebody built on
+// it -- and everything downstream reads this one function: the terrain's vertex colours,
+// the scatter, the flora, the sites the structures pick.
+//
+// It is scored rather than partitioned. Every biome says how much it wants a point, the
+// loudest wins, and how far ahead it is of the runner-up is the difference between the
+// heart of a region and its edge. Nothing has a border drawn on a map; the fields overlap
+// and the answer changes gradually, which is what stops the island reading as tiles.
+//
+// Moisture is the axis the height field does not already provide. Broad noise bands run
+// across the island, the lagoon soaks the ground around it, and low ground sits nearer the
+// water table than high ground does.
+function moisture(x, z, h) {
+  if (h === undefined) h = height(x, z);
+  const n = fbm(x * .0052 + 71.3, z * .0052 + 19.7, 4);
+  const lag = smooth(LAGOON.r * 2.1, LAGOON.r * .5, Math.hypot(x - LAGOON.x, z - LAGOON.z));
+  return clamp((n - .18) * 1.5 + lag * .45 + smooth(9, 1.5, h) * .18, 0, 1);
+}
+const BIOMES = ['coast', 'wetland', 'jungle', 'pasture', 'scrub', 'highland', 'ash'];
+const _bio = { name: 'pasture', k: 0, edge: 0, wet: 0, s: {} };
+function biomeAt(x, z, h, sl, out) {
+  out = out || _bio;
+  if (h === undefined) h = height(x, z);
+  if (sl === undefined) sl = slope(x, z);
+  const wet = out.wet = moisture(x, z, h), S = out.s;
+  const flat = 1 - clamp((sl - .2) * 2.4, 0, 1);
+  S.coast    = smooth(SEA + 4.4, SEA + .3, h) * 1.2;
+  S.ash      = smooth(CHASM.r * 3.6, CHASM.r * 1.2, Math.hypot(x - CHASM.x, z - CHASM.z)) * 1.45;
+  S.highland = smooth(12, 21, h) * 1.15 + clamp((sl - .75) * .8, 0, .5);
+  // A swamp is low AND genuinely wet. Reading `wet` straight and letting it run to twelve
+  // units up made it 38% of the island's land and pasture 6%, which is not an island with a
+  // marsh on it -- it is a marsh with an island in it.
+  S.wetland  = smooth(.5, .82, wet) * smooth(7.5, 1.5, h) * flat * 1.3;
+  S.jungle   = smooth(.4, .74, wet) * smooth(2.4, 7, h) * (1 - smooth(14, 21, h)) * 1.25;
+  // and the meadow takes a band of moisture rather than one value of it
+  S.pasture  = (1 - Math.abs(wet - .42) * 1.15) * flat * smooth(2.2, 5.5, h) * (1 - smooth(11, 17, h)) * 1.4;
+  S.scrub    = smooth(.5, .12, wet) * smooth(2.8, 7, h) * (1 - smooth(15, 23, h)) * 1.15;
+  let bn = 'scrub', bk = -1e9, sec = -1e9;
+  for (let i = 0; i < BIOMES.length; i++) {
+    const v = S[BIOMES[i]];
+    if (v > bk) { sec = bk; bk = v; bn = BIOMES[i]; } else if (v > sec) sec = v;
+  }
+  out.name = bn; out.k = clamp(bk, 0, 1);
+  out.edge = clamp((bk - sec) * 3.2, 0, 1);        // 0 on a boundary, 1 in the heart of one
+  return out;
+}
+// A site in a named biome, for anything that has to be built somewhere specific. Falls
+// through to whatever ground fits if the biome cannot supply a clear spot -- an island
+// generated small or wet may simply not have a pasture, and no structure is worth
+// crashing over.
+// Pick a spot the way randomLand does, but keep it only as often as the biome there wants
+// this species. A weight of 1 means "everywhere you'd take it anyway", 0 means "not here",
+// and the biome's own strength decides how firmly it gets to say so -- on a boundary
+// nothing is refused very hard, which is what stops a species stopping at a line.
+function randomFor(w, minH = 1.4, maxH = 12, maxSl = .8, tries = 120, clear = 2.2) {
+  for (let i = 0; i < tries; i++) {
+    const p = randomLand(minH, maxH, maxSl, 1, clear); if (!p) continue;
+    const k = w[biomeAt(p.x, p.z).name];
+    if (Math.random() < lerp(1, k === undefined ? 0 : k, _bio.k * (.5 + .5 * _bio.edge))) return p;
+  }
+  return null;
+}
+const FLORA = {
+  tree:     { jungle: 1, wetland: .55, scrub: .42, pasture: .26, coast: .16, highland: .12, ash: .1 },
+  moss:     { wetland: 1, jungle: .9, pasture: .42, coast: .34, scrub: .2, highland: .12, ash: .07 },
+  bloom:    { pasture: 1, wetland: .72, jungle: .5, scrub: .3, coast: .24, highland: .1, ash: .05 },
+  mushroom: { jungle: 1, wetland: .95, ash: .5, pasture: .14, scrub: .1, coast: .1, highland: .05 },
+};
+function randomBiome(name, minH = 1.4, maxH = 14, maxSl = .6, tries = 900, clear = 3, minEdge = .12) {
+  let best = null, bestK = -1;
+  for (let i = 0; i < tries; i++) {
+    const p = randomLand(minH, maxH, maxSl, 1, clear); if (!p) continue;
+    const b = biomeAt(p.x, p.z);
+    if (b.name !== name || b.edge < minEdge) continue;
+    const k = b.k * b.edge;
+    if (k > bestK) { bestK = k; best = p; }
+  }
+  return best;
+}
 
 // ---------- the planet ----------
 // The world is still authored, simulated and reasoned about as a flat chart in (x, z):
@@ -399,6 +508,37 @@ document.body.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.5, 1600);
 const gl = renderer.getContext();
 const HALF = !!(gl.getExtension('EXT_color_buffer_half_float') || gl.getExtension('OES_texture_half_float'));
+
+// ---------- the sky's reflection ----------
+// A 2048x1024 equirect panorama, prefiltered into a cubemap once at start-up.
+//
+// It is deliberately NOT scene.environment. The sky here is procedural, runs a whole
+// day-night cycle and has weather in it; a fixed photograph lighting the whole island
+// would flatten all of that and light the world at noon at midnight. What a real
+// environment map is worth having for is the handful of surfaces you walk right up to --
+// the ship's hull, and the letters standing in the meadow -- where a genuine reflection
+// beats any amount of roughness tuning. So it is opt-in per model, and its strength
+// follows the sun, so at night the hull goes dark along with everything else.
+const ENV = { url: 'images/HDRI_01_2K.jpg', map: null, mats: [], k: .7 };
+function envUse(root, k = 1) {
+  root.traverse(o => {
+    for (const m of [].concat(o.material || [])) {
+      if (!m || !m.isMeshStandardMaterial || m.userData.envK) continue;
+      m.userData.envK = k; ENV.mats.push(m);
+      if (ENV.map) { m.envMap = ENV.map; m.needsUpdate = true; }
+    }
+  });
+}
+(() => {
+  if (!THREE.PMREMGenerator || !THREE.TextureLoader) return;
+  new THREE.TextureLoader().load(ENV.url, t => {
+    t.mapping = THREE.EquirectangularReflectionMapping;
+    const p = new THREE.PMREMGenerator(renderer);
+    ENV.map = p.fromEquirectangular(t).texture;
+    t.dispose(); p.dispose();
+    for (const m of ENV.mats) { m.envMap = ENV.map; m.needsUpdate = true; }
+  }, undefined, () => console.warn('no environment map; hulls stay matte'));
+})();
 
 // ---------- palette ----------
 const P = {
@@ -563,12 +703,18 @@ function mergeBin(bin) {
       total += n; idxTotal += g.index ? g.index.count : n;
     }
     const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3);
+    // uvs only when every part in this material group has them, which is how a textured
+    // model gets merged and an untextured primitive still costs nothing. flatten() still
+    // refuses anything with a map, because there the materials differ part to part.
+    const withUV = parts.every(g => g.attributes.uv);
+    const uvs = withUV ? new Float32Array(total * 2) : null;
     const idx = total > 65535 ? new Uint32Array(idxTotal) : new Uint16Array(idxTotal);
     let v = 0, i = 0;
     for (const g of parts) {
       const n = g.attributes.position.count;
       pos.set(g.attributes.position.array, v * 3);
       if (g.attributes.normal) nor.set(g.attributes.normal.array, v * 3);
+      if (uvs) uvs.set(g.attributes.uv.array, v * 2);
       if (g.index) { const a = g.index.array; for (let k = 0; k < a.length; k++) idx[i++] = a[k] + v; }
       else for (let k = 0; k < n; k++) idx[i++] = k + v;
       v += n; g.dispose();
@@ -576,6 +722,7 @@ function mergeBin(bin) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    if (uvs) geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
     const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; out.push(m);
   }
@@ -917,7 +1064,20 @@ scene.fog = new THREE.FogExp2(0xa7c8e6, .0038);
 // tint: how much the terrain's own grass colour still tints the texture on the meadow.
 // At 1 the map is stained green and only its relief survives; at 0 the island loses its
 // zoning and becomes one tiled material. Just under a half keeps both.
-const GROUND = { tile: 7, boost: 1.05, normal: .85, tint: .68 };
+const GROUND = { tile: 7, boost: .88, normal: .85, tint: .68 };
+// What each biome does to the ground under it. `col` is the stain laid over whatever the
+// height field already chose, `k` how hard, and `tex` how much of the tiled ground map
+// survives there -- the map is a meadow surface, so a swamp and a burnt-over ash flat keep
+// most of their own colour and a cliff keeps all of it.
+const BIOME_GROUND = {
+  coast:    { col: col('#cdb488'), k: .22, tex: .35 },
+  wetland:  { col: col('#4a7148'), k: .52, tex: .45 },
+  jungle:   { col: col('#2c6a4c'), k: .54, tex: .62 },
+  pasture:  { col: col('#8fbb62'), k: .30, tex: 1 },
+  scrub:    { col: col('#a99a5c'), k: .44, tex: .85 },
+  highland: { col: col('#7d7770'), k: .22, tex: .3 },
+  ash:      { col: col('#57463d'), k: .62, tex: .28 },
+};
 // A polar grid instead of a square one: rings running out from the chart origin and spokes
 // running round it, which is the shape the projection wants. Rings are packed tight over the
 // island and open out across the empty ocean beyond it, so the far side of the planet costs
@@ -980,7 +1140,13 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
       c.lerp(c2, clamp((sl - .6) * 1.7, 0, 1) * clamp((h - .5) / 2, 0, 1));
     }
     if (h > 24) c.lerp(P.snow, smooth(27, 40, h) * (1 - clamp((sl - 1.0) * 1.1, 0, 1)));
-    land[i] = smooth(SEA + .8, SEA + 3.4, h) * (1 - smooth(11, 17, h)) * (1 - clamp((sl - .55) * 1.8, 0, 1));
+    // and then the region it is in gets a say. Only a stain -- the height field still
+    // decides sand, rock and snow -- but enough of one that walking from the pasture into
+    // the jungle is a thing you can see from across the valley.
+    const bg = BIOME_GROUND[biomeAt(x, z, h, sl).name];
+    const bk = _bio.k * (.4 + .6 * _bio.edge);
+    c.lerp(bg.col, bg.k * bk);
+    land[i] = smooth(SEA + .8, SEA + 3.4, h) * (1 - smooth(11, 17, h)) * (1 - clamp((sl - .55) * 1.8, 0, 1)) * lerp(1, bg.tex, bk);
     c.offsetHSL((fbm(x * .3, z * .3, 2) - .5) * .02, 0, (fbm(x * .5, z * .5, 3) - .5) * .07);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
   }
@@ -1269,17 +1435,26 @@ const grass = (() => {
   const n = Q.grass, im = new THREE.InstancedMesh(G.leaf, grassMat, n);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), q2 = new THREE.Quaternion(), pos = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
   let k = 0, guard = 0;
+  // How thickly grass grows in each region, and how tall. An even carpet everywhere was the
+  // single biggest reason the island read as one place: the pasture should be deep in it and
+  // the ash flat should be nearly bare, and that difference is visible from a long way off.
+  const GRASS_BIOME = { pasture: [1, 1.25], wetland: [.95, 1.45], jungle: [.7, 1.1],
+    scrub: [.34, .72], coast: [.5, .85], highland: [.16, .5], ash: [.08, .45] };
   while (k < n && guard++ < n * 30) {
     const x = rnd(-W * .96, W * .96), z = rnd(-W * .96, W * .96), h = height(x, z);
-    if (h < .6 || h > 15 || slope(x, z) > 1.1) continue;
+    const sl0 = slope(x, z);
+    if (h < .6 || h > 15 || sl0 > 1.1) continue;
+    const gb = GRASS_BIOME[biomeAt(x, z, h, sl0).name];
+    if (Math.random() > lerp(1, gb[0], _bio.k * (.5 + .5 * _bio.edge))) continue;
     const nr = normalAt(x, z);
     q2.setFromUnitVectors(up, nr.lerp(up, .45).normalize());
     q2.multiply(new THREE.Quaternion().setFromAxisAngle(up, rnd(Math.PI * 2)));
     planetQ(x, z, q).multiply(q2);            // one instanced mesh, so the wrap is baked in
-    const tall = rnd(1.3, 3.1) * (h > 12 ? .6 : 1);
+    const tall = rnd(1.3, 3.1) * (h > 12 ? .6 : 1) * gb[1];
     planetPos(x, h - .1, z, pos); sc.set(rnd(.8, 1.4), tall, 1);
     m.compose(pos, q, sc); im.setMatrixAt(k, m);
     c.copy(P.grass).lerp(P.grass2, rnd()).offsetHSL(rnd(-.03, .03), rnd(-.1, .1), rnd(-.12, .1));
+    c.lerp(BIOME_GROUND[_bio.name].col, .45 * _bio.k);
     if (h < 2.2) c.lerp(P.sand, .35);
     im.setColorAt(k, c);
     k++;
@@ -1816,6 +1991,34 @@ class MossTuft {
   update(dt) { if (this.size < 1) { this.size = Math.min(1, this.size + dt * .018); this.apply(); } }
   dispose() { scene.remove(this.g); }
 }
+// The mushroom. It is the one plant that lights the ground under it instead of the air
+// above, so it goes in the damp and the shade -- low ground, and the floor of the grove --
+// and it comes up in clumps, because one mushroom on its own has never looked right.
+class Mushroom {
+  constructor(x, z, size = 1) {
+    this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.size = size;
+    this.cap = rnd(1.5, 3.4);
+    this.g = new THREE.Group(); this.g.position.copy(this.pos); alignTo(this.g, x, z, .7); this.g.rotateY(rnd(Math.PI * 2));
+    const st = mesh(G.cylT, M.bloomStem, .17, this.cap * .62, .17, 0, this.cap * .31, 0); st.castShadow = true; this.g.add(st);
+    const cp = mesh(pick(G.blob), pick(M.bloom), this.cap * .5, this.cap * .26, this.cap * .5, 0, this.cap * .66, 0);
+    cp.castShadow = true; this.g.add(cp);
+    flatten(this.g);
+    this.glow = glow('#a8f0d0', 0, .4); this.glow.position.y = this.cap * .84; this.g.add(this.glow);
+    scene.add(this.g); this.apply();
+    const pm = PLANT_MODELS[this.constructor.name];
+    if (pm) attachPlantModel(this, pm);
+    // low and soft: you step over a mushroom, you do not walk round it
+    this.ob = obAdd(x, z, this.cap * .26, this, groundY(x, z) + this.cap * .9);
+  }
+  apply() { this.g.scale.setScalar(.2 + .8 * clamp(this.size, 0, 1)); }
+  update(dt) {
+    if (this.size < 1) { this.size = Math.min(1, this.size + dt * .03); this.apply(); }
+    const lit = .2 + world.night * .95;
+    this.glow.scale.setScalar(this.cap * (1 + lit * 1.6));
+    this.glow.material.opacity = .1 + lit * .3;
+  }
+  dispose() { obRemove(this.ob); scene.remove(this.g); }
+}
 class Bloom {
   constructor(x, z, size = 1) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.size = size; this.charge = 0;
@@ -2296,12 +2499,25 @@ const PLANT_MODELS = {
   // The tree is a taller plant of the same family. Its own height is kept -- an elder stands
   // twice a young one -- and the crop of lantern fruit is lifted out of the primitive canopy
   // and hung in the model's, because the fruit is the species and the trunk was scenery.
+  // Four trunks, one picked per tree. A grove of a single model reads as one tree stamped
+  // fifty-six times, and the first one is broad-footed enough that a stand of them hoards
+  // the ground. 02-04 are narrow-based, so they also claim a smaller collider: `foot`
+  // scales the footprint the class registered before it knew which trunk it would get.
   LanternTree: {
-    url: 'models/alien_tree_01.glb',
+    url: ['models/alien_tree_01.glb', 'models/alien_tree_02.glb', 'models/alien_tree_03.glb', 'models/alien_tree_04.glb'],
+    foot: [1, .56, .5, .54],
     height: p => p.h * 1.34,
     keep: ['fruitG'],
     keepY: p => p.h * 1.02,
     glowY: p => p.h * 1.02,
+  },
+  // The mushroom is its own species, not a variant: it grows in the damp and the dark
+  // rather than the meadow, and the cap is what glows.
+  Mushroom: {
+    url: 'models/alien_mushroom_01.glb',
+    height: p => p.cap,
+    glowY: p => p.cap * .84,
+    glow: { lo: .1, hi: .34, k: 1.9 },
   },
   // Ground cover, and the one there are most of: 115 of these at 2,254 triangles is a
   // quarter of a million, which is what the primitive tufts already cost between them.
@@ -2349,9 +2565,16 @@ function plantGlow(mat, cfg) {
 // `height` and `keepY` take a number or a function of the plant, so a species that varies its
 // own size (an elder tree against a young one) keeps varying it.
 function attachPlantModel(plant, cfg) {
-  loadModel(cfg.url, e => {
+  // `url` may be a list, in which case each plant draws one and keeps the index: `foot`
+  // and anything else per-variant is looked up by it.
+  const urls = [].concat(cfg.url), vi = urls.length > 1 ? Math.floor(Math.random() * urls.length) : 0;
+  plant.variant = vi;
+  loadModel(urls[vi], e => {
     if (!plant.alive) return;
     const num = (v, d) => v === undefined ? d : (typeof v === 'function' ? v(plant) : v);
+    // Shrinking a footprint is safe -- the hash cells it was filed under still contain it,
+    // and the distance test does the rest. Growing one would not be, so this only shrinks.
+    if (cfg.foot && plant.ob) plant.ob.r *= Math.min(1, cfg.foot[vi] === undefined ? 1 : cfg.foot[vi]);
     if (cfg.glow && !e.root.userData.plantGlow) {
       e.root.userData.plantGlow = true;
       e.root.traverse(o => { if (o.isMesh && o.material) plantGlow(o.material, cfg.glow); });
@@ -3448,6 +3671,7 @@ class Ship {
       const k = SHIP.span / Math.max(1e-4, Math.max(sz.x, sz.z));
       inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
       this.g.add(inst); this.inst = inst; this.k = k;
+      envUse(inst, 1);                                 // the one hull you walk right up to
       const b = {}; inst.traverse(m => { if (m.isBone) b[m.name] = m; });
       this.bones = b;
       this.hatch0 = b.hatch_pivot ? b.hatch_pivot.rotation.x : 0;
@@ -4311,22 +4535,28 @@ function updateMotes(dt) {
 // One of these, on the first flat clear ground the island offers near the middle. It is
 // twenty-one thousand triangles, which is fine for a thing there is exactly one of, and
 // nothing else in the file is allowed to be that heavy.
-const TITLE = { url: 'models/plutopia_title.glb', span: 22 };
+const TITLE = { url: 'models/plutopia_title.glb', span: 30 };
 function placeTitle() {
   // Sixteen units clear of everything does not exist on an island with fifty-six trees on
   // it -- the first version of this asked for exactly that, found nothing, and put no title
   // anywhere without saying so. Ask for a lot of room, settle for less, and never come away
   // empty: somewhere flat and central beats somewhere perfect and imaginary.
+  // And away from the built sites, whose colliders do not describe the ground they occupy --
+  // the steading's fence registers nothing on purpose, so the first version of this stood
+  // the letters in the middle of somebody's crop.
+  const sites = world.sites || [];
+  const far = (x, z, d) => sites.every(s => Math.hypot(x - s.x, z - s.z) > d);
   let spot = null;
-  for (const clear of [16, 12, 9, 6, 4, 0]) {
+  for (const [clear, apart] of [[16, 60], [12, 60], [9, 45], [6, 45], [4, 30], [0, 30]]) {
     for (let i = 0; i < 3000 && !spot; i++) {
       const x = rnd(-W * .34, W * .34), z = rnd(-W * .34, W * .34);
       const h = height(x, z);
-      if (h > 4 && h < 13 && slope(x, z) < .18 && (!clear || obClear(x, z, clear))) spot = { x, z };
+      if (h > 4 && h < 13 && slope(x, z) < .18 && far(x, z, apart) && (!clear || obClear(x, z, clear))) spot = { x, z };
     }
     if (spot) break;
   }
   if (!spot) { console.warn('[title] nowhere flat enough to stand it'); return; }
+  world.titleSpot = spot;                 // recorded whether or not the model itself arrives
   loadModel(TITLE.url, e => {
     const g = new THREE.Group();
     g.position.set(spot.x, groundY(spot.x, spot.z), spot.z);
@@ -4337,13 +4567,216 @@ function placeTitle() {
     const k = TITLE.span / Math.max(1e-4, Math.max(sz.x, sz.z));
     inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
     inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.userData.noHole = true; } });
+    envUse(inst, .8);
     g.add(inst); scene.add(g); world.title = g;
     obAdd(spot.x, spot.z, TITLE.span * .42, null, groundY(spot.x, spot.z) + sz.y * k);
     logMsg('Something enormous is spelled out in the meadow.');
   });
 }
 
+// ---------- built things ----------
+// Somebody was here before you. Each site is laid out in its own flat local frame -- x
+// across, z along, y up from the ground it stands on -- and then set down on the island:
+// turned to face a direction, tipped onto the ground normal, and finally baked into the
+// planet's curve. Local coordinates are the only way a fence stays square on a hill, and
+// baking is what lets a whole farm cost two draw calls instead of ninety.
+function siteAt(x, z, yaw) {
+  const bin = [], base = groundY(x, z), cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const q = new THREE.Quaternion().setFromUnitVectors(_plY, normalAt(x, z).lerp(_plY, .5).normalize())
+    .multiply(new THREE.Quaternion().setFromAxisAngle(_plY, yaw));
+  const root = new THREE.Matrix4().compose(new THREE.Vector3(x, base, z), q, new THREE.Vector3(1, 1, 1));
+  const site = {
+    x, z, base, bin,
+    put(geo, mat, sx, sy2, sz, px, py, pz, rx = 0, ry = 0, rz = 0) {
+      const m = mesh(geo, mat, sx, sy2, sz, px, py, pz);
+      m.rotation.set(rx, ry, rz); m.updateMatrix();
+      bin.push({ geo, mat, matrix: root.clone().multiply(m.matrix) });
+      return m;
+    },
+    // where a local point lands on the island, for anything that has to be planted or
+    // collided with rather than built
+    world(px, pz) { return { x: x + px * cy + pz * sy, z: z - px * sy + pz * cy }; },
+    block(px, pz, r, top) { const w = site.world(px, pz); obAdd(w.x, w.z, r, null, top === undefined ? Infinity : base + top); return w; },
+    done() {
+      const g = new THREE.Group(); g.userData.flat = true;
+      for (const m of mergeBin(bin)) { warpGeo(m.geometry); g.add(m); }
+      scene.add(g); return g;
+    }
+  };
+  return site;
+}
+// The steading: five tilled ridges, a crop on each, a fence you can step over, a hut and a
+// drying rack. It goes in pasture, because pasture is the only ground on the island flat
+// and open enough that somebody would have bothered.
+function buildFarm(x, z, yaw) {
+  const S = siteAt(x, z, yaw), rows = 5, rowLen = 17, gap = 2.7;
+  for (let i = 0; i < rows; i++) {
+    const px = (i - (rows - 1) / 2) * gap;
+    S.put(G.box, M.soil, 1.55, .34, rowLen, px, .12, 0);
+    for (let j = 0; j < 10; j++) {
+      const pz = (j / 9 - .5) * (rowLen - 1.8), hh = rnd(.5, 1.2);
+      S.put(pick(G.blob), j % 3 ? M.moss : M.bloomStem, .52, hh, .52,
+        px + rnd(-.3, .3), .28 + hh * .4, pz, rnd(.3), rnd(3), rnd(.3));
+    }
+  }
+  const fw = (rows - 1) * gap / 2 + 3.2, fl = rowLen / 2 + 3.4, step = 3.1;
+  const posts = [];
+  for (let px = -fw; px <= fw + .01; px += step) { posts.push([px, -fl]); posts.push([px, fl]); }
+  for (let pz = -fl + step; pz <= fl - step + .01; pz += step) { posts.push([-fw, pz]); posts.push([fw, pz]); }
+  for (const [px, pz] of posts) {
+    S.put(G.cylT, M.wood, .17, 1.35, .17, px, .68, pz, rnd(-.06, .06), rnd(3), rnd(-.06, .06));
+  }
+  // The fence registers nothing. Forty posts in a closed ring is a pen, and the first
+  // version of this doubled the number of creatures that spent a minute walking into
+  // something: they wandered in through a gap and could not steer back out. It is knee
+  // height, you step over it, and a grazer in the crop is a better picture than an empty one.
+  for (const yy of [.55, 1.05]) {         // two rails a side, sagging a little
+    S.put(G.box, M.wood, fw * 2, .09, .12, 0, yy, -fl);
+    S.put(G.box, M.wood, fw * 2, .09, .12, 0, yy + .04, fl);
+    S.put(G.box, M.wood, .12, .09, fl * 2, -fw, yy + .02, 0);
+    S.put(G.box, M.wood, .12, .09, fl * 2, fw, yy, 0);
+  }
+  {                                       // the hut, outside the fence on the uphill corner
+    const hx = -fw - 5.6, hz = fl - 3.4;
+    S.put(G.cyl, M.mound, 3, 3.1, 3, hx, 1.55, hz);
+    S.put(G.cone, M.reed, 4.1, 2.9, 4.1, hx, 4.5, hz);
+    S.put(G.box, M.barkB, 1.2, 1.9, .3, hx + 1.3, .95, hz + 1.3, 0, -.78, 0);   // the doorway
+    S.block(hx, hz, 3.2);
+  }
+  {                                       // a drying rack, with the crop hung off it
+    const rx = fw + 4.2, rz = -fl + 4;
+    for (const d of [-2.2, 2.2]) S.put(G.cylT, M.wood, .17, 2.6, .17, rx + d, 1.3, rz);
+    S.put(G.box, M.wood, 5.2, .16, .16, rx, 2.6, rz);
+    for (let i = 0; i < 7; i++) {
+      const px = rx + (i / 6 - .5) * 4.2, hh = rnd(.7, 1.4);
+      S.put(G.cyl, M.rope, .03, hh, .03, px, 2.6 - hh / 2, rz);
+      S.put(pick(G.blob), i % 2 ? M.reed : M.moss, .34, .55, .34, px, 2.6 - hh - .2, rz, rnd(3), rnd(3), rnd(3));
+    }
+  }
+  S.done();
+  return S;
+}
+// A ring of raised stones on high open ground, one of them long since over. Nobody on the
+// island claims them and nothing explains them, which is the point.
+function buildStones(x, z) {
+  const S = siteAt(x, z, rnd(Math.PI * 2)), n = 9, R = 10.5;
+  for (let i = 0; i < n; i++) {
+    const a = i / n * Math.PI * 2, px = Math.cos(a) * R, pz = Math.sin(a) * R, hh = rnd(4.4, 7.2);
+    if (i === 3) {
+      S.put(G.box, M.stone2, 1.7, hh, .95, px, .55, pz, Math.PI * .47, -a, rnd(-.12, .12));
+      S.block(px, pz, 2.1, 1.4);
+      continue;
+    }
+    S.put(G.box, i % 2 ? M.stone : M.stone2, 1.65, hh, .95, px, hh / 2 - .35, pz,
+      rnd(-.07, .07), -a + rnd(-.12, .12), rnd(-.09, .09));
+    S.block(px, pz, 1.15);
+  }
+  for (let i = 0; i < 7; i++) {
+    const s = 1.5 - i * .16;
+    S.put(pick(G.rock), i % 2 ? M.stone : M.stone2, s, s * .55, s, rnd(-.35, .35), .25 + i * .44, rnd(-.35, .35), rnd(3), rnd(3), rnd(3));
+  }
+  S.block(0, 0, 1.7, 3.6);
+  S.done();
+  return S;
+}
+// A ruin in the jungle: three walls of what was four, coursed stone gone ragged along the
+// top, and the floor of it gone back to rubble and moss.
+function buildRuin(x, z, yaw) {
+  const S = siteAt(x, z, yaw), hw = 9, hl = 7;
+  const wall = (x0, z0, x1, z1, hMax) => {
+    const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz), n = Math.max(2, Math.round(L / 1.5));
+    const a = Math.atan2(dx, dz);
+    for (let i = 0; i < n; i++) {
+      const t = (i + .5) / n, px = x0 + dx * t, pz = z0 + dz * t;
+      const hh = hMax * (.3 + .7 * Math.pow(Math.sin(t * Math.PI), .45)) * rnd(.75, 1.05);
+      const courses = Math.max(1, Math.round(hh / .85));
+      for (let c = 0; c < courses; c++)
+        S.put(G.box, c % 2 ? M.stone : M.stone2, 1.55, .82, .95,
+          px + rnd(-.09, .09), .38 + c * .82, pz + rnd(-.09, .09), 0, -a + rnd(-.06, .06), rnd(-.04, .04));
+      S.block(px, pz, .85, .4 + courses * .82);
+    }
+  };
+  wall(-hw, -hl, hw, -hl, 4.4);
+  wall(-hw, -hl, -hw, hl, 3.6);
+  wall(hw, -hl, hw, hl * .2, 4.0);
+  for (let i = 0; i < 30; i++) {          // fallen courses, and what has grown back over them
+    const px = rnd(-hw, hw), pz = rnd(-hl, hl), s = rnd(.4, 1.2);
+    S.put(pick(G.rock), Math.random() < .5 ? M.stone : M.stone2, s * 1.3, s * .5, s * 1.1, px, s * .2, pz, rnd(3), rnd(3), rnd(3));
+    if (Math.random() < .5) S.put(pick(G.blob), Math.random() < .5 ? M.moss : M.moss2, s, s * .35, s, px + rnd(-.6, .6), s * .34, pz + rnd(-.6, .6), rnd(1), rnd(3), rnd(1));
+  }
+  S.done();
+  return S;
+}
+// Where the three of them end up, and what gets planted around them afterwards. Each asks
+// for its own biome and settles for whatever the island can offer, because an island that
+// generated wet and steep may simply have no pasture in it.
+// Somewhere to build. Ask for a lot of room in the right biome, then give ground on both:
+// first the clearance, then the biome. An island with seventy trees on it has no fifteen
+// clear units anywhere, which is how the first version of this built nothing at all and
+// said nothing about it -- the same mistake, in the same file, that the title already made.
+// A site's own colliders are not enough to keep the next one off it: the steading's fence
+// deliberately registers nothing, so the ruin cheerfully landed eleven units from it. Sites
+// keep their distance from each other explicitly.
+const SITE_APART = 70;
+function siteSpot(what, names, minH, maxH, maxSl, clears, placed) {
+  const far = p => !placed || placed.every(q => Math.hypot(p.x - q.x, p.z - q.z) > SITE_APART);
+  for (const c of clears) for (const n of names) {
+    for (let i = 0; i < 6; i++) { const p = randomBiome(n, minH, maxH, maxSl, 400, c); if (p && far(p)) return p; }
+  }
+  for (const c of clears) for (let i = 0; i < 6; i++) { const p = randomLand(minH, maxH, maxSl, 400, c); if (p && far(p)) return p; }
+  console.warn('[site] nowhere to put the ' + what);
+  return null;
+}
+function buildSites() {
+  const out = [];
+  const farm = siteSpot('steading', ['pasture'], 2.6, 10, .2, [15, 12, 9, 7, 5], out);
+  if (farm) { out.push(buildFarm(farm.x, farm.z, rnd(Math.PI * 2))); logMsg('Someone tilled this ground, and did not come back for it.'); }
+  const ring = siteSpot('stones', ['highland', 'scrub'], 8, 24, .34, [13, 10, 8, 6, 4], out);
+  if (ring) out.push(buildStones(ring.x, ring.z));
+  const ruin = siteSpot('ruin', ['jungle', 'wetland'], 3, 14, .3, [13, 10, 8, 6, 4], out);
+  if (ruin) {
+    out.push(buildRuin(ruin.x, ruin.z, rnd(Math.PI * 2)));
+    for (let i = 0; i < 14; i++) {         // the jungle taking it back
+      const px = ruin.x + rnd(-16, 16), pz = ruin.z + rnd(-14, 14);
+      if (isLand(px, pz) && obClear(px, pz, .7)) world.plants.push(new Mushroom(px, pz, rnd(.6, 1)));
+    }
+  }
+  return out;
+}
+
 // ---------- scatter ----------
+// Real boulders. Two models, one silhouette, two skins -- so they go down as one merged
+// mesh per skin rather than one object per rock: thirty-odd draw calls for scenery that
+// never moves is thirty-odd too many on a phone. Merging means the planet's curve has to
+// be baked into the vertices instead of applied to a matrix, which is what warpGeo does,
+// and which is only allowed because a rock never moves again.
+const ROCKS = { urls: ['models/alien_rock_01.glb', 'models/alien_rock_02.glb'], n: 17 };
+function scatterRocks() {
+  for (const url of ROCKS.urls) loadModel(url, e => {
+    const parts = [];
+    e.root.updateMatrixWorld(true);
+    e.root.traverse(o => { if (o.isMesh) parts.push({ geo: o.geometry, mat: o.material, m: o.matrixWorld.clone() }); });
+    if (!parts.length) return;
+    const sz = e.box.getSize(new THREE.Vector3()), h0 = Math.max(1e-4, sz.y), w0 = Math.max(sz.x, sz.z);
+    const bin = [], place = new THREE.Matrix4(), q = new THREE.Quaternion(), spin = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), scl = new THREE.Vector3(), nrm = new THREE.Vector3();
+    for (let i = 0; i < ROCKS.n; i++) {
+      const p = randomLand(.5, 26, 2.6, 60, 2.6); if (!p) continue;
+      const H = rnd(1.6, 5.4), s = H / h0;
+      const gy = groundY(p.x, p.z), sunk = H * .17;         // set into the ground, not perched on it
+      nrm.copy(normalAt(p.x, p.z)).lerp(_plY, .3).normalize();
+      q.setFromUnitVectors(_plY, nrm).multiply(spin.setFromAxisAngle(_plY, rnd(Math.PI * 2)));
+      pos.set(p.x, gy - sunk - e.box.min.y * s, p.z);
+      place.compose(pos, q, scl.setScalar(s));
+      for (const pt of parts) bin.push({ geo: pt.geo, mat: pt.mat, matrix: place.clone().multiply(pt.m) });
+      obAdd(p.x, p.z, w0 * s * .42, null, gy - sunk + H * .96);
+    }
+    if (!bin.length) return;
+    const grp = new THREE.Group(); grp.userData.flat = true;
+    for (const m of mergeBin(bin)) { warpGeo(m.geometry); grp.add(m); }
+    scene.add(grp);
+  });
+}
 function scatterDecor() {
   const bin = [];
   for (let i = 0; i < 200; i++) {
@@ -4384,9 +4817,17 @@ function populate() {
   }
   if (!gp) gp = randomLand(2.5, 10, .45, 400, 0);
   if (gp) { world.greatTree = new GreatTree(gp.x, gp.z); world.plants.push(world.greatTree); }
-  for (let i = 0; i < 56; i++) { const p = randomLand(1.6, 12, .8); if (p) world.plants.push(new LanternTree(p.x, p.z, rnd(.35, 1))); }
-  for (let i = 0; i < 68; i++) { const p = randomLand(1.2, 11, .9); if (p) world.plants.push(new MossTuft(p.x, p.z, rnd(.6, 1))); }
-  for (let i = 0; i < 13; i++) { const p = randomLand(1.6, 10, .7); if (p) world.plants.push(new Bloom(p.x, p.z, rnd(.5, 1))); }
+  for (let i = 0; i < 68; i++) { const p = randomFor(FLORA.tree, 1.6, 12, .8); if (p) world.plants.push(new LanternTree(p.x, p.z, rnd(.35, 1))); }
+  for (let i = 0; i < 80; i++) { const p = randomFor(FLORA.moss, 1.2, 11, .9); if (p) world.plants.push(new MossTuft(p.x, p.z, rnd(.6, 1))); }
+  for (let i = 0; i < 15; i++) { const p = randomFor(FLORA.bloom, 1.6, 10, .7); if (p) world.plants.push(new Bloom(p.x, p.z, rnd(.5, 1))); }
+  // mushrooms come up in clumps, in the damp and the shade, three to seven at a time
+  for (let i = 0; i < 13; i++) {
+    const p = randomFor(FLORA.mushroom, 1, 8, .6); if (!p) continue;
+    for (let j = 0, n = 3 + (Math.random() * 5 | 0); j < n; j++) {
+      const x = p.x + rnd(-4.5, 4.5), z = p.z + rnd(-4.5, 4.5);
+      if (isLand(x, z) && obClear(x, z, .6)) world.plants.push(new Mushroom(x, z, rnd(.5, 1)));
+    }
+  }
   for (let i = 0; i < 13; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Grazer(p.x, p.z)); }
   for (let i = 0; i < 4; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Weaver(p.x, p.z)); }
   for (let i = 0; i < 6; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Burrower(p.x, p.z)); }
@@ -4436,7 +4877,7 @@ function populate() {
       spawn: (p, v) => { const a = rnd(Math.PI * 2), r = rnd(0, 7); p.set(cx + Math.cos(a) * r, cy + rnd(0, 3), cz + Math.sin(a) * r); v.set(rnd(-.5, .5), rnd(1.2, 3), rnd(-.5, .5)); } });
   }
   world.spawn = world.camp ? { x: world.camp.pos.x + 7, z: world.camp.pos.z + 5 } : (randomLand(1.5, 8, .5, 400, 3) || { x: 0, z: 0 });
-  ferry = new Ferry(); initMotes(); scatterDecor(); placeTitle();
+  ferry = new Ferry(); initMotes(); scatterDecor(); world.sites = buildSites(); scatterRocks(); placeTitle();
 }
 populate();
 
@@ -4512,6 +4953,11 @@ const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new T
 function updateSky() {
   const f = (world.t / DAY) % 1, a = f * Math.PI * 2 - Math.PI / 2, e = Math.sin(a);
   world.sunE = e; world.night = smooth(.12, -.18, e);
+  // reflections dim with the daylight they are pretending to be
+  if (ENV.mats.length) {
+    const ei = ENV.k * (.16 + .84 * clamp(e * 1.5 + .3, 0, 1));
+    for (const m of ENV.mats) m.envMapIntensity = ei * m.userData.envK;
+  }
   // The sun keeps the elevation it always had over wherever you are standing, rather than
   // over one fixed point of the globe: on a world this small a fixed sun would put you in
   // permanent dusk for half a walk. Every light is stated in the local frame and rotated in.
@@ -4574,6 +5020,59 @@ function eraName() {
   if (world.beacons >= 1) return 'The Gathering';
   if (world.cairns >= 1) return 'First Stones';
   return 'The Quiet';
+}
+
+// ---------- the title screen ----------
+// Not a picture of the game: the game. The world is already built and already running by
+// the time anything is on screen -- the weather, the creatures, the ship -- so the title
+// screen is nothing but the camera parked a long way out, turning slowly, with the letters
+// standing in the meadow underneath it and the island curving away behind. Pressing enter
+// loads nothing. It flies the camera down to the wanderer and hands you the sticks.
+// r/pol were 168 and .95 to begin with, which framed the planet beautifully and made the
+// letters standing in the meadow about twelve pixels wide. Closer and lower: still a look at
+// a globe, with the thing it is the title of legible on it.
+const INTRO = { on: true, r: 108, pol: 1.2, sweep: .5, rate: .085, bob: 11, up: 11,
+  t: 0, dive: 0, diveT: 3.4, r0: 0 };
+const introEl = document.getElementById('intro'), startB = document.getElementById('startB');
+function introFrame(dt) {
+  INTRO.t += dt;
+  // The camera hangs on whatever centrepiece the island produced: the letters if placeTitle
+  // stood them up, the Elderwillow if it could not, the origin if neither.
+  const c = world.title ? world.title.position : (world.greatTree ? world.greatTree.pos : null);
+  const tx = c ? c.x : 0, tz = c ? c.z : 0;
+  cam.tgt.set(tx, groundY(tx, tz) + INTRO.up, tz);
+  // It does not orbit. placeTitle turns the monument's reading side toward the middle of
+  // the island, so there is exactly one direction the letters are legible from -- a full
+  // turn spends half of itself round the back of them. Sit in front and sway.
+  const face = world.title ? Math.atan2(-tx, -tz) : 0;
+  cam.az = face + Math.sin(INTRO.t * INTRO.rate) * INTRO.sweep;
+  cam.pol0 = INTRO.pol;
+  cam.r = INTRO.r + Math.sin(INTRO.t * .12) * INTRO.bob;
+  cam.idle = 0;
+  // and send the ship round the island. This is the sortie it has always known how to fly
+  // -- lift, one lap at altitude, land -- which is switched off in play because it is his
+  // ship now, and is exactly the right thing for a title screen.
+  const sh = world.ship;
+  if (sh && sh.bones && sh.state === 'landed' && !player.aboard) {
+    sh.planFlight(); sh.begin('lift');
+    if (sh.ob) { obRemove(sh.ob); sh.ob = null; }
+  }
+}
+function startGame() {
+  if (!INTRO.on) return;
+  INTRO.on = false; INTRO.r0 = cam.r; INTRO.dive = INTRO.diveT;
+  introEl.classList.add('go');
+  setTimeout(() => introEl.remove(), 1000);
+  document.body.classList.remove('intro');
+}
+// The descent. cam.tgt and the pitch are already easing themselves toward the wanderer in
+// the main loop; all this owns is the boom length, on a curve slow at both ends so it
+// reads as a landing rather than a cut.
+function diveFrame(dt) {
+  INTRO.dive = Math.max(0, INTRO.dive - dt);
+  const k = 1 - INTRO.dive / INTRO.diveT;
+  cam.r = lerp(INTRO.r0, 20, k * k * (3 - 2 * k));
+  if (INTRO.dive <= 0) cam.rWalk = 0;
 }
 
 // ---------- camera + input ----------
@@ -4853,7 +5352,12 @@ bindStick(document.getElementById('stkR'), stick.R, () => {
   else if (!player.aboard) player.jump = 1;
 });
 const keys = {};
-addEventListener('keydown', e => { keys[e.key.toLowerCase()] = 1; if (e.key === ' ') { player.jump = 1; e.preventDefault(); } });
+addEventListener('keydown', e => {
+  // On the title screen every key is the start key, and none of them is a movement key --
+  // the sticks are faded out, so a keyboard should not be walking him around behind them.
+  if (INTRO.on) { startGame(); e.preventDefault(); return; }
+  keys[e.key.toLowerCase()] = 1; if (e.key === ' ') { player.jump = 1; e.preventDefault(); }
+});
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
 const flyB = document.getElementById('flyB'), freeB = document.getElementById('freeB');
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
@@ -4917,6 +5421,7 @@ fold('logT', 'log', true);
 const hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
 addEventListener('keydown', e => { if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
+startB.addEventListener('click', e => { e.stopPropagation(); startGame(); });
 const _prevP = new THREE.Vector3(), _shipR = new THREE.Vector3();
 function updatePlayer(dt) {
   _prevP.copy(player.pos);
@@ -5228,6 +5733,7 @@ function updateRig(dt) {
 
 const ray = new THREE.Raycaster();
 function tap(cx, cy) {
+  if (INTRO.on) { startGame(); return; }             // on the title screen, a tap is the start
   ray.setFromCamera({ x: cx / innerWidth * 2 - 1, y: -(cy / innerHeight) * 2 + 1 }, camera);
   const hit = ray.intersectObject(terrain)[0]; if (!hit) return;
   const p = hit.point;
@@ -5616,7 +6122,8 @@ function frame(now) {
 
   updatePlayer(dt);
   updateFairy(dt);
-  if (player.aboard && world.ship && !player.free) {
+  if (INTRO.on) introFrame(dt);
+  else if (player.aboard && world.ship && !player.free) {
     // The chase view: behind and above, flatter than the walking camera, and lagging the
     // heading by a beat so a turn reads as the hull swinging round in front of you.
     const sh = world.ship;
@@ -5634,6 +6141,7 @@ function frame(now) {
     }
     cam.idle += dt; if (cam.idle > 6 && player.moving < .05) cam.az += dt * .03;
   }
+  if (INTRO.dive > 0) diveFrame(dt);
   solveCam(dt);
   // The boom is still swung in chart terms -- azimuth, pitch, and the ridge solver that
   // marches it against the height field -- but it is *hung* in the frame standing on the
@@ -5659,7 +6167,7 @@ function frame(now) {
     const p = planetPos(player.pos.x, player.pos.y + RIG.height * .5, player.pos.z, _holeP);
     const vz = _holeV.copy(p).applyMatrix4(camera.matrixWorldInverse).z;   // negative in front of the lens
     p.project(camera);
-    if (!player.free && !player.aboard && vz < -1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1) {
+    if (!INTRO.on && !player.free && !player.aboard && vz < -1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1) {
       holeUni.uHoleC.value.set((p.x * .5 + .5) * rtScene.width, (p.y * .5 + .5) * rtScene.height);
       holeUni.uHoleR.value = rtScene.height * .17; holeUni.uHoleZ.value = -vz;
     } else holeUni.uHoleR.value = 0;
@@ -5699,7 +6207,17 @@ function frame(now) {
   }
   renderPost();
 
-  if (!booted) { booted = true; const b = document.getElementById('boot'); b.style.opacity = 0; setTimeout(() => b.remove(), 1300); }
+  // Hold the loading card until the models are actually in. Lift it on the first frame and
+  // the title screen opens on a world still wearing its primitive stand-ins, and swaps them
+  // out in front of you. Six seconds is the ceiling: a slow connection gets the world it has.
+  if (!booted) {
+    const urls = Object.keys(MODELS);
+    if (world.clock > 6 || (urls.length > 3 && urls.every(u => MODELS[u].ready || MODELS[u].failed))) {
+      booted = true;
+      const b = document.getElementById('boot'); b.style.opacity = 0; setTimeout(() => b.remove(), 1300);
+      if (INTRO.on) introEl.hidden = false; else document.body.classList.remove('intro');
+    }
+  }
 }
 requestAnimationFrame(frame);
 })();

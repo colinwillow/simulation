@@ -832,6 +832,98 @@ unwrap — worth remembering for anything else that wants to be textured across 
 colour underneath it and only its relief survives, at 0 the island loses its zoning
 altogether. Just over a half keeps both.
 
+### Biomes
+
+`biomeAt(x, z)` is the field everything downstream reads: the terrain's vertex colours, how
+thick the grass grows, which species `populate()` will plant where, and where a structure is
+allowed to stand.
+
+It is **scored, not partitioned**. Seven biomes each say how much they want a point —
+`coast`, `wetland`, `jungle`, `pasture`, `scrub`, `highland`, `ash` — the loudest wins, and
+how far ahead it is of the runner-up comes back as `edge`. Nothing has a border drawn on a
+map; the fields overlap and the answer changes gradually, which is what stops the island
+reading as tiles. In the heart of a region `edge` is 1 and the biome gets its full say; on a
+boundary it is near 0 and almost nothing is refused, so a species thins out rather than
+stopping at a line.
+
+The one axis the height field does not already provide is `moisture(x, z)`: broad noise
+bands across the island, the lagoon soaking the ground around it, and low ground sitting
+nearer the water table than high ground. Everything else is height, slope and distance to a
+named landform.
+
+Three tables hang off it, and they are where to make changes:
+
+- `BIOME_GROUND` — the stain each biome lays over the terrain colour (`col`, `k`) and how
+  much of the tiled ground map survives there (`tex`). The ground map is a *meadow* surface,
+  so a swamp and a burnt-over ash flat keep most of their own colour.
+- `GRASS_BIOME` — `[density, height]` per biome, in the grass field's build loop. An even
+  carpet everywhere was the single biggest reason the island read as one place.
+- `FLORA` — per-species weights, read by `randomFor(weights, ...)`, which is `randomLand`
+  with a biome rejection test on top.
+
+`randomBiome(name, ...)` returns the best spot it can find *in* a named biome, and
+`siteSpot(what, names, ..., clears)` is the one to use for anything built: it asks for a lot
+of room, gives ground on the clearance first and the biome second, and warns rather than
+silently building nothing.
+
+### Built things
+
+Three sites, placed by `buildSites()` and left on `world.sites`: a steading in pasture
+(tilled ridges, a crop, a fence, a hut, a drying rack), a ring of raised stones on high open
+ground, and a ruin in the jungle with the ruin's own mushrooms coming up through it.
+
+They are laid out by `siteAt(x, z, yaw)`, which is the thing to reuse. A site is built in
+its own **flat local frame** — x across, z along, y up from the ground it stands on — and
+then set down: turned to face a direction, tipped onto the ground normal, and finally baked
+into the planet's curve by `warpGeo`. Local coordinates are the only way a fence stays square
+on a hill, and baking is what lets a whole farm cost two draw calls instead of ninety.
+
+- `S.put(geo, mat, sx, sy, sz, px, py, pz, rx, ry, rz)` — one part, in local coordinates.
+- `S.world(px, pz)` — where a local point lands on the island.
+- `S.block(px, pz, r, top)` — a collider there; omit `top` for something you go round.
+- `S.done()` — merge, warp, add. Call it once.
+
+**The fence registers no colliders on purpose.** Forty posts in a closed ring is a pen: the
+first version doubled the number of creatures that spent a minute walking into something,
+because they wandered in through a gap and could not steer back out. It is knee height, you
+step over it, and a grazer standing in the crop is a better picture than an empty one.
+
+### The title screen
+
+Not a picture of the game — the game. The world is fully built and already running before
+anything is on screen, so the title screen is nothing but the camera parked out at
+`INTRO.r`, turning at `INTRO.spin`, orbiting whatever centrepiece the island produced (the
+letters if `placeTitle` stood them up, the Elderwillow if not). The ship flies the sortie it
+has always known how to fly — lift, one lap of the island at altitude, land — which is
+switched off in play because it is his ship now, and is exactly right here.
+
+`startGame()` loads nothing. It drops `INTRO.on`, starts `diveFrame` easing the boom from
+wherever it was down to 20 over `INTRO.diveT`, and takes `body.intro` off, which fades the
+whole interface in. Every route in calls it: the button, a tap anywhere, any key.
+
+The loading card (`#boot`, the title image) is held until every model that was asked for has
+resolved, or six seconds, whichever comes first. Lift it on the first frame and the title
+screen opens on a world still wearing its primitive stand-ins and swaps them out in front of
+you.
+
+**Every harness in `tools/` sets `INTRO.on = false` immediately after `eval`.** They measure
+the game being played; the title screen parks the camera at the planet and flies the ship in
+circles, which is the last thing any of them want.
+
+### The environment map
+
+`images/HDRI_01_2K.jpg` is a 2048×1024 equirect panorama, prefiltered through
+`PMREMGenerator` once at start-up. It is deliberately **not** `scene.environment`: the sky
+here is procedural, runs a full day-night cycle and has weather in it, and a fixed
+photograph lighting the whole island would flatten all of that and light the world at noon at
+midnight.
+
+It is opt-in per model instead — `envUse(root, k)` — and only two things use it: the ship's
+hull and the letters in the meadow, the two surfaces you walk right up to, where a real
+reflection beats any amount of roughness tuning. `updateSky` scales every registered
+material's `envMapIntensity` with the sun, so the hull goes dark at night with everything
+else. `ENV.k` is the global strength.
+
 ### The ship's flames and lamps
 
 A jet is a solid thing with a shape, not a cloud of dots. `FLAME_GEO` is a unit cone growing
@@ -977,6 +1069,7 @@ npm run check:ship                     # fly the ship's sortie with no GPU, repo
 node tools/sortie.js index.html pilot  # ...or fly it by hand: board, lift, turn, strafe, land, get out
 npm run check:swirl                    # does the lamp's swirl of motes go where the lamp goes
 npm run check:gait                     # the acceleration ramp, what a hill costs, what he can climb onto
+node tools/shot.js --out shots/x.png   # take a picture of it, in a real browser on a real GPU
 ```
 
 Each also takes an explicit file and frame count, e.g. `node tools/headless.js index.html 2000`.
@@ -984,6 +1077,26 @@ Each also takes an explicit file and frame count, e.g. `node tools/headless.js i
 **glslcheck** pulls the water material out of the HTML, runs it through Three's real
 `onBeforeCompile` path, resolves all `#include` chunks the way Three does, and compiles the
 result as GLSL ES 1.0. Run this after *any* shader edit.
+
+**shot** is the only tool here that renders anything. Everything else measures a number;
+a detail pass is about how the place looks, and there is no substitute for looking at it. It
+serves the repo over a local http server (file:// cannot fetch a GLB), routes the cdnjs
+three.js tag to `node_modules` because cdnjs is outside this container's egress, splices a
+`window.__g` handle onto the game the same way the headless tools do, waits for every model
+to resolve, and takes a screenshot.
+
+```bash
+node tools/shot.js --out shots/meadow.png --at 40,-20 --r 34 --hour 10
+node tools/shot.js --out shots/farm.png   --site 0 --hour 10     # stand at world.sites[0]
+node tools/shot.js --out shots/title.png  --title --wait 12      # the title screen, not the game
+```
+
+It prints draw calls, triangles, the biome you are standing in, and where every site ended
+up — so it doubles as the fastest way to find out whether a structure got built at all.
+
+Two things about it. It runs on swiftshader at a couple of frames a second, so **`--wait` is
+world seconds, never wall clock** — the same rule as every other harness here. And every shot
+but `--title` calls `startGame()`, because the title screen is now what a fresh page shows.
 
 **model** reports what is actually inside a .glb or .fbx — armature, vertex weights,
 clips, blend shapes, material alpha mode, **texture dimensions and what they cost on the
@@ -1127,6 +1240,14 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | Flame sizes | `SHIP.jet` / `SHIP.side` / `SHIP.lift` / `SHIP.head` / `SHIP.bulb` |
 | Quality tiers | `Q` |
 | Texture ceiling at load | `TEX_CAP` (2048; a ceiling, not a target) |
+| How much colour a biome puts on the ground | `BIOME_GROUND[name].k` |
+| How thick the grass is in a biome | `GRASS_BIOME[name]` = `[density, height]` |
+| Where a species is willing to grow | `FLORA[species][biome]` |
+| How wet the island is overall | the constants in `moisture()` |
+| Title-screen framing | `INTRO.r`, `INTRO.pol`, `INTRO.spin`, `INTRO.bob` |
+| How long the flight down takes | `INTRO.diveT` |
+| Reflection strength | `ENV.k`, and the per-model `k` passed to `envUse` |
+| The size of the letters in the meadow | `TITLE.span` |
 
 ---
 

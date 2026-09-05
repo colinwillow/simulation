@@ -20,7 +20,7 @@ global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,ge
   // three's TextureLoader goes through createElementNS for its <img>, and an img it can
   // never load is fine here: nothing headless samples a texture.
   createElementNS(ns, t){ if(t==='img') return {addEventListener(){},removeEventListener(){},style:{},set src(v){},get src(){return '';}}; return this.createElement(t); },
-  getElementById(id){ return els[id]||(els[id]=this.createElement('div')); }, body:{appendChild(){}} };
+  getElementById(id){ return els[id]||(els[id]=this.createElement('div')); }, body:{appendChild(){},classList:{add(){},remove(){},toggle(){}}} };
 let cbs=[]; global.requestAnimationFrame=f=>cbs.push(f); global.addEventListener=()=>{}; global.setInterval=()=>{}; global.setTimeout=()=>{};
 global.window=global;   // the page hangs a debug handle off window; no GLTFLoader here, so the rig load is skipped
 global.__t=0; global.performance={now:()=>global.__t};
@@ -31,8 +31,12 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('cons
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;global.__SHIP=SHIP;global.__h2=height;global.__stick=stick;global.__keys=keys;global.__PILOT=PILOT;global.__gY=groundY;global.__deckY=deckY;global.__cam=cam;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;global.__SHIP=SHIP;global.__h2=height;global.__stick=stick;global.__keys=keys;global.__PILOT=PILOT;global.__gY=groundY;global.__deckY=deckY;global.__cam=cam;'+src.slice(cut);
 eval(src);
+// The title screen parks the camera out at the planet and flies the ship round it. That is
+// the first thing a player sees and the last thing a harness wants: every tool here measures
+// the game being played, so each of them starts it.
+global.__INTRO.on = false;
 const N=+process.argv[3]||6000;
 // optional: node tools/headless.js index.html 3000 storm   -> start in that weather
 if(process.argv[4]) global.__wx.force=process.argv[4];

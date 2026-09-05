@@ -9,7 +9,7 @@ global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,ge
   // three's TextureLoader goes through createElementNS for its <img>, and an img it can
   // never load is fine here: nothing headless samples a texture.
   createElementNS(ns, t){ if(t==='img') return {addEventListener(){},removeEventListener(){},style:{},set src(v){},get src(){return '';}}; return this.createElement(t); },
-  getElementById(id){ return els[id]||(els[id]=this.createElement('div')); }, body:{appendChild(){}} };
+  getElementById(id){ return els[id]||(els[id]=this.createElement('div')); }, body:{appendChild(){},classList:{add(){},remove(){},toggle(){}}} };
 let cbs=[]; global.requestAnimationFrame=f=>cbs.push(f); global.addEventListener=()=>{}; global.setInterval=()=>{}; global.setTimeout=()=>{};
 global.window=global;   // the page hangs a debug handle off window; no GLTFLoader here, so the rig load is skipped
 global.__t=0; global.performance={now:()=>global.__t};
@@ -20,8 +20,12 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('cons
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
 eval(src);
+// The title screen parks the camera out at the planet and flies the ship round it. That is
+// the first thing a player sees and the last thing a harness wants: every tool here measures
+// the game being played, so each of them starts it.
+global.__INTRO.on = false;
 const N=+process.argv[3]||6000;
 // optional: node tools/headless.js index.html 3000 storm   -> start in that weather
 if(process.argv[4]) global.__wx.force=process.argv[4];
@@ -67,6 +71,16 @@ console.log('psys',w.psys.length,'live particles',alive,'camp',!!w.camp,'cave',!
 console.log('player at',global.__p.pos.x.toFixed(1),global.__p.pos.y.toFixed(1),global.__p.pos.z.toFixed(1),'| fly',global.__p.fly,'| swim',global.__p.swim.toFixed(2));
 console.log('logs on the ground',c(w.structures,global.__C.Log),'| stumps',c(w.structures,global.__C.Stump));
 console.log('leviathans',c(w.creatures,C2.Leviathan),'walkers',c(w.creatures,C2.Walker),'hoppers',c(w.creatures,C2.Hopper),'greatTree',!!w.greatTree,'trailLen',(w.creatures.find(x=>x instanceof C2.Leviathan)||{trail:[]}).trail.length,'towerY',Math.max(0,...w.structures.filter(o=>o.alive&&o instanceof C2.Cairn).map(o=>o.y)).toFixed(1));
+// Did the structures get built at all, and where. The steading, the stone ring and the ruin
+// each ask for a lot of clear ground in a particular biome; when they cannot find any they
+// used to build nothing and say nothing about it.
+console.log('title at',w.titleSpot?(w.titleSpot.x.toFixed(0)+','+w.titleSpot.z.toFixed(0)):'NOWHERE',
+  '| nearest site',(w.sites||[]).length?Math.min(...(w.sites||[]).map(o=>Math.hypot(o.x-(w.titleSpot||o).x,o.z-(w.titleSpot||o).z))).toFixed(0):'-');
+console.log('sites',(w.sites||[]).length,(w.sites||[]).map(o=>o.x.toFixed(0)+','+o.z.toFixed(0)).join(' ')||'NONE BUILT',
+  '| biomes here',['coast','wetland','jungle','pasture','scrub','highland','ash'].map(n=>{
+    let k=0; for(let i=0;i<3000;i++){ const x=(Math.random()-.5)*2*global.__W, z=(Math.random()-.5)*2*global.__W;
+      if(global.__h(x,z)>0.6 && global.__bio(x,z).name===n) k++; }
+    return n+' '+k; }).join(' '));
 console.log('frames',N,'| day',w.day,'cairns',w.cairns,'beacons',w.beacons,'trees',c(w.plants,C.LanternTree),'blooms',c(w.plants,C.Bloom),'grazers',c(w.creatures,C.Grazer),'tinkers',c(w.creatures,C.Weaver));
 console.log('walking in place: episodes over 3s',stallCount,JSON.stringify(stallByClass),'| escapes',w.escapes||0,'| longest',stallWorst,'s',stallWho,'state',stallState,'| nearest obstacle',stallNear);
 stallTop.sort((a,b)=>b.e.worst-a.e.worst).slice(0,3).forEach(t=>console.log('   stalled',t.e.worst+'s',t.cr.constructor.name,'state',t.state,'| nearest',t.near,'| ignore',t.cr.ignore?t.cr.ignore.constructor.name:'-'));
