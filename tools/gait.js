@@ -45,6 +45,26 @@ function ramp(dirName, place){
 const flat=ramp('flat', flatSpot);
 console.log('acceleration on the flat  ', JSON.stringify(flat));
 
+// ---------- 1b. turning at speed ----------
+// The thing that reads as skating. Get him to full speed in one direction, then ask for a
+// new one and time how long the velocity takes to point there. Pinned in place, because
+// what is under test is the velocity vector and not the ground he covers reaching it.
+function turnTest(deg){
+  const q=flatSpot(); P.pos.set(q.x,gY(q.x,q.z),q.z); P.vx=P.vz=0; P.vy=0; P.grounded=1; P.gy=P.pos.y;
+  global.__cam.tgt.set(q.x,P.pos.y,q.z);
+  hold(3,()=>{ P.pos.set(q.x,gY(q.x,q.z),q.z); P.vy=0; P.grounded=1; P.wx=0; P.wz=1; P.wmag=1; P.moving=1; });
+  const v0=sp(), a=deg*Math.PI/180, nx=Math.sin(a), nz=Math.cos(a);
+  let t=0, done=null, minSp=v0;
+  hold(6,()=>{ P.pos.set(q.x,gY(q.x,q.z),q.z); P.vy=0; P.grounded=1; P.wx=nx; P.wz=nz; P.wmag=1; P.moving=1;
+    t+=.033; minSp=Math.min(minSp,sp());
+    const s2=sp(); if(done===null && s2>.3){ const cur=Math.atan2(P.vx,P.vz);
+      let d=cur-a; d=Math.atan2(Math.sin(d),Math.cos(d));
+      if(Math.abs(d)<0.09) done=t; } });     // within five degrees of the new heading
+  return {turn:deg+'deg', enteredAt:+v0.toFixed(1), pointingThereAfter:done===null?'never':+done.toFixed(2),
+    slowestDuring:+minSp.toFixed(1), endedAt:+sp().toFixed(1)};
+}
+for(const d of [90,135,180]) console.log('turning at speed         ', JSON.stringify(turnTest(d)));
+
 // ---------- 2. the hill ----------
 // Same stick, held straight up a slope and then straight down the same slope.
 function slopeSpot(minS){ for(let i=0;i<20000;i++){ const x=(Math.random()-.5)*260, z=(Math.random()-.5)*260;

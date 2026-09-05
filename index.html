@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b38';
+const BUILD = 'b39';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -3152,7 +3152,7 @@ const SHIP = {
 // it answers with motion. Lift-off is a sequence — the jets spool with the hull trembling,
 // then it unsticks and climbs slowly — and landing is a settle, not a stop.
 const PILOT = {
-  thrust: 8.6, reverse: 4, drag: .135,          // forward: tops out near 64, and still takes about seven seconds to feel it
+  thrust: 9.5, reverse: 4.4, drag: .132,        // forward: tops out near 72, and still takes its time getting there
   strafe: 5.5,                                  // side jets, same drag
   climb: 6.8, vdrag: .62, g: 9.8,               // vertical: hover is neutral, push to go up or down
   yawA: 1.0, yawDrag: 1.2,                      // turning builds up, about .8 rad/s flat out, and carries on for a beat when released
@@ -3380,7 +3380,7 @@ class Ship {
     this.begin('piloted'); this.grounded = true; this.power = 0; this.spool = 0; this.vel.set(0, 0, 0); this.yawRate = 0;
     this.heading = this.face; obRemove(this.ob); this.ob = null;
     logMsg('He climbs in. Hold up to lift off.');
-    hintEl.innerHTML = MOBILE ? 'left stick: thrust · turn &nbsp; right stick: climb · strafe' : 'W S thrust · A D turn · Space / Shift climb · Q E strafe · B leave';
+    hintEl.innerHTML = MOBILE ? 'left stick: thrust · strafe &nbsp; right stick: turn · climb' : 'W S thrust · A D turn · Space / Shift climb · Q E strafe · B leave';
   }
   // Out again, onto the ground beside it. Wherever it came down is its pad now.
   leave() {
@@ -3415,7 +3415,10 @@ class Ship {
     // Increasing heading swings the nose toward +X, which is the ship's own left (lx below),
     // so a left stick has to RAISE the heading. It was lowering it, turning the ship the
     // wrong way — and the bank, which is read off the yaw rate, dutifully followed it over.
-    let fwd = -stick.L.y, yaw = -stick.L.x, up = -stick.R.y, str = stick.R.x;
+    // Left stick is what the hull does -- thrust and slide. Right stick is where it points
+    // and how high it sits. Steering on the left and strafing on the right read as inverted
+    // to anyone who has flown anything.
+    let fwd = -stick.L.y, str = stick.L.x, up = -stick.R.y, yaw = -stick.R.x;
     if (keys.w || keys.arrowup) fwd += 1; if (keys.s || keys.arrowdown) fwd -= 1;
     if (keys.d || keys.arrowright) yaw -= 1; if (keys.a || keys.arrowleft) yaw += 1;
     if (keys[' ']) up += 1; if (keys.shift) up -= 1;
@@ -3555,11 +3558,20 @@ class Ship {
       if (k >= 1) { this.begin('landed'); this.next = t + rnd(SHIP.every[0], SHIP.every[1]);
         this.g.position.copy(this.pad); this.ob = obAdd(this.pad.x, this.pad.z, SHIP.rad, this, this.pad.y + 3.4); }
     }
-    // velocity, for the exhaust to trail from, and the previous heading for the yaw rate
-    // A position delta over dt, so a hitched frame would read as a lurch of hundreds of
-    // units a second and the exhaust would inherit it. It can never really go faster than
-    // it cruises, so it is not allowed to say it did.
-    if (dt > 0) { this.vel.copy(this.g.position).sub(this.pos).divideScalar(dt); const vl = this.vel.length(); if (vl > SHIP.speed * 1.4) this.vel.multiplyScalar(SHIP.speed * 1.4 / vl); }
+    // Velocity, for the exhaust to trail from, and the previous heading for the yaw rate.
+    // The scripted states fly by setting the hull's position along a curve, so theirs has to
+    // be inferred from where it went -- a position delta over dt, clamped, because a hitched
+    // frame would otherwise read as a lurch of hundreds of units a second and the exhaust
+    // would inherit it.
+    //
+    // The pilot's velocity is not inferred: it is the one being integrated. Overwriting it
+    // here also ran it through that clamp, which quietly held the piloted top speed at
+    // SHIP.speed * 1.4 -- 42 -- no matter what the thrust was set to. Raising the engine
+    // could never have moved it.
+    if (dt > 0 && this.state !== 'piloted') {
+      this.vel.copy(this.g.position).sub(this.pos).divideScalar(dt);
+      const vl = this.vel.length(); if (vl > SHIP.speed * 1.4) this.vel.multiplyScalar(SHIP.speed * 1.4 / vl);
+    }
     this.pos.copy(this.g.position); this.prevHeading = this.heading;
     // ---- smoothing: the joints never snap ----
     const sm = this.sm;
@@ -4435,6 +4447,9 @@ const MOVE = {
   max: 17, acc: 24, accFall: .93, drag: 46,      // ground
   airAcc: 11, airDrag: 1.2,                      // in the air
   swimMax: 9, swimAcc: 20, swimDrag: 13,
+  // How fast the velocity can be turned sideways, which is a separate question from how
+  // fast it can be lengthened. A right angle at full speed takes about a third of a second.
+  turn: 52, airTurn: 9, swimTurn: 16,
   // Uphill is work: the fraction of top speed left, against the gradient he is walking into.
   hill: .58, hillMin: .34, dip: .13, dipMax: 1.12,
 };
@@ -4695,7 +4710,14 @@ function updatePlayer(dt) {
   }
   if (!player.fly) {
     // Steer velocity toward what the stick asks for, at acc while pushing and drag while
-    // letting go. Turning is the same move, so a hard reversal costs the same as a stop.
+    // letting go -- but speeding up and changing direction are different problems and must
+    // not share a rate. They did, and when the acceleration ramp bled the rate away near top
+    // speed, turning bled away with it: a right-angle change of direction at full pelt needs
+    // twenty-four units of velocity change, and at 1.7 a second he skated sideways for
+    // fourteen of them. The correction is split into the part along his current heading,
+    // which is a change of speed and belongs to the ramp, and the part across it, which is a
+    // change of direction and gets its own brisk rate. Letting go is all `along`, so drag is
+    // untouched.
     const inW = player.swim > .5, onG = player.grounded && !inW;
     // The gradient along the way he is actually going -- not the slope of the ground under
     // him, which would slow him just as much running along a contour as straight up the
@@ -4713,8 +4735,20 @@ function updatePlayer(dt) {
     const ramp = onG && !inW ? 1 - MOVE.accFall * smooth(0, 1, sp0 / MOVE.max) : 1;
     const rate = want ? (inW ? MOVE.swimAcc : onG ? MOVE.acc * ramp : MOVE.airAcc)
                       : (inW ? MOVE.swimDrag : onG ? MOVE.drag : MOVE.airDrag);
-    const ax = tvx - player.vx, az = tvz - player.vz, al = Math.hypot(ax, az);
-    if (al > 1e-4) { const step = Math.min(al, rate * dt); player.vx += ax / al * step; player.vz += az / al * step; }
+    const ax = tvx - player.vx, az = tvz - player.vz;
+    if (sp0 > .5) {
+      const ux = player.vx / sp0, uz = player.vz / sp0;
+      const along = ax * ux + az * uz;                       // how much faster or slower
+      const lx = ax - ux * along, lz = az - uz * along;      // and how much to the side
+      const alat = Math.hypot(lx, lz);
+      const sA = Math.min(Math.abs(along), rate * dt) * Math.sign(along);
+      const turn = (inW ? MOVE.swimTurn : onG ? MOVE.turn : MOVE.airTurn) * dt;
+      const sL = alat > 1e-4 ? Math.min(alat, turn) / alat : 0;
+      player.vx += ux * sA + lx * sL; player.vz += uz * sA + lz * sL;
+    } else {
+      const al = Math.hypot(ax, az);
+      if (al > 1e-4) { const step = Math.min(al, rate * dt); player.vx += ax / al * step; player.vz += az / al * step; }
+    }
     player.pos.x += (player.vx + player.pushX) * dt;
     player.pos.z += (player.vz + player.pushZ) * dt;
     rimClamp(player.pos);

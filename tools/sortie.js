@@ -117,13 +117,13 @@ if(process.argv[3]==='pilot'){
   hold(8,()=>{ el+=.033; if(tHalf===null&&sp()<v0*.5) tHalf=el; if(Math.abs(S.pos.x)>232||Math.abs(S.pos.z)>232) hitEdge=true; });
   out.coast={from:+v0.toFixed(1),halfSpeedAfter:tHalf&&+tHalf.toFixed(1),after8s:+sp().toFixed(1),hitWorldEdge:hitEdge};
   // a turn: the yaw rate builds and the hull banks with it, and it keeps swinging when released
-  // stick hard LEFT: the heading must rise, the hull must roll left (negative), the LEFT
-  // nozzle must swing out and the LEFT side jet must fire.
+  // RIGHT stick hard left -- steering lives there now: the heading must rise, the hull must
+  // roll left (negative), the LEFT nozzle must swing out and the LEFT side jet must fire.
   const h0=S.heading; const yr=[]; el=0;
-  hold(3,()=>{ ST.L.x=-1; el+=.033; for(const m of [.5,1.5,3]) if(Math.abs(el-m)<.02) yr.push({t:m,yawRate:+S.yawRate.toFixed(2),roll:+S.roll.toFixed(2),Lout:+(b.back_jet_L.rotation.y).toFixed(2),Rout:+(b.back_jet_R.rotation.y).toFixed(2),sideL:+S.jets.sL.rate.toFixed(0),sideR:+S.jets.sR.rate.toFixed(0)}); });
+  hold(3,()=>{ ST.R.x=-1; el+=.033; for(const m of [.5,1.5,3]) if(Math.abs(el-m)<.02) yr.push({t:m,yawRate:+S.yawRate.toFixed(2),roll:+S.roll.toFixed(2),Lout:+(b.back_jet_L.rotation.y).toFixed(2),Rout:+(b.back_jet_R.rotation.y).toFixed(2),sideL:+S.jets.sL.rate.toFixed(0),sideR:+S.jets.sR.rate.toFixed(0)}); });
   let dh=S.heading-h0; dh=Math.atan2(Math.sin(dh),Math.cos(dh));
-  out.stickLeft={headingChange:+dh.toFixed(2),turnedLeft:dh>0,rolledLeft:S.roll<0,leftNozzleOut:b.back_jet_L.rotation.y<-.05,rightNozzleStill:Math.abs(b.back_jet_R.rotation.y)<.05,leftJetFiring:S.jets.sL.rate>0,rightJetOff:S.jets.sR.rate===0};
-  ST.L.x=0; const yr0=S.yawRate; hold(1.5); out.turn={ramp:yr,afterRelease1_5s:+S.yawRate.toFixed(2),wasBeforeRelease:+yr0.toFixed(2)};
+  out.rightStickLeft={headingChange:+dh.toFixed(2),turnedLeft:dh>0,rolledLeft:S.roll<0,leftNozzleOut:b.back_jet_L.rotation.y<-.05,rightNozzleStill:Math.abs(b.back_jet_R.rotation.y)<.05,leftJetFiring:S.jets.sL.rate>0,rightJetOff:S.jets.sR.rate===0};
+  ST.R.x=0; const yr0=S.yawRate; hold(1.5); out.turn={ramp:yr,afterRelease1_5s:+S.yawRate.toFixed(2),wasBeforeRelease:+yr0.toFixed(2)};
   // Which way is which, asked of the geometry rather than of a sign convention: take the
   // hull's own axes through its quaternion and look at where they end up. The exhaust is
   // asked the same way -- em.d is the direction the flame actually travels, in chart space,
@@ -133,10 +133,10 @@ if(process.argv[3]==='pilot'){
   const rightOf=()=>{ const l=lft(); return new THREE.Vector3(-l.x,-l.y,-l.z); };
   hold(1.5);
   // strafe right: it must slide right AND drop its right shoulder into the slide
-  ST.R.x=1; hold(2.5);
+  ST.L.x=1; hold(2.5);
   { const r=rightOf(), slide=S.vel.x*r.x+S.vel.z*r.z;
     out.strafeRight={slidRight:+slide.toFixed(1),leftWingY:+lft().y.toFixed(3),leansRight:lft().y>.02,roll:+S.roll.toFixed(3)}; }
-  ST.R.x=0; hold(2);
+  ST.L.x=0; hold(2);
   // climb: the nozzles have to point DOWN, because that is what pushes it up
   ST.R.y=-1; hold(2.5);
   out.climbing={rising:+S.vel.y.toFixed(1),pitchDemand:+S.sm.pitch.toFixed(2),
@@ -159,9 +159,9 @@ if(process.argv[3]==='pilot'){
     ST.L.y=-1; hold(2);
     out.flamesUnderThrottle={mains:[u('L'),u('R')],smoothedThrottle:+S.sm.throttle.toFixed(2),
       bothLit:u('L')>.3&&u('R')>.3,lengthL:+S.flame.L.scale.z.toFixed(2)};
-    ST.L.y=0; ST.R.x=1; hold(2);
+    ST.L.y=0; ST.L.x=1; hold(2);          // strafe lives on the left stick now
     out.flamesUnderStrafe={sideL:u('sL'),sideR:u('sR'),onlyOneSide:(u('sL')>.15)!==(u('sR')>.15)};
-    ST.R.x=0; hold(1.5);
+    ST.L.x=0; hold(1.5);
     ST.R.y=-1; hold(1.5);
     out.bellyFlameWhileClimbing={lit:+S.flame.lift.material.uniforms.uK.value.toFixed(2),visible:S.flame.lift.visible};
     ST.R.y=0; hold(1);

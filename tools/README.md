@@ -608,6 +608,26 @@ micro-movement is a matter of how far you push rather than how briefly.
 Nothing else had to change for the animation: `stepRig` blends on `speed / MOVE.max`, so a
 longer ramp means he walks for longer before the run mixes in, for free.
 
+**Turning is not accelerating**, and the two must not share a rate. They did, and the ramp
+above broke it: once acceleration had bled away near top speed, so had the ability to change
+direction. A right-angle turn at full pelt needs twenty-four units of velocity change, and at
+1.7 a second he arced round for fourteen of them — which reads as skating, and is exactly
+what it was. The correction is split into the part along his current heading, which is a
+change of speed and belongs to the ramp, and the part across it, which is a change of
+direction and gets `MOVE.turn`. Letting go of the stick is all `along`, so drag is untouched.
+
+Measured, before and after, by running the same probe against the previous commit
+(`git show HEAD:index.html > /tmp/old.html && node tools/gait.js /tmp/old.html`):
+
+| turn at full speed | before | after |
+|---|---|---|
+| 90° | never got there in 6s | 0.53s, speed held at 17 |
+| 135° | 4.36s | 0.83s |
+| 180° | 2.57s | 2.34s |
+
+The reversal barely moves, and should not: turning right round has to pass through zero, and
+the ramp governs getting back up to speed afterwards.
+
 **Hills.** The gradient is read along the direction he is *walking*, one metre ahead — not
 the slope of the ground under him, which would cost him just as much running along a contour
 as straight up the face. Speed scales by `1 - grade * MOVE.hill`, floored at `MOVE.hillMin`,
@@ -627,6 +647,20 @@ still stop him. Measured by charging rocks of a known height: 0.8 tall — walks
 Trunks, cairns and the great tree register `Infinity` and were never in the conversation.
 
 Only the player reads `climb`; creatures keep their own steering.
+
+### The ship
+
+Left stick is what the hull does — thrust and slide. Right stick is where it points and how
+high it sits. Steering on the left and strafing on the right reads as inverted to anyone who
+has flown anything.
+
+Top speed is `PILOT.thrust / PILOT.drag`, and for a long time it was not: `update()` rebuilt
+`this.vel` every frame from a position delta and clamped it to `SHIP.speed * 1.4`. That clamp
+exists so a hitched frame cannot lurch the exhaust, and it is right for the scripted sortie,
+which flies by setting the hull's position along a curve and has no integrated velocity of
+its own. Applying it to the pilot, whose velocity *is* the thing being integrated, quietly
+held the ship at 42 whatever the engine was set to — raising the thrust could never have
+moved it. The rebuild is now skipped in the piloted state.
 
 ### The ship's flames and lamps
 
@@ -914,6 +948,8 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | Wave size and grouping | `waterUni.uW` / `uG` |
 | How fast he gets going | `MOVE.acc` and `MOVE.accFall` (the ramp), `MOVE.max` (the top) |
 | What a hill costs | `MOVE.hill`, `MOVE.hillMin` |
+| How sharply he can change direction | `MOVE.turn` (`airTurn`, `swimTurn`) |
+| Ship top speed | `PILOT.thrust / PILOT.drag` — and see the clamp note under The ship |
 | What he can climb onto | `OB_PLAYER.climb` |
 | Waypoint trail spacing | `WAY.gap` (`WAY.N` is only the cap) |
 | Flame sizes | `SHIP.jet` / `SHIP.side` / `SHIP.lift` / `SHIP.head` / `SHIP.bulb` |
