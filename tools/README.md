@@ -882,6 +882,51 @@ world-space coordinate, so `uv = chart / tile` is a tiling parameterisation with
 no unwrap — and a `land` mask off the same height and slope thresholds the colours use fades
 the map in and out.
 
+### Why the day is slower than the night
+
+Because the sun casts and the moon does not. `updateSky` sets `sun.castShadow = e > .03`, so
+at dusk a whole depth pass over the scene stops being rendered and the frame rate climbs.
+That is the mechanism; the reason it was *worth noticing* was that the pass had grown far
+bigger than it needed to be.
+
+`node tools/shot.js --probe` measures it, at the frame it is looking at, by rendering once
+with the sun casting and once without and diffing the draw calls and triangles. It also
+prints who the casters are, by species and by mesh count. Use it before changing anything
+here — the first guess (bloom) was wrong, and the second (the shadow map size) was wrong too.
+
+What it found, and what was done:
+
+- **`prepModel` turned frustum culling off on every model mesh.** The comment explains that a
+  *skinned* model's bounding sphere is computed wrong and it winks out at screen edges — true,
+  and irrelevant to a static prop, whose sphere is fine. With four rigs in the file it cost
+  nothing; with two hundred and thirty plants it meant every tree on the far side of the
+  planet was drawn in full, in the main pass and again in the shadow pass, forever. Only
+  skinned meshes opt out now. **This was most of it: the main pass went from 556 draw calls
+  to 172.**
+- **The shadow camera was a fixed ±105 units.** `fitShadow` sizes it from the boom length
+  instead, so a zoomed-in shot pays for a 96-unit box rather than a 210-unit one — and gets
+  a sharper map out of the same texels.
+- **Ground cover stopped casting.** Moss tufts, mushrooms and blooms lie flat and contribute a
+  smudge; eighty moss tufts were 180k triangles of depth map. So did the reeds along the
+  tideline, and everything aquatic — the water does not receive shadows, so a shoal's worth
+  of draws was landing on a surface that could never show them.
+
+Measured at one frame, day, boom at 22: **1,369 calls / 3.7M triangles → 502 / 2.3M**, with
+the shadow pass itself down from 813 calls / 1.78M to 330 / 1.05M. The trees, the Elderwillow
+and the built scenery are what is left, and their shadows are the ones you actually look at.
+
+### Standing on the beach
+
+The dry-land floor used to be `max(ground, waveY)`. The intent was that a fall into deep water
+lands on the actual swell rather than hovering above a trough — but unguarded it applied on
+the sand too, where the ground sits a foot above sea level and every crest that came in higher
+than it picked him up. He stood on dry land, `swim` at 0, bobbing with a sea he was not in.
+It only reaches for the swell where the terrain is actually below sea level now.
+
+`npm run check:gait` pins him at the lowest dry sand it can find and measures how far he moves
+over four seconds holding no stick. Before: `bobbed 2.01` with `swimming 0`. After: `bobbed 0`,
+while deep water still reads `bobbed 1.91, swimming 1`.
+
 ### Seeing past scenery
 
 Two mechanisms, and they divide the work:
@@ -1225,6 +1270,8 @@ node tools/shot.js --out shots/title.png  --title --wait 12      # the title scr
 
 It prints draw calls, triangles, the biome you are standing in, and where every site ended
 up — so it doubles as the fastest way to find out whether a structure got built at all.
+`--probe` adds what the sun's shadow pass costs and who is casting into it; `--tree` stands
+the wanderer behind the biggest modelled tree to check that scenery goes see-through.
 
 Two things about it. It runs on swiftshader at a couple of frames a second, so **`--wait` is
 world seconds, never wall clock** — the same rule as every other harness here. And every shot
@@ -1383,6 +1430,9 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | How far apart the built sites stand | `SITE_APART` (relaxes to 52, then 38) |
 | How dark the worn ground is | `M_WORN.color` |
 | How big the see-through hole is | the `lerp(.34, .17, ...)` on `uHoleR` |
+| How much ground the shadow map covers | `fitShadow` — `clamp(34 + r * 1.5, 48, 150)` |
+| Shadow map resolution | `Q.shadow` (1024 mobile, 2048 desktop) |
+| Whether a plant casts a shadow | `cast: false` in its `PLANT_MODELS` entry, and `noCast()` |
 | How the title screen's crane moves | `INTRO.wide` / `INTRO.near` / `INTRO.craneT` |
 | How far the shot swings across the letters | `INTRO.sweep`, `INTRO.rate` |
 | How an animal feels about you | `wary`/`flock`/`notice`/`curious` in its constructor |

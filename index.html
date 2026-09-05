@@ -1081,6 +1081,20 @@ const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.castShadow = true;
 sun.shadow.mapSize.set(Q.shadow, Q.shadow);
 Object.assign(sun.shadow.camera, { left: -105, right: 105, top: 105, bottom: -105, near: 60, far: 700 });
 sun.shadow.camera.updateProjectionMatrix();
+// The box the shadow map covers, sized to how far the boom is out. A fixed 105 was two
+// things at once: every caster inside a 210-unit square drawn again into the depth map,
+// and only a fifth of a unit of map per texel to show them at. Following the zoom keeps
+// the near shadows -- the ones you actually look at -- sharper, and stops paying for the
+// far ones at all.
+let shadowSpan = 0;
+function fitShadow(r) {
+  const want = clamp(34 + r * 1.5, 48, 150);
+  if (Math.abs(want - shadowSpan) < 2) return;
+  shadowSpan = want;
+  const c = sun.shadow.camera;
+  c.left = -want; c.right = want; c.top = want; c.bottom = -want;
+  c.updateProjectionMatrix();
+}
 sun.shadow.bias = -0.0005; sun.shadow.normalBias = .5;
 sun.target.userData.flat = true; scene.add(sun, sun.target);
 const moon = new THREE.DirectionalLight(0x9db0ff, 0); moon.target = sun.target; scene.add(moon);
@@ -2009,6 +2023,7 @@ class MossTuft {
     }
     for (let i = 0; i < 5; i++) { const f = mesh(G.leaf, M.moss, rnd(2, 4), rnd(1.2, 2.2), 1, rnd(-1, 1), .1, rnd(-1, 1)); f.rotation.y = rnd(3); this.g.add(f); }
     flatten(this.g);                                  // twelve pieces, two materials, one shape
+    noCast(this.g);                                   // ground cover: it receives, it does not cast
     scene.add(this.g); this.apply();
     const pm = PLANT_MODELS[this.constructor.name];
     if (pm) attachPlantModel(this, pm);
@@ -2028,7 +2043,7 @@ class Mushroom {
     const st = mesh(G.cylT, M.bloomStem, .17, this.cap * .62, .17, 0, this.cap * .31, 0); st.castShadow = true; this.g.add(st);
     const cp = mesh(pick(G.blob), pick(M.bloom), this.cap * .5, this.cap * .26, this.cap * .5, 0, this.cap * .66, 0);
     cp.castShadow = true; this.g.add(cp);
-    flatten(this.g);
+    flatten(this.g); noCast(this.g);
     this.glow = glow('#a8f0d0', 0, .4); this.glow.position.y = this.cap * .84; this.g.add(this.glow);
     scene.add(this.g); this.apply();
     const pm = PLANT_MODELS[this.constructor.name];
@@ -2264,8 +2279,12 @@ function prepModel(root) {
     if (!o.isMesh) return;
     o.castShadow = true; o.receiveShadow = true;
     // three culls against a bounding sphere computed the same wrong way as the box below,
-    // so a skinned model winks out at screen edges. These are a handful of meshes.
-    o.frustumCulled = false;
+    // so a *skinned* model winks out at screen edges. That is a skinning problem and only a
+    // skinning problem -- a static prop's bounding sphere is right. Turning culling off for
+    // everything was fine when every model was a rig and there were four of them; with two
+    // hundred and thirty-odd plants it meant every tree on the far side of the planet was
+    // drawn in full, in the main pass and again in the shadow pass, forever.
+    if (o.isSkinnedMesh) o.frustumCulled = false;
     for (const m of [].concat(o.material)) {
       if (!m) continue;
       // a rig is a body: never punch a hole through one. Scenery is not, and must take it.
@@ -2557,10 +2576,13 @@ const PLANT_MODELS = {
     height: p => p.cap,
     glowY: p => p.cap * .84,
     glow: { lo: .1, hi: .34, k: 1.9 },
+    cast: false,
   },
   // Ground cover, and the one there are most of: 115 of these at 2,254 triangles is a
   // quarter of a million, which is what the primitive tufts already cost between them.
-  MossTuft: { url: 'models/alien_plant_02.glb', height: 1.5 },
+  // It does not cast: a hand-high tuft lying flat on the ground contributes a smudge, and
+  // eighty of them were a hundred and eighty thousand triangles of shadow map.
+  MossTuft: { url: 'models/alien_plant_02.glb', height: 1.5, cast: false },
   Bloom: {
     url: 'models/alien_plant_01.glb',
     height: 3.4,
@@ -2604,6 +2626,10 @@ function plantGlow(mat, cfg) {
 // just a trunk. Those are lifted onto the model at `keepY` and everything else goes dark.
 // `height` and `keepY` take a number or a function of the plant, so a species that varies its
 // own size (an elder tree against a young one) keeps varying it.
+// Stop something casting into the shadow map. The depth pass is half the frame's triangles
+// in daylight and turns off at night, which is why the island speeds up after dark -- so
+// anything whose shadow nobody would miss should not be in it.
+function noCast(root) { root.traverse(o => { if (o.isMesh) o.castShadow = false; }); return root; }
 function attachPlantModel(plant, cfg) {
   // `url` may be a list, in which case each plant draws one and keeps the index: `foot`
   // and anything else per-variant is looked up by it.
@@ -2632,7 +2658,7 @@ function attachPlantModel(plant, cfg) {
     const H = num(cfg.height, 1), h = e.box.max.y - e.box.min.y, s = h > 1e-4 ? H / h : 1;
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.rotation.y = rnd(Math.PI * 2);
-    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = cfg.cast !== false; o.receiveShadow = true; } });
     plant.g.add(inst); plant.model = inst;
     if (plant.glow && cfg.glowY !== undefined)
       plant.glow.position.y = num(cfg.glowY) - (plant.glow.parent === plant.head && plant.head ? plant.head.position.y : 0);
@@ -2719,6 +2745,9 @@ class Creature {
     }
     scene.add(this.g);
     this.g.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+    // Nothing in the sea casts. The water does not receive shadows, so a shoal's worth of
+    // depth-map draws lands on a surface that will never show them.
+    if (this.aquatic) noCast(this.g);
     const rc = CREATURE_RIGS[this.constructor.name];
     if (rc) attachRig(this.g, rc, r => {
       if (!this.alive) { this.g.remove(r.root); return; }   // died while the GLB was in flight
@@ -5124,7 +5153,13 @@ function scatterDecor() {
     obAdd(p.x, p.z, 1.1, null, height(p.x, p.z) + .7);   // it is lying down; step over it
   }
   const grp = new THREE.Group(); grp.userData.flat = true;
-  for (const m of mergeBin(bin)) grp.add(warpGeo(m.geometry) && m);
+  for (const m of mergeBin(bin)) {
+    warpGeo(m.geometry);
+    // Two thousand reed blades laid flat against the tideline are a lot of shadow map for a
+    // fringe of dark on wet sand. The boulders and the driftwood keep theirs.
+    if (m.material === M.reed) m.castShadow = false;
+    grp.add(m);
+  }
   scene.add(grp);
 }
 function populate() {
@@ -5314,6 +5349,7 @@ function updateSky() {
     / (1 + Math.max(0, camAlt - 20) * .012);
   hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.34, .72, dayK) * (1 - oc * .3) + WX.flash * 1.5;
   sun.intensity *= 1 - oc * .8; sun.castShadow = sun.castShadow && sun.intensity > .2;
+  fitShadow(camS.r);
   sun.color.copy(tmpC.sun); bounce.intensity = lerp(.05, .22, dayK); fill.intensity = lerp(.12, .5, dayK);
   // Height above the sea under the lens, not above the ground: on a mountain top you are
   // still standing in the air you breathe, and the sky should not go black on a walk up it.
@@ -5887,13 +5923,17 @@ function updatePlayer(dt) {
       const sink = (b, frac) => rg.baseY + (b.lo + (b.hi - b.lo) * frac) * rg.scale;
       depth = lerp(sink(sp.swimIdle, SWIM.tread), sink(sp.swim, SWIM.fwd), player.moving);
     }
-    // Over deep water the dry target is the surface itself — not flat SEA — so he falls onto
-    // the actual swell and the swim picks up from there rather than hovering above a trough.
     // deckY, not height: whatever the ship can land on he can stand on, which right now
     // means the floating isle. Step out of a ship parked on it and the ground is there.
     const deck = Math.max(deckY(player.pos.x, player.pos.z, player.pos.y),
                           standOn(player.pos.x, player.pos.z, player.pos.y));
-    const target = lerp(Math.max(deck, wy), Math.max(h, wy - depth), player.swim);
+    // Over deep water the dry target is the surface itself — not flat SEA — so a fall lands
+    // on the actual swell and the swim picks up from there rather than hovering above a
+    // trough. **Only over deep water.** Unguarded, that max() applied on the beach too: the
+    // sand there sits a foot or so above sea level, every crest that came in higher than it
+    // lifted him, and he stood on dry land bobbing with a sea he was not in.
+    const dry = h < SEA - .3 ? Math.max(deck, wy) : deck;
+    const target = lerp(dry, Math.max(h, wy - depth), player.swim);
     player.gy = lerp(player.gy, target, Math.min(1, dt * (player.swim > .5 ? 6 : 14)));   // ground snaps; water bobs
     const canLead = RIG.jumpLead > 0 && player.rigH && player.rigH.acts.jumpStart;
     // In the water there is nothing to crouch against, so a surface leap goes straight up

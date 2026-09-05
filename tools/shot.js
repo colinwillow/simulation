@@ -11,6 +11,7 @@
 //   --wait       seconds of world time to let settle before the shutter (default 6)
 //   --w --h      canvas size (default 1280x800)
 //   --tree       stand behind the biggest modelled tree, to check it goes see-through
+//   --probe      also report what the sun's shadow pass costs, in calls and triangles
 //   --title      shoot the title screen instead, before the world is entered
 //   --intro-t    seconds along the title screen's crane to jump to (0 wide, 26 near)
 //
@@ -27,7 +28,7 @@ const WAIT = +arg('wait', 6);
 
 // The game's script is one IIFE, so nothing inside it is reachable from the page. Splice a
 // handle onto the window just before it closes -- the same trick the headless tools use.
-const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame};';
+const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q};';
 function indexHTML() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const cut = html.lastIndexOf('})();');
@@ -122,6 +123,40 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
   // so the settle is counted in world seconds like every other harness in this folder.
   const t0 = await page.evaluate(() => window.__g.world.clock);
   await page.waitForFunction(`window.__g.world.clock > ${t0 + WAIT}`, null, { timeout: 600000 });
+
+  // What the shadow pass actually costs, measured at this exact frame rather than guessed:
+  // render once with the sun casting and once without, and diff the draw calls and triangles.
+  if (has('probe')) {
+    const p2 = await page.evaluate(() => {
+      const g = window.__g, r = g.renderer, was = g.sun.castShadow;
+      const take = on => { g.sun.castShadow = on; g.renderPost(); const i = r.info.render; return { calls: i.calls, tris: i.triangles }; };
+      const off = take(false), on = take(true);
+      g.sun.castShadow = was;
+      // and who is asking for all of it
+      const seen = new Set(), by = {};
+      // An invisible parent skips its whole subtree in three's shadow pass, so a creature
+      // wearing a rig must not be counted for the primitive body underneath it.
+      const shown = o => { for (let n = o; n; n = n.parent) if (!n.visible) return false; return true; };
+      const count = (root, tag) => { root.traverse(o => {
+        if (!o.isMesh || !o.castShadow || !shown(o) || seen.has(o)) return;
+        seen.add(o); const e = by[tag] || (by[tag] = { n: 0, tris: 0 });
+        e.n++; const ix = o.geometry.index;
+        e.tris += (ix ? ix.count : o.geometry.attributes.position.count) / 3 | 0;
+      }); };
+      for (const list of ['plants', 'creatures', 'structures'])
+        for (const e of g.world[list]) if (e.alive && e.g) count(e.g, e.constructor.name);
+      count(g.scene, 'scenery');
+      const top = Object.entries(by).sort((a, b) => b[1].n - a[1].n).slice(0, 8)
+        .map(([k, v]) => k + ' ' + v.n + '/' + (v.tris / 1000 | 0) + 'k');
+      return { off, on, map: g.Q.shadow, top };
+    });
+    console.log('shadow probe: map ' + p2.map + 'px'
+      + ' | no shadows ' + p2.off.calls + ' calls ' + (p2.off.tris / 1000 | 0) + 'k tris'
+      + ' | shadows ' + p2.on.calls + ' calls ' + (p2.on.tris / 1000 | 0) + 'k tris'
+      + ' | the pass costs ' + (p2.on.calls - p2.off.calls) + ' calls and '
+      + ((p2.on.tris - p2.off.tris) / 1000 | 0) + 'k tris');
+    console.log('  casters (meshes/triangles): ' + p2.top.join('  '));
+  }
 
   fs.mkdirSync(path.dirname(path.resolve(OUT)), { recursive: true });
   await page.screenshot({ path: OUT });

@@ -23,7 +23,7 @@ const html=fs.readFileSync(process.argv[2]||'index.html','utf8');
 const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('const BUILD'));
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__p=player;global.__stick=stick;global.__h=height;global.__gY=groundY;global.__MOVE=MOVE;global.__OBP=OB_PLAYER;global.__OB=OB;global.__obRad=obRad;global.__obAdd=obAdd;global.__standOn=standOn;global.__slope=slope;global.__WAY=WAY;global.__obClear=obClear;global.__obNear=obNear;global.__setWay=setWaypoint;global.__cam=cam;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__waveY=waveY;global.__SEA=SEA;global.__p=player;global.__stick=stick;global.__h=height;global.__gY=groundY;global.__MOVE=MOVE;global.__OBP=OB_PLAYER;global.__OB=OB;global.__obRad=obRad;global.__obAdd=obAdd;global.__standOn=standOn;global.__slope=slope;global.__WAY=WAY;global.__obClear=obClear;global.__obNear=obNear;global.__setWay=setWaypoint;global.__cam=cam;'+src.slice(cut);
 eval(src);
 // The title screen parks the camera out at the planet and flies the ship round it. That is
 // the first thing a player sees and the last thing a harness wants: every tool here measures
@@ -149,4 +149,37 @@ for(const dist of [14, 45, 120]){
   console.log('waypoint trail           ', JSON.stringify({distance:dist, dots:n, medianGap:+(gaps[gaps.length>>1]||0).toFixed(2)}));
 }
 global.__setWay(null);
+
+// ---------- 5. standing still on the beach ----------
+// He rode the swell while stood on dry sand: the dry-land floor was max(ground, waveY), and
+// on a beach a foot above sea level every crest that came in higher than it lifted him. Pin
+// him, hold no stick, and measure how far he moves up and down over four seconds. Land
+// should be flat; only water should bob.
+function standTest(name, pick) {
+  const q = pick(); if (!q) return console.log('standing still            ', name, 'nowhere to try it');
+  P.pos.set(q.x, gY(q.x, q.z), q.z); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y; P.swim = 0;
+  global.__cam.tgt.set(q.x, P.pos.y, q.z);
+  hold(2, () => { ST.L.x = 0; ST.L.y = 0; P.pos.x = q.x; P.pos.z = q.z; });   // let gy settle
+  let lo = 1e9, hi = -1e9;
+  hold(4, () => { ST.L.x = 0; ST.L.y = 0; P.pos.x = q.x; P.pos.z = q.z;
+    lo = Math.min(lo, P.pos.y); hi = Math.max(hi, P.pos.y); });
+  const swell = (() => { let a = 1e9, b = -1e9;
+    for (let i = 0; i < 60; i++) { const y = global.__waveY(q.x, q.z); a = Math.min(a, y); b = Math.max(b, y); step(); }
+    return b - a; })();
+  console.log('standing still            ', JSON.stringify({ where: name,
+    groundAboveSea: +(H(q.x, q.z) - global.__SEA).toFixed(2),
+    bobbed: +(hi - lo).toFixed(2), swellHereIs: +swell.toFixed(2), swimming: +P.swim.toFixed(2) }));
+}
+// Right at the waterline, and the flattest, lowest dry sand it can find -- that is where the
+// swell used to reach over the ground and pick him up, and it is where he stands to look at
+// the sea. A spot a metre and a half up would have hidden it.
+standTest('waterline', () => { let best = null, bh = 1e9;
+  for (let i = 0; i < 90000; i++) { const x = (Math.random() - .5) * 300, z = (Math.random() - .5) * 300;
+    const h = H(x, z); if (h > global.__SEA + .05 && h < bh && global.__slope(x, z) < .4) { bh = h; best = { x, z }; } }
+  return best; });
+standTest('inland', () => { for (let i = 0; i < 60000; i++) { const x = (Math.random() - .5) * 260, z = (Math.random() - .5) * 260;
+  const h = H(x, z); if (h > 6 && h < 12 && global.__slope(x, z) < .2) return { x, z }; } return null; });
+standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Math.random() - .5) * 320, z = (Math.random() - .5) * 320;
+  if (H(x, z) < global.__SEA - 6) return { x, z }; } return null; });
+
 process.exit(0);
