@@ -135,20 +135,27 @@ function reportGltf(file) {
   const face = facing(j);
   if (face) P(`  faces         ${face.dir} (${face.to} is ${face.dz >= 0 ? '+' : ''}${face.dz.toFixed(2)}z from ${face.from}) — CREATURE_RIGS yaw: ${face.yaw}`);
 
-  const bad = [], note = [];
-  if (!skins.length) bad.push('no armature: nothing can deform this mesh, so no walk or idle');
-  if (!skinned && skins.length) bad.push('a skin is declared but the mesh has no JOINTS_0/WEIGHTS_0');
-  if (!anims.length) bad.push('no animation clips');
+  // A file with no skin and no clips is not broken, it is a prop -- and props are half the
+  // world. Only judge it against what it is evidently trying to be: something that arrived
+  // with a skeleton and no cycles, or cycles and no skeleton, is a creature that lost a
+  // half. Something that arrived with neither is scenery, and scenery is fine.
   const real = anims.filter(a => !/^(mixamo\.com|CINEMA_4D)/i.test(a.name));
-  if (anims.length && !real.length) bad.push('every clip is an exporter default (CINEMA_4D_Main / mixamo.com), so none is a real cycle');
+  const wantsToMove = skins.length > 0 || real.length > 0;
+  const bad = [], note = [];
+  if (wantsToMove) {
+    if (!skins.length) bad.push('clips but no armature: nothing can deform this mesh');
+    if (!skinned && skins.length) bad.push('a skin is declared but the mesh has no JOINTS_0/WEIGHTS_0');
+    if (!real.length) bad.push('a skeleton but no real clips — every one is an exporter default (CINEMA_4D_Main / mixamo.com)');
+  }
   if (real.length && !real.some(a => /idle/i.test(a.name))) note.push('no clip whose name contains "idle"');
   if (real.length && !real.some(a => /walk|run/i.test(a.name))) note.push('no clip whose name contains "walk" or "run"');
   if (mats.some(m => m.alphaMode === 'BLEND')) note.push('alphaMode BLEND — the game forces it opaque, but set Blend Mode to Opaque in Blender');
-  if (!morphs.length) note.push('no blend shapes, so no blinking');
+  if (!morphs.length && wantsToMove) note.push('no blend shapes, so no blinking');
   if (biggest > 2048) note.push(`textures are ${biggest}px — ${gpuMB.toFixed(0)} MB of GPU memory, which is why the game rescales them to 1024 on a phone. Compressing the file does not touch this; halving the pixels does. Export at 1024 or 2048 and the download shrinks too.`);
 
   P('');
   if (bad.length) { P('  BROKEN for the game:'); for (const b of bad) P('    - ' + b); }
+  else if (!wantsToMove) P('  usable as a prop: a static mesh, which is all a plant or a rock needs');
   else P('  usable: rig, clips and weights are all present');
   if (note.length) { P('  worth knowing:'); for (const n of note) P('    - ' + n); }
   return bad.length ? 1 : 0;

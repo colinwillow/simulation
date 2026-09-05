@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b43';
+const BUILD = 'b44';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1777,6 +1777,8 @@ class Bloom {
     this.glow = glow('#ff6fb8', 5, .5); this.glow.position.y = .5; this.head.add(this.glow);
     flatten(this.g, c => c === this.head);
     scene.add(this.g); this.apply();
+    const pm = PLANT_MODELS[this.constructor.name];
+    if (pm) attachPlantModel(this, pm);
     this.ob = obAdd(x, z, .75, this);
   }
   apply() { this.g.scale.setScalar(.2 + .8 * this.size); }
@@ -2222,6 +2224,65 @@ function stepRig(r, dt, speed, grounded, ctx) {
     b.p = 0;
     b.which = Math.random() < .12 ? (Math.random() < .5 ? 1 : 2) : 3;   // an occasional wink
   }
+}
+
+// A plant named here trades its primitive body for a model, the same way CREATURE_RIGS does
+// for a species. Plants are not rigged, so this is only a mesh: the class keeps its growth,
+// its sway, its pulse and its glow.
+const PLANT_MODELS = {
+  Bloom: {
+    url: 'models/alien_plant_01.glb',
+    height: 3.4,
+    glowY: 2.1,
+    // The bulbs. A C4D selection tag does not survive the trip through FBX and glTF -- what
+    // arrives is one mesh, one primitive, one material, with nothing marking which polygons
+    // were selected. So the glow is keyed off the texture instead, which works here because
+    // the bulbs are the only warm thing on a plant that is otherwise lilac and pink:
+    // min(r-b, g-b) runs about .45 on the orange, .1 on the cream, and negative on all the
+    // purple. Same map, same colours, only the bulbs emit.
+    glow: { lo: .16, hi: .38, k: 2.2 },
+  },
+};
+// Kills the generic ambient lift, which would light the whole plant evenly, and replaces it
+// with the keyed one. The material is shared across every instance of the URL, which is what
+// we want: they all glow alike, and it costs one program.
+const PLANT_GLOW = [];
+function plantGlow(mat, cfg) {
+  mat.emissive.setScalar(0); mat.emissiveMap = null; mat.userData.noHole = true;
+  const uni = { uLo: { value: cfg.lo }, uHi: { value: cfg.hi }, uK: { value: cfg.k } };
+  mat.onBeforeCompile = sh => {
+    for (const k in uni) sh.uniforms[k] = uni[k];
+    sh.fragmentShader = 'uniform float uLo, uHi, uK;\n' + sh.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+      {
+        float warm = min(diffuseColor.r - diffuseColor.b, diffuseColor.g - diffuseColor.b);
+        totalEmissiveRadiance += diffuseColor.rgb * smoothstep(uLo, uHi, warm) * uK;
+      }`);
+  };
+  mat.needsUpdate = true;
+  PLANT_GLOW.push({ uni, k: cfg.k });
+  return uni;
+}
+// Hangs a static model on a plant and hides the primitives it stood in for. No rig, no
+// clips: everything that moves about a plant is the class's own doing.
+function attachPlantModel(plant, cfg) {
+  loadModel(cfg.url, e => {
+    if (!plant.alive) return;
+    if (!e.root.userData.plantGlow) {
+      e.root.userData.plantGlow = true;
+      e.root.traverse(o => { if (o.isMesh && o.material) plantGlow(o.material, cfg.glow); });
+    }
+    const inst = cloneModel(e.root);
+    const h = e.box.max.y - e.box.min.y, s = h > 1e-4 ? cfg.height / h : 1;
+    inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
+    inst.rotation.y = rnd(Math.PI * 2);
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    plant.g.add(inst); plant.model = inst;
+    for (const c of plant.g.children) if (c !== inst && c !== plant.head) c.visible = false;
+    if (plant.head) for (const c of plant.head.children) if (c !== plant.glow) c.visible = false;
+    if (plant.glow) plant.glow.position.y = cfg.glowY - (plant.head ? plant.head.position.y : 0);
+  });
 }
 
 // A species named here trades its primitive body for a model. The class keeps its whole
@@ -4368,6 +4429,7 @@ function updateSky() {
   M.skimmer.emissiveIntensity = lerp(.2, 1.4, world.night);
   M.drifter.emissiveIntensity = lerp(.15, 1.2, world.night);
   M.burrower2.emissiveIntensity = lerp(.2, 1.3, world.night);
+  for (const g of PLANT_GLOW) g.uni.uK.value = g.k * lerp(.35, 1, world.night);
   M.shipLamp.emissiveIntensity = lerp(.55, 2.2, world.night);
   M.shipHead.emissiveIntensity = lerp(.4, 2.8, world.night);
   M.membrane.emissiveIntensity = lerp(.1, .8, world.night);

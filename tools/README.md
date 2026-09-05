@@ -648,6 +648,29 @@ Trunks, cairns and the great tree register `Infinity` and were never in the conv
 
 Only the player reads `climb`; creatures keep their own steering.
 
+### Swapping a model onto a plant
+
+`PLANT_MODELS` is the same idea as `CREATURE_RIGS` but for scenery, and simpler because
+plants are not rigged: the entry is a mesh and a height, and the class keeps its growth, its
+sway, its pulse and its glow. The primitives it stood in for are hidden once the model lands,
+so a plant that never loads still looks like something.
+
+**Selection tags do not survive C4D → FBX → Blender → glTF.** What arrives is one mesh, one
+primitive, one material, with nothing marking which polygons were tagged. If you want part of
+a model to behave differently, it has to come through as its own *material* — assign a second
+material to the selection in C4D and it becomes a second primitive with its own slot.
+
+Where that has not happened, a mask can sometimes be keyed off the texture instead, and on
+`alien_plant_01` it can: the bulbs are the only warm thing on a plant that is otherwise lilac
+and pink. `min(r - b, g - b)` runs about .45 on the orange, .1 on the cream and negative on
+all the purple, so a `smoothstep` over that isolates them with no second map and no tag.
+`plantGlow()` injects it after `<emissivemap_fragment>`, and turns off the generic ambient
+lift from `prepModel` first — that one lights the whole model evenly, which is the opposite of
+what a bulb wants. The glow rides `world.night` like every other lit thing on the island.
+
+This is a nice trick, not a general answer. It works because the bulbs happen to be a
+separable hue; a second material slot is what to do when they are not.
+
 ### Swapping a model onto a species
 
 One table entry:
