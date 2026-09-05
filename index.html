@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b41';
+const BUILD = 'b42';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -1934,7 +1934,17 @@ function loadModel(url, cb) {
 // phone will give a browser tab and is why Safari was killing it. The wanderer is a couple
 // of hundred pixels tall on the screen he is played on, so cap the size and scale the rest
 // down once, at load, into a canvas. Nothing about the model has to change for this.
-const TEX_CAP = MOBILE ? 1024 : 2048;
+// The ceiling a texture is rescaled to at load. 1024 on a phone was a blunt instrument
+// written when three 4096 maps were arriving and costing 340 MB between them; with the
+// models authored at sane sizes it is the ship that pays for it, and the ship is the one
+// thing you walk right up to. Measured on a 1688x780 phone canvas: zoomed in it covers
+// 900x581 device pixels, which a 1024 map serves at about 1.2 texels per pixel -- right on
+// the edge of going soft -- against 4.7 at 2048. A 2048 map is 22 MB with its mipmaps, so
+// a ship at 2048 and everything else at 1024 is about 42 MB of texture in total.
+//
+// This assumes the models are exported at the size they want to be. It is a ceiling, not a
+// target: leave a 4096 map in a file and it still costs 22 MB after the rescale.
+const TEX_CAP = 2048;
 function shrinkTexture(t) {
   const im = t && t.image; if (!im) return 0;
   const w = im.width || 0, h = im.height || 0;
@@ -5346,6 +5356,7 @@ function toggleMap(on) {
 
 isle.water = water; isle.foam = foam; isle.abyss = abyss; isle.terrain = terrain; isle.motesGeo = motesGeo;
 isle.MOVE = MOVE; isle.isClear = obClear; isle.standOn = standOn;
+isle.camera = camera; isle.renderer = renderer;   // for measuring how big things land on screen
 isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap; isle.way = WAY; isle.setWaypoint = setWaypoint; isle.clampView = clampView;   // MAP is a const above, so this cannot move any earlier
 
 // What a tap on the right stick would do right now, if anything. Whatever is within reach

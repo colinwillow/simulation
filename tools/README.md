@@ -987,6 +987,7 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | Waypoint trail spacing | `WAY.gap` (`WAY.N` is only the cap) |
 | Flame sizes | `SHIP.jet` / `SHIP.side` / `SHIP.lift` / `SHIP.head` / `SHIP.bulb` |
 | Quality tiers | `Q` |
+| Texture ceiling at load | `TEX_CAP` (2048; a ceiling, not a target) |
 
 ---
 
