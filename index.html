@@ -1432,7 +1432,7 @@ grassMat.onBeforeCompile = s => {
   `);
 };
 const grass = (() => {
-  const n = Q.grass, im = new THREE.InstancedMesh(G.leaf, grassMat, n);
+  const n = Q.grass, im = new THREE.InstancedMesh(G.leaf, grassMat, n), gxz = new Float32Array(n * 2);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), q2 = new THREE.Quaternion(), pos = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
   let k = 0, guard = 0;
   // How thickly grass grows in each region, and how tall. An even carpet everywhere was the
@@ -1453,6 +1453,7 @@ const grass = (() => {
     const tall = rnd(1.3, 3.1) * (h > 12 ? .6 : 1) * gb[1];
     planetPos(x, h - .1, z, pos); sc.set(rnd(.8, 1.4), tall, 1);
     m.compose(pos, q, sc); im.setMatrixAt(k, m);
+    gxz[k * 2] = x; gxz[k * 2 + 1] = z;        // the chart point, so a clearing can find it again
     c.copy(P.grass).lerp(P.grass2, rnd()).offsetHSL(rnd(-.03, .03), rnd(-.1, .1), rnd(-.12, .1));
     c.lerp(BIOME_GROUND[_bio.name].col, .45 * _bio.k);
     if (h < 2.2) c.lerp(P.sand, .35);
@@ -1460,8 +1461,26 @@ const grass = (() => {
     k++;
   }
   im.count = k; im.instanceMatrix.needsUpdate = true; im.castShadow = false; im.receiveShadow = true;
-  im.frustumCulled = false; im.userData.flat = true; scene.add(im); return im;
+  im.frustumCulled = false; im.userData.flat = true; im.userData.xz = gxz; scene.add(im); return im;
 })();
+// Take the grass out of a clearing. The field is laid down long before anything is built on
+// the island, so a village otherwise ends up with blades standing through the middle of its
+// common. An instance cannot be removed from an InstancedMesh, but it can be scaled to
+// nothing -- and the chart position each one was placed at is kept for exactly this.
+const _cgM = new THREE.Matrix4(), _cgP = new THREE.Vector3(), _cgQ = new THREE.Quaternion(), _cgS = new THREE.Vector3();
+function clearGrass(x, z, r) {
+  const xz = grass.userData.xz; if (!xz) return 0;
+  let n = 0;
+  for (let i = 0; i < grass.count; i++) {
+    const dx = xz[i * 2] - x, dz = xz[i * 2 + 1] - z;
+    if (dx * dx + dz * dz > r * r) continue;
+    grass.getMatrixAt(i, _cgM); _cgM.decompose(_cgP, _cgQ, _cgS);
+    if (_cgS.y < 1e-3) continue;
+    _cgM.compose(_cgP, _cgQ, _cgS.setScalar(0)); grass.setMatrixAt(i, _cgM); n++;
+  }
+  if (n) grass.instanceMatrix.needsUpdate = true;
+  return n;
+}
 
 // ---------- world state ----------
 const world = { t: DAY * .28, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '' };
@@ -4580,6 +4599,50 @@ function placeTitle() {
 // turned to face a direction, tipped onto the ground normal, and finally baked into the
 // planet's curve. Local coordinates are the only way a fence stays square on a hill, and
 // baking is what lets a whole farm cost two draw calls instead of ninety.
+// One model, stood on the ground where it was asked for, with a collider round it. Unlike
+// the boulders -- of which there are thirty-four, so they are merged and baked -- there are
+// only ever a handful of these, and each keeps its own matrix.
+const BUILDING = 'models/alien_building_01.glb';
+function placeProp(url, x, z, yaw, H, blend = .75) {
+  loadModel(url, e => {
+    const g = new THREE.Group(), gy = groundY(x, z);
+    g.position.set(x, gy, z);
+    alignTo(g, x, z, blend); g.rotateY(yaw);
+    const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
+    const k = H / Math.max(1e-4, sz.y);
+    inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.userData.noHole = true; } });
+    envUse(inst, .45);
+    g.add(inst); scene.add(g);
+    obAdd(x, z, Math.max(sz.x, sz.z) * k * .40, null, gy + sz.y * k * .92);
+  });
+}
+// Worn ground. A hard-edged brown quad on grass reads as a sticker, however many of them
+// you scatter; what it needs is an edge that fades. One soft, mottled disc in an alpha map,
+// laid down over and over at random sizes and spins, blends into whatever it lands on.
+const wornTex = (() => {
+  const S = 64, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d'), img = g.createImageData(S, S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const dx = (x - S / 2) / (S / 2), dy = (y - S / 2) / (S / 2);
+    const d = Math.hypot(dx, dy) * (.82 + .28 * hash(x * .21, y * .21));
+    const a = smooth(0, 1, clamp((1 - d) * 1.7, 0, 1)) * (.72 + .28 * hash(x * 3.1, y * 3.1));
+    const i = (y * S + x) * 4;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+    img.data[i + 3] = Math.round(255 * a);
+  }
+  g.putImageData(img, 0, 0);
+  return new THREE.CanvasTexture(c);
+})();
+// depthWrite off and a polygon offset, because it is lying on the ground it is drawn over
+// A dark brown at roughness 1 crushes to near-black in any shade, and a hundred of them
+// overlapping read as a chocolate lake. Lighter than earth looks in the hand, not fully
+// opaque, and with a little emissive so a patch in shadow is still ground.
+const M_WORN = new THREE.MeshStandardMaterial({ color: col('#8a6c4c'), roughness: .97,
+  emissive: col('#3a2c1e'), emissiveIntensity: .55,
+  transparent: true, opacity: .82, alphaMap: wornTex, depthWrite: false,
+  polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+const _gq1 = new THREE.Quaternion(), _gq2 = new THREE.Quaternion(), _gx = new THREE.Vector3(1, 0, 0);
 function siteAt(x, z, yaw) {
   const bin = [], base = groundY(x, z), cy = Math.cos(yaw), sy = Math.sin(yaw);
   const q = new THREE.Quaternion().setFromUnitVectors(_plY, normalAt(x, z).lerp(_plY, .5).normalize())
@@ -4596,6 +4659,19 @@ function siteAt(x, z, yaw) {
     // where a local point lands on the island, for anything that has to be planted or
     // collided with rather than built
     world(px, pz) { return { x: x + px * cy + pz * sy, z: z - px * sy + pz * cy }; },
+    // A patch lying on the actual ground rather than on the site's own plane. Over eleven
+    // units those are not the same surface: a quad on the site plane either floats off a
+    // hill or sinks into it. This one reads the height field where it lands.
+    ground(geo, mat, sx, sz2, px, pz, spin = 0, lift = .14) {
+      const w = site.world(px, pz);
+      const m = mesh(geo, mat, sx, sz2, 1, w.x, groundY(w.x, w.z) + lift, w.z);
+      m.quaternion.setFromUnitVectors(_plY, normalAt(w.x, w.z))
+        .multiply(_gq1.setFromAxisAngle(_plY, spin))
+        .multiply(_gq2.setFromAxisAngle(_gx, -Math.PI / 2));
+      m.updateMatrix();
+      bin.push({ geo, mat, matrix: m.matrix.clone() });
+      return m;
+    },
     block(px, pz, r, top) { const w = site.world(px, pz); obAdd(w.x, w.z, r, null, top === undefined ? Infinity : base + top); return w; },
     done() {
       const g = new THREE.Group(); g.userData.flat = true;
@@ -4610,6 +4686,11 @@ function siteAt(x, z, yaw) {
 // and open enough that somebody would have bothered.
 function buildFarm(x, z, yaw) {
   const S = siteAt(x, z, yaw), rows = 5, rowLen = 17, gap = 2.7;
+  clearGrass(x, z, 15);                   // it is tilled ground; nothing is growing in it
+  for (let i = 0; i < 70; i++) {          // and the bare earth between the ridges
+    const a = rnd(Math.PI * 2), r = Math.sqrt(Math.random()) * 13, s = rnd(2, 4.5);
+    S.ground(G.plane, M_WORN, s, s, Math.cos(a) * r, Math.sin(a) * r, rnd(Math.PI * 2));
+  }
   for (let i = 0; i < rows; i++) {
     const px = (i - (rows - 1) / 2) * gap;
     S.put(G.box, M.soil, 1.55, .34, rowLen, px, .12, 0);
@@ -4636,12 +4717,16 @@ function buildFarm(x, z, yaw) {
     S.put(G.box, M.wood, .12, .09, fl * 2, -fw, yy + .02, 0);
     S.put(G.box, M.wood, .12, .09, fl * 2, fw, yy, 0);
   }
-  {                                       // the hut, outside the fence on the uphill corner
-    const hx = -fw - 5.6, hz = fl - 3.4;
-    S.put(G.cyl, M.mound, 3, 3.1, 3, hx, 1.55, hz);
-    S.put(G.cone, M.reed, 4.1, 2.9, 4.1, hx, 4.5, hz);
-    S.put(G.box, M.barkB, 1.2, 1.9, .3, hx + 1.3, .95, hz + 1.3, 0, -.78, 0);   // the doorway
-    S.block(hx, hz, 3.2);
+  {                                       // the house, outside the fence on the uphill corner
+    const w = S.world(-fw - 7.5, fl - 2.5);
+    placeProp(BUILDING, w.x, w.z, yaw + Math.PI * .5 + rnd(-.2, .2), 8);
+  }
+  {                                       // and a shed beside it
+    const hx = -fw - 4.4, hz = -fl + 5;
+    S.put(G.cyl, M.mound, 2.4, 2.4, 2.4, hx, 1.2, hz);
+    S.put(G.cone, M.reed, 3.4, 2.2, 3.4, hx, 3.5, hz);
+    S.put(G.box, M.barkB, 1.1, 1.6, .3, hx + 1.05, .8, hz + 1.05, 0, -.78, 0);   // the doorway
+    S.block(hx, hz, 2.6);
   }
   {                                       // a drying rack, with the crop hung off it
     const rx = fw + 4.2, rz = -fl + 4;
@@ -4696,6 +4781,7 @@ function buildRuin(x, z, yaw) {
       S.block(px, pz, .85, .4 + courses * .82);
     }
   };
+  clearGrass(x, z, 10);                   // a floor, even a fallen-in one, is not a meadow
   wall(-hw, -hl, hw, -hl, 4.4);
   wall(-hw, -hl, -hw, hl, 3.6);
   wall(hw, -hl, hw, hl * .2, 4.0);
@@ -4707,7 +4793,35 @@ function buildRuin(x, z, yaw) {
   S.done();
   return S;
 }
-// Where the three of them end up, and what gets planted around them afterwards. Each asks
+// A handful of houses round a common, with a firepit gone cold in the middle of it and the
+// ground between them walked bare. The one place on the island that reads as somewhere
+// people lived rather than somewhere one person worked.
+function buildHuddle(x, z, yaw) {
+  const S = siteAt(x, z, yaw), n = 4, R = 15.5;
+  for (let i = 0; i < n; i++) {
+    // not on a perfect circle, and not all the same way out from the middle
+    const a = i / n * Math.PI * 2 + rnd(-.3, .3), d = R * rnd(.86, 1.14);
+    const px = Math.cos(a) * d, pz = Math.sin(a) * d;
+    const w = S.world(px, pz);
+    // turned to face the common, and no two of them the same height
+    placeProp(BUILDING, w.x, w.z, yaw - a + Math.PI * .5, rnd(6, 9));
+  }
+  // the ground between them, walked bare
+  clearGrass(x, z, R * 1.05);
+  for (let i = 0; i < 130; i++) {
+    const a = rnd(Math.PI * 2), r = Math.sqrt(Math.random()) * R * 1.02, s = rnd(2.4, 5.5);
+    S.ground(G.plane, M_WORN, s, s, Math.cos(a) * r, Math.sin(a) * r, rnd(Math.PI * 2));
+  }
+  for (let i = 0; i < 11; i++) {          // the firepit, gone cold
+    const a = i / 11 * Math.PI * 2, s = rnd(.4, .7);
+    S.put(pick(G.rock), M.stone2, s, s * .7, s, Math.cos(a) * 1.6, .2, Math.sin(a) * 1.6, rnd(3), rnd(3), rnd(3));
+  }
+  for (let i = 0; i < 6; i++) S.put(pick(G.rock), M.barkB, rnd(.2, .4), rnd(.2, .35), rnd(.5, 1.1), rnd(-.9, .9), .18, rnd(-.9, .9), 0, rnd(3), 0);
+  S.block(0, 0, 2.2, .5);
+  S.done();
+  return S;
+}
+// Where the four of them end up, and what gets planted around them afterwards. Each asks
 // for its own biome and settles for whatever the island can offer, because an island that
 // generated wet and steep may simply have no pasture in it.
 // Somewhere to build. Ask for a lot of room in the right biome, then give ground on both:
@@ -4717,13 +4831,19 @@ function buildRuin(x, z, yaw) {
 // A site's own colliders are not enough to keep the next one off it: the steading's fence
 // deliberately registers nothing, so the ruin cheerfully landed eleven units from it. Sites
 // keep their distance from each other explicitly.
+// Four sites seventy units apart, each on ground of its own kind with a clearing round it,
+// is more than a small island always has room for -- asking for exactly that lost the
+// fourth one about one world in four. So the clearance relaxes, then the biome, and last
+// the distance to the neighbours: crowded beats missing.
 const SITE_APART = 70;
 function siteSpot(what, names, minH, maxH, maxSl, clears, placed) {
-  const far = p => !placed || placed.every(q => Math.hypot(p.x - q.x, p.z - q.z) > SITE_APART);
-  for (const c of clears) for (const n of names) {
-    for (let i = 0; i < 6; i++) { const p = randomBiome(n, minH, maxH, maxSl, 400, c); if (p && far(p)) return p; }
+  const far = (p, d) => !placed || placed.every(q => Math.hypot(p.x - q.x, p.z - q.z) > d);
+  for (const apart of [SITE_APART, 52, 38]) {
+    for (const c of clears) for (const n of names) {
+      for (let i = 0; i < 6; i++) { const p = randomBiome(n, minH, maxH, maxSl, 400, c); if (p && far(p, apart)) return p; }
+    }
+    for (const c of clears) for (let i = 0; i < 6; i++) { const p = randomLand(minH, maxH, maxSl, 400, c); if (p && far(p, apart)) return p; }
   }
-  for (const c of clears) for (let i = 0; i < 6; i++) { const p = randomLand(minH, maxH, maxSl, 400, c); if (p && far(p)) return p; }
   console.warn('[site] nowhere to put the ' + what);
   return null;
 }
@@ -4733,6 +4853,8 @@ function buildSites() {
   if (farm) { out.push(buildFarm(farm.x, farm.z, rnd(Math.PI * 2))); logMsg('Someone tilled this ground, and did not come back for it.'); }
   const ring = siteSpot('stones', ['highland', 'scrub'], 8, 24, .34, [13, 10, 8, 6, 4], out);
   if (ring) out.push(buildStones(ring.x, ring.z));
+  const huddle = siteSpot('huddle', ['scrub', 'pasture'], 2.6, 12, .2, [16, 13, 10, 8, 6], out);
+  if (huddle) out.push(buildHuddle(huddle.x, huddle.z, rnd(Math.PI * 2)));
   const ruin = siteSpot('ruin', ['jungle', 'wetland'], 3, 14, .3, [13, 10, 8, 6, 4], out);
   if (ruin) {
     out.push(buildRuin(ruin.x, ruin.z, rnd(Math.PI * 2)));

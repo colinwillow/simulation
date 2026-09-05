@@ -868,9 +868,12 @@ silently building nothing.
 
 ### Built things
 
-Three sites, placed by `buildSites()` and left on `world.sites`: a steading in pasture
-(tilled ridges, a crop, a fence, a hut, a drying rack), a ring of raised stones on high open
-ground, and a ruin in the jungle with the ruin's own mushrooms coming up through it.
+Four sites, placed by `buildSites()` and left on `world.sites`: a steading in pasture
+(tilled ridges, a crop, a fence, a house, a shed, a drying rack), a huddle of houses round a
+cold firepit in the scrub, a ring of raised stones on high open ground, and a ruin in the
+jungle with the ruin's own mushrooms coming up through it. `placeProp` stands one model on
+the ground with a collider round it — that is how the houses get there, and it is the thing
+to reuse for any other built model.
 
 They are laid out by `siteAt(x, z, yaw)`, which is the thing to reuse. A site is built in
 its own **flat local frame** — x across, z along, y up from the ground it stands on — and
@@ -882,6 +885,18 @@ on a hill, and baking is what lets a whole farm cost two draw calls instead of n
 - `S.world(px, pz)` — where a local point lands on the island.
 - `S.block(px, pz, r, top)` — a collider there; omit `top` for something you go round.
 - `S.done()` — merge, warp, add. Call it once.
+
+Two things any new site should do. `clearGrass(x, z, r)` takes the grass out of its
+clearing — the field is laid down long before anything is built, so a village otherwise has
+blades standing through the middle of its common; an instance cannot be removed from an
+InstancedMesh but it can be scaled to nothing, and each one's chart position is kept for
+exactly this. And `S.ground(...)` for anything lying on the ground rather than standing on
+it: over eleven units the site's own plane and the height field are not the same surface, so
+a quad placed with `S.put` either floats off a hill or sinks into it.
+
+Worn earth is `M_WORN` — a soft, mottled disc in an alpha map, laid down over and over at
+random sizes and spins. A hard-edged brown quad on grass reads as a sticker however many of
+them you scatter; what it needs is an edge that fades.
 
 **The fence registers no colliders on purpose.** Forty posts in a closed ring is a pen: the
 first version doubled the number of creatures that spent a minute walking into something,
@@ -1248,6 +1263,8 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | How long the flight down takes | `INTRO.diveT` |
 | Reflection strength | `ENV.k`, and the per-model `k` passed to `envUse` |
 | The size of the letters in the meadow | `TITLE.span` |
+| How far apart the built sites stand | `SITE_APART` (relaxes to 52, then 38) |
+| How dark the worn ground is | `M_WORN.color` |
 
 ---
 
