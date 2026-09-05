@@ -654,6 +654,8 @@ One table entry:
 
 ```js
 const CREATURE_RIGS = {
+  Hopper:   { url: 'models/tucann.glb',        height: 1.3,
+              idle: 'idle', walk: 'walk_fwd', yaw: 0, rateMax: 4.2 },
   Grazer:   { url: 'models/purple_horny.glb',  height: 2.4,
               idle: 'idle', walk: 'walk', yaw: 0 },
   Burrower: { url: 'models/creature_green.glb', height: 1.6,
@@ -662,9 +664,28 @@ const CREATURE_RIGS = {
 };
 ```
 
-`yaw` is worth measuring rather than guessing: walk the skeleton's bind pose and see which way
-the head sits. `mixamorig_Head` on the purple creature is at z +17.6 against a joint range of
-0 to +27.7, so it faces +Z, which is already forward and needs no turn.
+`check:model` prints the `yaw` to use. It walks the bind pose with real matrices and compares
+the head to the hips — which has to be done that way, because summing translations up the
+parent chain ignores every rotation on the way, and a Mixamo rig out of Blender carries one on
+the armature to get from Z-up to Y-up. Done naively the toucan reads as facing -Z, since its
+whole skeleton sits at negative z, and the yaw comes out backwards.
+
+**Check the stride against the species' speed.** `measureStride` reads how far a foot bone
+swings along z across the walk clip, and `stepRig` plays the clip at `speed / stride` to keep
+the feet with the ground. Where that ratio exceeds the ceiling, the difference is skate — the
+creature covering ground its feet are not:
+
+| | stride | top speed | wants | ceiling | skate |
+|---|---|---|---|---|---|
+| wanderer | 1.95 | 17 | 8.7 | 2.6 | 3.3× |
+| mudlark | 0.99 | 2.6 | 2.6 | 2.6 | 1× |
+| mossback | 2.07 | 3.2 | 1.5 | 2.6 | 1× |
+| toucan, as found | 0.29 | 4.4 | 14.9 | 2.6 | 5.7× |
+| toucan, now | 0.29 | 3.0 | 10.2 | 4.2 | 2.4× |
+
+A Mixamo walk on short bird legs swings the foot only a fifth of its own height, where a
+person's carries most of it — so the toucan needed both halves: `rateMax` on the rig entry to
+let its legs whir the way a small bird's actually do, and a slower species to meet it.
 
 The class keeps its whole brain; this only changes what you see. Move a model to another
 species by moving the key. Clips are looked up by *role* rather than by exact name, so a file
@@ -982,6 +1003,7 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | How fast he gets going | `MOVE.acc` and `MOVE.accFall` (the ramp), `MOVE.max` (the top) |
 | What a hill costs | `MOVE.hill`, `MOVE.hillMin` |
 | How sharply he can change direction | `MOVE.turn` (`airTurn`, `swimTurn`) |
+| A clip's playback ceiling | `MODEL.rateMax`, or `rateMax` on one `CREATURE_RIGS` entry |
 | Ship top speed | `PILOT.thrust / PILOT.drag` — and see the clamp note under The ship |
 | What he can climb onto | `OB_PLAYER.climb` |
 | Waypoint trail spacing | `WAY.gap` (`WAY.N` is only the cap) |

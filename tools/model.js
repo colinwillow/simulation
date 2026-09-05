@@ -7,6 +7,40 @@
 // not be pinned on Cinema 4D, on Blender's FBX import, or on Blender's glTF export.
 // Run it on both ends of the pipeline and the answer is wherever the rig stops appearing.
 const fs = require('fs');
+const THREE = require('three');
+
+// Which way the thing faces, which is the one number CREATURE_RIGS cannot guess. Walk the
+// bind pose and compare the head to the hips. It has to be done with real matrices: summing
+// translations up the parent chain ignores every rotation on the way, and a Mixamo rig out
+// of Blender carries one on the armature to get from Z-up to Y-up. Done that way the toucan
+// reads as facing -Z, because its whole skeleton sits at negative z, and the yaw would come
+// out backwards. Relative to the hips, with the rotations applied, it faces +Z.
+function facing(j) {
+  if (!j.skins || !j.skins.length) return null;
+  const N = j.nodes, par = new Map();
+  N.forEach((n, i) => (n.children || []).forEach(c => par.set(c, i)));
+  const local = i => { const n = N[i], m = new THREE.Matrix4();
+    return n.matrix ? m.fromArray(n.matrix)
+      : m.compose(new THREE.Vector3().fromArray(n.translation || [0, 0, 0]),
+                  new THREE.Quaternion().fromArray(n.rotation || [0, 0, 0, 1]),
+                  new THREE.Vector3().fromArray(n.scale || [1, 1, 1])); };
+  const world = i => { const chain = []; let k = i;
+    while (k !== undefined) { chain.push(k); k = par.get(k); }
+    const m = new THREE.Matrix4();
+    for (let a = chain.length - 1; a >= 0; a--) m.multiply(local(chain[a]));
+    return new THREE.Vector3().setFromMatrixPosition(m); };
+  const pos = {};
+  for (const i of j.skins[0].joints) pos[N[i].name] = world(i);
+  const names = Object.keys(pos);
+  const find = re => names.find(k => re.test(k));
+  const hipN = find(/hips|pelvis/i), headN = find(/headtop|head_end/i) || find(/head/i);
+  if (!hipN || !headN) return null;
+  const d = new THREE.Vector3().subVectors(pos[headN], pos[hipN]);
+  const yaw = Math.abs(d.z) > Math.abs(d.x)
+    ? (d.z > 0 ? ['+Z', '0'] : ['-Z', 'Math.PI'])
+    : (d.x > 0 ? ['+X', '-Math.PI / 2'] : ['-X', 'Math.PI / 2']);
+  return { from: hipN, to: headN, dx: d.x, dz: d.z, dir: yaw[0], yaw: yaw[1] };
+}
 
 const P = s => console.log(s);
 const list = a => a.length ? a.join(', ') : '(none)';
@@ -98,6 +132,8 @@ function reportGltf(file) {
     P(`  texture ${String(i).padEnd(5)} ${(im.mimeType || '?').replace('image/', '').padEnd(5)} ${(d ? d[0] + 'x' + d[1] : '?').padEnd(11)} ${kb.toFixed(0).padStart(5)} KB in the file   ${mb.toFixed(1)} MB on the GPU`);
   }
   if (j.images && j.images.length) P(`  texture memory  ${gpuMB.toFixed(0)} MB if uploaded as authored`);
+  const face = facing(j);
+  if (face) P(`  faces         ${face.dir} (${face.to} is ${face.dz >= 0 ? '+' : ''}${face.dz.toFixed(2)}z from ${face.from}) — CREATURE_RIGS yaw: ${face.yaw}`);
 
   const bad = [], note = [];
   if (!skins.length) bad.push('no armature: nothing can deform this mesh, so no walk or idle');
