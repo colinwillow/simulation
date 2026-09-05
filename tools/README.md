@@ -220,11 +220,16 @@ one stick input, which is the only way to catch a fault that is self-consistent.
 swings out through a turn, both follow the nose through a climb, the hull banks and noses
 with them, the side jets fire on strafe-toward and turn-away, and four `PSys` emitters read
 their position and axis off the flame bones every frame so the exhaust follows the
-vectoring. Nothing drives the controls from input yet: the ship flies a **sortie** on its
-own (`SHIP.sortie`), waiting until the player has walked away, lifting straight up clear
-of the trees, flying one lap of the island at whatever altitude clears the terrain and the
-great tree, and settling back on its pad. Its collider leaves with it and returns with it;
-the hatch only answers the player while it is landed.
+vectoring.
+
+The ship can also fly a **sortie** on its own (`SHIP.sortie`) — waiting until the player has
+walked away, lifting straight up clear of the trees, flying one lap of the island at whatever
+altitude clears the terrain and the great tree, and settling back on its pad. It was written
+when nobody could fly it, and it is **off** now that somebody can: watching your own ship
+take itself for a lap while you stand there reads as a bug, not as a world going on without
+you. The code stays, because it exercises every joint and `tools/sortie.js` still runs it
+(the tool forces the flag on). Its collider leaves with it and returns with it; the hatch
+only answers the player while it is landed.
 
 You can fly it. Walk up with the hatch open and a `board` button appears (or press B); the
 wanderer vanishes into the hull, the hatch shuts, and the camera swings to a chase view
@@ -237,11 +242,37 @@ climbs slowly; the gear folds itself once it is 9 units up. Thrust is an acceler
 against drag, so it reaches 12 u/s after two seconds, 23 after five, 31 after ten, and
 coasts for seconds when you let go. Turning builds a yaw rate that the hull banks from and
 that carries on for a beat after the stick centres; the side jets fire and the outside
-nozzle swings out with it. Landing is a settle: the gear drops itself under 14 units, the
-frame the feet reach the ground it is down and the hull dips on its legs, the jets take two
-seconds to die, and only then does `leave` appear. Over water there is nothing to land on,
-so it hovers above the swell. `npm run check:ship pilot` flies all of that under node and
-prints the timings.
+nozzle swings out with it.
+
+**Which way everything leans**, because three rounds of feedback were spent on it. The hull's
+own axes are the answer, not a sign convention: rolling about its forward axis, positive
+drops the *right* side, so a left turn wants negative roll and a strafe to the right wants
+positive — it was subtracting, and leaned away from its own slide. Pitching about its X,
+positive puts the nose *down*, so it noses into a run and lifts as it climbs; it used to do
+the opposite of both. And a jet pushes the ship the way it is **not** pointing, so a climb
+swings the nozzles down and a descent swings them up. The forward term on the nozzles is .75
+and not .3 because the hull is already a quarter-radian nose-down in a run, which swings the
+tailpipes up by more than a tenth of vectoring can take back: measured, the exhaust still
+pointed up, so it has to over-correct the attitude to end up under the ship. `sortie.js pilot`
+asserts all four from the geometry.
+
+**Landing is proximity, not a place.** `deckY(x, z, y)` is the floor the ship can put its
+feet on — the terrain, and the floating isle when you are over it and above its deck, so you
+can fly *under* the isle and land *on* it. `groundY` deliberately stays the terrain alone;
+every creature, mote and blade of grass reads that one and none of them has any business
+standing on something eighty units up. The gear drops itself under 14 units and there is a
+**flare** inside the last thirteen: the descent is bled off against how much is left, so
+coming down anywhere near a surface settles onto the feet at under two units a second
+instead of arriving on them. A held-down stick used to reach eleven, and anything past seven
+was ruled a crash — which is why "get close to the ground and lower yourself onto it" did not
+work. Over water there is still nothing to land on, so it hovers above the swell.
+
+Getting out is one tap of the right stick once it is down: the hatch opens, he steps onto the
+deck beside it, and `settleHere` makes wherever it came to rest its pad. Anything he was
+doing before he climbed in is cleared on the way out — a swim left over from wading to it
+kept its hold for a second after he stepped onto a deck eighty units up, and one second of
+it steering the ground height toward the sea below was enough to drop him off the island.
+`node tools/sortie.js index.html pilot` flies all of it under node and prints the timings.
 
 ### The interface
 
@@ -262,7 +293,11 @@ a cycle on the map panel and then again on the button column, so there is now a 
 ### Interacting
 
 There is no interact button on screen. Whatever is within reach writes itself to `ACT` each
-frame — an icon, a label and something to run — and the right stick reads it: it lights,
+frame — an icon, a label and something to run — and the right stick reads it: it lights
+**cyan**, which is the one thing in this interface that is not amber. Every other lit control
+is warm, so a warm highlight read as "a stick that happens to be under a thumb" rather than
+as "there is something here". Cyan is the colour of the ship's own hull lights and of the
+waypoint, the ring pings out of it on a beat, and the label goes with it. It lights,
 pulses, wears the thing it would act on, and its label changes from LOOK to BOARD. A tap
 runs it; a tap with nothing in reach is the jump it always was. `ACT.now` is cleared at the
 top of the frame before anything can offer, and `showAct()` touches the DOM only when the
@@ -664,6 +699,8 @@ npm run check:sim                      # 6000 frames with no GPU, print sim stat
 node tools/headless.js index.html 2400 storm   # ...starting in that weather
 npm run check:model models/*.glb       # what is in a model, and can the game use it
 npm run check:ship                     # fly the ship's sortie with no GPU, report every joint
+node tools/sortie.js index.html pilot  # ...or fly it by hand: board, lift, turn, strafe, land, get out
+npm run check:swirl                    # does the lamp's swirl of motes go where the lamp goes
 ```
 
 Each also takes an explicit file and frame count, e.g. `node tools/headless.js index.html 2000`.
@@ -673,7 +710,13 @@ Each also takes an explicit file and frame count, e.g. `node tools/headless.js i
 result as GLSL ES 1.0. Run this after *any* shader edit.
 
 **model** reports what is actually inside a .glb or .fbx — armature, vertex weights,
-clips, blend shapes, material alpha mode — and says plainly whether the game can use it.
+clips, blend shapes, material alpha mode, **texture dimensions and what they cost on the
+GPU** — and says plainly whether the game can use it. That last one is the number no
+exporter shows you: a file gets smaller because the codec got better at it, while the GPU
+still unpacks every map to width × height × 4 bytes plus a third again for mipmaps. Three
+4096 maps is 340 MB, and a phone has a couple of hundred for everything. The game rescales
+oversized maps at load (`TEX_CAP`, 1024 on mobile), so this is a load-time and download cost
+rather than a crash — but it is invisible without this readout.
 Run it on both ends of the pipeline: if an FBX out of Cinema 4D shows joints, a skin
 deformer and takes but the GLB out of Blender shows none, the loss happened in Blender,
 not in the export. The glTF side is checked against both models in the repo; the FBX side
@@ -692,6 +735,22 @@ whole sortie against it. It reports, per phase, the ranges of every control and 
 exhaust rates, whether the collider was down, terrain and great-tree clearance, and which
 side jet fired for which turn. A change to the flight model or the rig's hinge table should
 run this before it is believed.
+
+`pilot` mode flies it by hand instead, and this is where the handedness lives. Every "which
+way should this go" question is asked of the geometry rather than of a sign convention: the
+hull's own axes are taken through its quaternion, so *nose down* is the local +Z ending up
+below the horizon and *leaning right* is the local +X (the left wing) ending up above it.
+The exhaust is asked the same way — `em.d` is the direction the flame actually travels, so
+"the jets push it up" is `d.y < 0` and nothing has to be assumed about which way a bone's
+rotation.x points. Three separate rounds of "it leans the wrong way" came from reasoning
+about signs on paper; none would have survived being asked this way.
+
+**swirl** answers one question — does the lamp's swirl of motes go where the lamp goes — and
+exists because it cannot be answered in the browser. Software GL runs at a frame a second
+and a swirl takes twenty seconds of world time to gather. It seeds two dozen motes on the
+lamp by hand rather than waiting for one to form, because which motes the lamp *wins* depends
+on where he happens to be standing (it bids 1.85 at 46 units against the great tree's 3.7 at
+170), and that is a different question from whether the ones it holds follow it.
 
 ---
 

@@ -28,7 +28,7 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('Lant
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;global.__SHIP=SHIP;global.__h2=height;global.__stick=stick;global.__keys=keys;global.__PILOT=PILOT;global.__gY=groundY;global.__cam=cam;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;global.__SHIP=SHIP;global.__h2=height;global.__stick=stick;global.__keys=keys;global.__PILOT=PILOT;global.__gY=groundY;global.__deckY=deckY;global.__cam=cam;'+src.slice(cut);
 eval(src);
 const N=+process.argv[3]||6000;
 // optional: node tools/headless.js index.html 3000 storm   -> start in that weather
@@ -79,6 +79,7 @@ for(const n in SH.gear) S.gear0[n]={hip:b[n].rotation.clone(),pad:b[n+'_pivot'].
 for(const n of ['back_jet_L','back_jet_R']) S.gear0[n]={hip:b[n].rotation.clone()};
 S.buildJets();
 const P=global.__p; P.pos.x=S.pos.x+30; P.pos.z=S.pos.z; S.next=0;
+SH.sortie=true;   // off by default in the game now: it is his ship. The lap test still wants it.
 // optional: `node tools/sortie.js index.html tree` parks the great tree's column beside the
 // pad, so the climb-out has something to clear and the hop-raise has to earn its keep
 if(process.argv[3]==='tree' && W2.greatTree){ const g=W2.greatTree, a0=Math.atan2(S.pad.z,S.pad.x);   // 34 units out along the departure line, under the climb-out
@@ -119,17 +120,63 @@ if(process.argv[3]==='pilot'){
   let dh=S.heading-h0; dh=Math.atan2(Math.sin(dh),Math.cos(dh));
   out.stickLeft={headingChange:+dh.toFixed(2),turnedLeft:dh>0,rolledLeft:S.roll<0,leftNozzleOut:b.back_jet_L.rotation.y<-.05,rightNozzleStill:Math.abs(b.back_jet_R.rotation.y)<.05,leftJetFiring:S.jets.sL.rate>0,rightJetOff:S.jets.sR.rate===0};
   ST.L.x=0; const yr0=S.yawRate; hold(1.5); out.turn={ramp:yr,afterRelease1_5s:+S.yawRate.toFixed(2),wasBeforeRelease:+yr0.toFixed(2)};
+  // Which way is which, asked of the geometry rather than of a sign convention: take the
+  // hull's own axes through its quaternion and look at where they end up. The exhaust is
+  // asked the same way -- em.d is the direction the flame actually travels, in chart space,
+  // so "the jets push it up" is d.y < 0 and nothing has to be assumed about the bone.
+  const AX=v=>v.clone().applyQuaternion(S.g.quaternion);
+  const nose=()=>AX(new THREE.Vector3(0,0,1)), lft=()=>AX(new THREE.Vector3(1,0,0));
+  const rightOf=()=>{ const l=lft(); return new THREE.Vector3(-l.x,-l.y,-l.z); };
+  hold(1.5);
+  // strafe right: it must slide right AND drop its right shoulder into the slide
+  ST.R.x=1; hold(2.5);
+  { const r=rightOf(), slide=S.vel.x*r.x+S.vel.z*r.z;
+    out.strafeRight={slidRight:+slide.toFixed(1),leftWingY:+lft().y.toFixed(3),leansRight:lft().y>.02,roll:+S.roll.toFixed(3)}; }
+  ST.R.x=0; hold(2);
+  // climb: the nozzles have to point DOWN, because that is what pushes it up
+  ST.R.y=-1; hold(2.5);
+  out.climbing={rising:+S.vel.y.toFixed(1),pitchDemand:+S.sm.pitch.toFixed(2),
+    exhaustY:+S.em.L.d.y.toFixed(3),jetsPointDown:S.em.L.d.y<-.02,noseY:+nose().y.toFixed(3)};
+  ST.R.y=0; hold(2);
+  // descend: and the mirror of it
+  ST.R.y=1; hold(2.5);
+  out.descending={falling:+S.vel.y.toFixed(1),pitchDemand:+S.sm.pitch.toFixed(2),
+    exhaustY:+S.em.L.d.y.toFixed(3),jetsPointUp:S.em.L.d.y>.02};
+  ST.R.y=0; hold(2.5);
+  // forward: nose down into the run, and the jets swing under it to keep pushing
+  ST.L.y=-1; hold(3);
+  out.runningForward={speed:+sp().toFixed(1),noseY:+nose().y.toFixed(3),nosesDown:nose().y<-.01,
+    nose:+S.nose.toFixed(3),exhaustY:+S.em.L.d.y.toFixed(3),jetsTiltedDown:S.em.L.d.y<-.02};
+  ST.L.y=0; hold(2.5);
   // come down: push down until it lands, note when the gear drops
   let gearCmdAlt=null, gearDownAlt=null, tDown=0, atTouch=null;
   for(let i=0;i<1200;i++){ ST.R.y=1; step(); tDown+=.033;
     if(gearCmdAlt===null&&S.ctl.gear===0) gearCmdAlt=+alt().toFixed(1);
     if(gearDownAlt===null&&S.sm.gear<.1) gearDownAlt=+alt().toFixed(1);
-    if(S.grounded){ ST.R.y=0; atTouch={sagKick:+S.sagV.toFixed(2),power:+S.power.toFixed(2),gear:+S.sm.gear.toFixed(2),couldLeaveYet:S.spool<=.02}; break; } }
+    if(S.grounded){ ST.R.y=0; atTouch={sagKick:+S.sagV.toFixed(2),power:+S.power.toFixed(2),gear:+S.sm.gear.toFixed(2),spoolAtTouchdown:+S.spool.toFixed(2)}; break; } }
   out.landing=Object.assign({touchedDownAfter:+tDown.toFixed(1),gearCommandedDownAtAlt:gearCmdAlt,gearFullyDownAtAlt:gearDownAlt,onGround:S.grounded},atTouch||{});
   let tCool=0; hold(6,()=>{ if(S.spool>.02) tCool+=.033; }); out.jetsOffAfter=+tCool.toFixed(1);
   const canLeave=S.grounded&&S.power<.15; S.leave();
   out.leave={couldLeave:canLeave,aboard:P.aboard,playerVisible:P.g.visible,shipState:S.state,colliderBack:!!S.ob,playerDistFromShip:+Math.hypot(P.pos.x-S.pos.x,P.pos.z-S.pos.z).toFixed(1),playerOnGround:+(P.pos.y-global.__gY(P.pos.x,P.pos.z)).toFixed(2)};
   hold(3); out.hatchAfterLeave=+S.open.toFixed(2); out.nextSortieIn=+(S.next-W2.clock).toFixed(0);
+  // The floating isle is a deck: get back in, drop onto it from above, and it must stop
+  // there rather than sinking through to sea level -- which is what it did, because the
+  // only floor the pilot knew about was the terrain.
+  if(W2.isle){ const I=W2.isle;
+    P.pos.set(S.pos.x+4,S.pos.y,S.pos.z); hold(1); S.board(); hold(.5);
+    const top=()=>I.g.position.y+I.topH(0,0);
+    S.g.position.set(I.pos.x,top()+26,I.pos.z); S.pos.copy(S.g.position); S.vel.set(0,0,0);
+    S.grounded=false; S.power=1; S.spool=1;
+    let n=0, vTouch=0; for(;n<1200&&!S.grounded;n++){ ST.R.y=1; vTouch=S.vel.y; step(); } ST.R.y=0;
+    out.landOnIsle={deckTop:+top().toFixed(1),landedAt:+S.pos.y.toFixed(1),onGround:S.grounded,
+      onTheDeck:S.grounded&&Math.abs(S.pos.y-top())<3,tookSeconds:+(n*.033).toFixed(1),
+      touchdownSpeed:+vTouch.toFixed(1),gentle:Math.abs(vTouch)<3};
+    hold(1); S.leave();
+    const y0=+P.pos.y.toFixed(2), dk=+global.__deckY(P.pos.x,P.pos.z,P.pos.y).toFixed(2);
+    hold(1.5);
+    out.leftOntoIsle={placedAt:y0,deckUnderHim:dk,playerY:+P.pos.y.toFixed(1),
+      standingOnDeck:Math.abs(P.pos.y-top())<4,hatch:+S.open.toFixed(2)};
+  }
   console.log('spool-up trace:',JSON.stringify(rec));
   console.log(JSON.stringify(out,null,1));
   process.exit(0);
@@ -142,7 +189,7 @@ while(frames<9000){ step(); frames++;
   if(frames%8===0) log.push({t:+(W2.clock-t0).toFixed(1),st:S.state,y:+S.pos.y.toFixed(1),thr:+S.sm.throttle.toFixed(2),yaw:+S.sm.yaw.toFixed(2),pit:+S.sm.pitch.toFixed(2),gear:+S.sm.gear.toFixed(2),
     legL:+(b.leg_L.rotation.z).toFixed(2),legR:+(b.leg_R.rotation.z).toFixed(2),legB:+(b.leg_back.rotation.x).toFixed(2),padL:+(b.leg_L_pivot.rotation.z).toFixed(2),
     nozX:+(b.back_jet_L.rotation.x).toFixed(2),Lout:+(b.back_jet_L.rotation.y).toFixed(2),Rout:+(b.back_jet_R.rotation.y).toFixed(2),
-    jL:+S.jets.L.rate.toFixed(0),sL:+S.jets.sL.rate.toFixed(0),sR:+S.jets.sR.rate.toFixed(0),ob:!!S.ob,roll:+S.g.rotation.z.toFixed(2)});
+    jL:+S.jets.L.rate.toFixed(0),sL:+S.jets.sL.rate.toFixed(0),sR:+S.jets.sR.rate.toFixed(0),ob:!!S.ob,roll:+(new THREE.Vector3(1,0,0).applyQuaternion(S.g.quaternion).y).toFixed(2)});   // how high the left wing rides, not an Euler term that wraps at the poles
   // mid-lap: where is the exhaust, relative to the nozzle that made it?
   if(S.state==='cruise' && !plume && S.dist>S.curveLen*.4){ const j=S.jets.L, em=S.em.L; const back=new THREE.Vector3(0,0,-1).applyQuaternion(S.g.quaternion);
     let n=0,along=0,off=0,mx=0; for(let i=0;i<j.n;i++){ if(j.age[i]<0) continue; n++;

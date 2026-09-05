@@ -59,19 +59,28 @@
     transition:border-color .18s,box-shadow .18s}
   #sticks .stick.act{border-color:rgba(255,206,150,.42);
     box-shadow:inset 0 0 30px rgba(255,196,128,.14),0 0 18px rgba(255,180,110,.10)}
-  /* something within reach: the stick is the prompt, so there is nothing else to put on screen */
-  #sticks .stick.hot{border-color:rgba(255,214,150,.8);
-    box-shadow:inset 0 0 34px rgba(255,196,128,.3),0 0 30px rgba(255,186,110,.34);
-    animation:hotpulse 1.7s ease-in-out infinite}
-  @keyframes hotpulse{0%,100%{box-shadow:inset 0 0 34px rgba(255,196,128,.26),0 0 22px rgba(255,186,110,.24)}
-    50%{box-shadow:inset 0 0 38px rgba(255,204,140,.4),0 0 40px rgba(255,190,120,.46)}}
-  #sticks .stick.hot .knob{background:radial-gradient(circle at 38% 32%,rgba(255,246,226,.7),rgba(255,198,120,.42) 58%,rgba(214,132,54,.24));
-    border-color:rgba(255,232,196,.6);box-shadow:0 0 22px rgba(255,190,110,.6),inset 0 1px 3px rgba(255,255,255,.4)}
+  /* Something within reach: the stick is the prompt, so there is nothing else to put on
+     screen — and it has to read at a glance, on a phone, in daylight. Every other lit thing
+     in this interface is amber, so this one is not: cyan is the colour of the ship's own
+     hull lights and the waypoint, and against the warm UI it cannot be mistaken for a
+     stick that merely happens to be under a thumb. A ring pings out of it on a slow beat. */
+  #sticks .stick.hot{border-color:rgba(150,246,255,.95);border-width:2px;
+    background:radial-gradient(circle,rgba(120,238,255,.16),rgba(120,238,255,.05) 58%,rgba(120,238,255,0) 74%);
+    box-shadow:inset 0 0 40px rgba(110,230,255,.42),0 0 44px rgba(90,220,255,.5);
+    animation:hotpulse 1.25s ease-in-out infinite}
+  @keyframes hotpulse{0%,100%{box-shadow:inset 0 0 34px rgba(110,230,255,.34),0 0 26px rgba(90,220,255,.34)}
+    50%{box-shadow:inset 0 0 46px rgba(150,246,255,.6),0 0 62px rgba(90,220,255,.72)}}
+  #sticks .stick.hot::after{content:'';position:absolute;inset:-3px;border-radius:50%;
+    border:2px solid rgba(150,246,255,.85);pointer-events:none;animation:hotping 1.25s ease-out infinite}
+  @keyframes hotping{0%{transform:scale(1);opacity:.85}70%,100%{transform:scale(1.34);opacity:0}}
+  #sticks .stick.hot .knob{background:radial-gradient(circle at 38% 32%,rgba(240,254,255,.92),rgba(120,238,255,.6) 58%,rgba(40,150,190,.34));
+    border-color:rgba(210,250,255,.85);box-shadow:0 0 30px rgba(120,238,255,.85),inset 0 1px 3px rgba(255,255,255,.55)}
   #sticks .ico{position:absolute;left:50%;top:50%;width:38px;height:38px;margin:-19px 0 0 -19px;
     pointer-events:none;opacity:0;transform:scale(.6);transition:opacity .22s,transform .22s;
     filter:drop-shadow(0 1px 4px rgba(0,0,0,.7))}
-  #sticks .stick.hot .ico{opacity:1;transform:scale(1)}
-  #sticks .stick.hot .lbl{opacity:.9;color:#ffe6b8}
+  #sticks .stick.hot .ico{opacity:1;transform:scale(1.08);filter:drop-shadow(0 0 7px rgba(120,238,255,.9))}
+  #sticks .stick.hot .lbl{opacity:1;color:#bff4ff;letter-spacing:.24em;
+    text-shadow:0 0 10px rgba(120,238,255,.8)}
   #stkL{left:calc(20px + env(safe-area-inset-left))} #stkR{right:calc(20px + env(safe-area-inset-right))}
   #sticks .knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;
     border-radius:50%;pointer-events:none;
@@ -154,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b34';
+const BUILD = 'b35';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -3120,10 +3129,12 @@ const SHIP = {
   yawOut: .62, pitchTilt: .5,
   // How the hull answers the controls: bank into a turn, nose into a climb.
   bank: .42, nose: .22,
-  // The sortie: nobody flies it yet, so it flies itself. It waits until you have walked
-  // away, lifts straight up clear of the trees, flies one lap of the island at altitude,
-  // comes home, lets the gear down and settles. Every joint gets exercised on the way.
-  sortie: true, firstAt: 55, every: [DAY * 1.4, DAY * 2.8],
+  // The sortie: it lifts straight up clear of the trees, flies one lap of the island at
+  // altitude, comes home, lets the gear down and settles. Written when nobody could fly it,
+  // and off now that somebody can -- watching your own ship take itself for a lap while you
+  // stand there reads as a bug, not as a world going on without you. The code stays: it
+  // exercises every joint, tools/sortie.js still runs it, and other ships will want it.
+  sortie: false, firstAt: 55, every: [DAY * 1.4, DAY * 2.8],
   cruise: 62, speed: 30, hop: 26, liftT: 6, landT: 8, radius: W * .5,
 };
 // Flying it yourself. Everything here is an acceleration or a rate, never a speed set
@@ -3142,7 +3153,20 @@ const PILOT = {
   gearUpAt: 9, gearDownAt: 14,                  // above the ground, on the way up and on the way down
   camR: 27, camPol: 1.34, camLag: 2.6,          // the chase view: further back, lower still, and behind by a beat
   waterAlt: 1.4,                                // over water it hovers this far above the swell; there is nothing to land on
+  flareAt: 13,                                  // and inside this, the descent is bled off so it settles rather than arrives
 };
+// The floor a ship can put its feet on, or the wanderer can stand on: the terrain, and the
+// floating isle when you are over it and above its deck. `groundY` deliberately stays the
+// terrain alone -- every creature, mote and blade of grass reads it, and none of them has
+// any business standing on something eighty units up.
+function deckY(x, z, y) {
+  const g = groundY(x, z), isle = world.isle;
+  if (!isle || !isle.alive) return g;
+  const dx = x - isle.pos.x, dz = z - isle.pos.z;
+  if (Math.hypot(dx, dz) > isle.R * .94) return g;
+  const top = isle.g.position.y + isle.topH(dx, dz);
+  return (top > g && y > top - 1.6) ? top : g;   // above it, it is a deck; below it, fly under
+}
 class Ship {
   constructor(x, z, face) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.open = 0; this.bones = null;
@@ -3152,7 +3176,7 @@ class Ship {
     this.q0 = this.g.quaternion.clone();              // how it sits on the ground
     this.qAir = new THREE.Quaternion(); this._e = new THREE.Euler(0, 0, 0, 'YXZ');
     scene.add(this.g);
-    this.state = 'landed'; this.t = 0; this.air = 0; this.next = SHIP.firstAt; this.hop = SHIP.hop;
+    this.state = 'landed'; this.t = 0; this.air = 0; this.next = SHIP.firstAt; this.hop = SHIP.hop; this.outT = 0;
     this.grounded = true; this.power = 0; this.spool = 0; this.yawRate = 0; this.roll = 0; this.nose = 0; this.sag = 0; this.sagV = 0;
     this.trem = new THREE.Vector3();
     this.vel = new THREE.Vector3(); this.prevHeading = face; this.heading = face;
@@ -3243,7 +3267,7 @@ class Ship {
   board() {
     if (this.state !== 'landed' || !this.bones || !world.player || world.player.aboard) return;
     const p = world.player;
-    p.aboard = true; p.g.visible = false; p.lamp.visible = false; p.vx = p.vz = 0; p.wmag = 0; p.fly = false;
+    p.aboard = true; p.g.visible = false; p.lamp.visible = false; p.vx = p.vz = 0; p.wmag = 0; p.fly = false; p.swim = 0;
     cam.rWalk = cam.r;                                 // the chase view takes cam.r over; give it back on the way out
     this.begin('piloted'); this.grounded = true; this.power = 0; this.spool = 0; this.vel.set(0, 0, 0); this.yawRate = 0;
     this.heading = this.face; obRemove(this.ob); this.ob = null;
@@ -3252,18 +3276,24 @@ class Ship {
   }
   // Out again, onto the ground beside it. Wherever it came down is its pad now.
   leave() {
-    const p = world.player; if (!p || !p.aboard || !this.grounded || this.spool > .02) return;
+    const p = world.player; if (!p || !p.aboard || !this.grounded) return;
+    this.spool = 0; this.power = 0; this.outT = 2.2;   // the hatch stays open while he steps down
     p.aboard = false; p.g.visible = true;
     const lx = Math.cos(this.heading), lz = -Math.sin(this.heading);   // the ship's left, in the world
-    p.pos.set(this.pos.x + lx * 4.8, 0, this.pos.z + lz * 4.8); p.pos.y = groundY(p.pos.x, p.pos.z); p.gy = p.pos.y; p.vy = 0; p.grounded = 1;
+    p.pos.set(this.pos.x + lx * 4.8, 0, this.pos.z + lz * 4.8); p.pos.y = deckY(p.pos.x, p.pos.z, this.pos.y + 1.5); p.gy = p.pos.y; p.vy = 0; p.grounded = 1;
     p.heading = p.faceH = Math.atan2(-lx, -lz);
+    // Nothing about where he was when he climbed in survives the flight. A swim left over
+    // from wading out to it kept its hold for a second after he stepped onto a deck eighty
+    // units up, and a second of it steering the ground height toward the sea below was all
+    // it took to drop him off the island.
+    p.swim = 0; p.vy = 0;
     this.settleHere();
     this.next = world.clock + SHIP.every[0];   // it does not fly off the moment he steps away
     hintEl.innerHTML = hint0;
   }
   // Make wherever it is the place it sits: ground normal, collider, pad.
   settleHere() {
-    this.pad.copy(this.pos); this.pad.y = groundY(this.pos.x, this.pos.z); this.pos.copy(this.pad); this.g.position.copy(this.pad);
+    this.pad.copy(this.pos); this.pad.y = deckY(this.pos.x, this.pos.z, this.pos.y + 1.5); this.pos.copy(this.pad); this.g.position.copy(this.pad);
     this.face = this.heading;
     const q = this.g.quaternion.clone();
     this.g.quaternion.identity(); alignTo(this.g, this.pad.x, this.pad.z, .9); this.g.rotateY(this.face);
@@ -3283,7 +3313,7 @@ class Ship {
     if (keys[' ']) up += 1; if (keys.shift) up -= 1;
     if (keys.e) str += 1; if (keys.q) str -= 1;
     fwd = clamp(fwd, -1, 1); yaw = clamp(yaw, -1, 1); up = clamp(up, -1, 1); str = clamp(str, -1, 1);
-    const gy = groundY(this.pos.x, this.pos.z), wy = height(this.pos.x, this.pos.z) < SEA - .3 ? waveY(this.pos.x, this.pos.z) : -1e9;
+    const gy = deckY(this.pos.x, this.pos.z, this.pos.y), wy = height(this.pos.x, this.pos.z) < SEA - .3 ? waveY(this.pos.x, this.pos.z) : -1e9;
     const alt = this.pos.y - Math.max(gy, wy);
     // ---- on the ground: nothing answers until the jets are up, and they take their time ----
     if (this.grounded) {
@@ -3311,6 +3341,15 @@ class Ship {
     this.vel.x += (fx * aF - lx * aS) * dt; this.vel.z += (fz * aF - lz * aS) * dt;
     this.vel.y += (P.g * this.power - P.g + up * P.climb * this.power) * dt;
     this.vel.x *= Math.max(0, 1 - P.drag * dt); this.vel.z *= Math.max(0, 1 - P.drag * dt); this.vel.y *= Math.max(0, 1 - P.vdrag * dt);
+    // The flare. Inside the last dozen units the descent is bled off against how much is
+    // left, so coming down anywhere near a surface settles onto the feet instead of
+    // arriving on them. It is what makes "get close to the ground and lower yourself onto
+    // it" a landing rather than a bounce: a held-down stick reached eleven units a second,
+    // and anything past seven was ruled a crash.
+    if (this.vel.y < 0 && alt < P.flareAt) {
+      const cap = -(.9 + Math.max(0, alt) * .48);
+      if (this.vel.y < cap) this.vel.y = lerp(this.vel.y, cap, Math.min(1, dt * 5));
+    }
     this.yawRate += yaw * P.yawA * dt; this.yawRate *= Math.max(0, 1 - P.yawDrag * dt);
     this.heading += this.yawRate * dt;
     rimClamp(_shipR.set(this.pos.x + this.vel.x * dt, 0, this.pos.z + this.vel.z * dt));
@@ -3324,7 +3363,7 @@ class Ship {
         const into = this.vel.x * px + this.vel.z * pz; if (into < 0) { this.vel.x -= px * into * 1.4; this.vel.z -= pz * into * 1.4; } } }
     // ---- the floor: a hard stop over water, and a landing over land. The ship rests with
     // its feet at ground height, so that is the line: the frame it sinks to it, it is down.
-    const g2 = groundY(this.g.position.x, this.g.position.z), w2 = height(this.g.position.x, this.g.position.z) < SEA - .3 ? waveY(this.g.position.x, this.g.position.z) : -1e9;
+    const g2 = deckY(this.g.position.x, this.g.position.z, this.g.position.y), w2 = height(this.g.position.x, this.g.position.z) < SEA - .3 ? waveY(this.g.position.x, this.g.position.z) : -1e9;
     const overWater = w2 > g2, fl = overWater ? w2 + P.waterAlt : g2;
     if (this.g.position.y <= fl) {
       if (overWater || this.vel.y < -7) {   // too hard, or nothing to stand on: it bounces
@@ -3343,12 +3382,25 @@ class Ship {
     const sp = Math.hypot(this.vel.x, this.vel.z), fwdV = this.vel.x * fx + this.vel.z * fz;
     c.throttle = clamp(.32 + .68 * Math.max(fwd, 0) + Math.max(up, 0) * .25 + sp / 90, 0, 1);
     c.yaw = clamp(this.yawRate / .8, -1, 1);
-    c.pitch = clamp(up * .8 + this.vel.y * .04, -1, 1);
+    // Nozzle vectoring, stated as a demand on the jets rather than an angle: positive means
+    // the nozzles swing DOWN, which is what pushes the ship up. Climbing asks for it, rising
+    // asks for a little more, and running the throttle forward asks for some too, because
+    // the hull is nose-down by then and the thrust has to come back under it.
+    // .75 and not .3 because the hull is already nose-down by a quarter of a radian in the
+    // run, and that swings the tailpipes up by more than a tenth of vectoring can take back:
+    // measured, the exhaust still pointed up. It has to over-correct the attitude to end up
+    // under the ship, which is what a machine holding itself up on its jets would do.
+    c.pitch = clamp(up * .8 + this.vel.y * .04 + Math.max(0, fwd) * .75, -1, 1);
     c.strafe = str;
     c.gear = (alt > P.gearUpAt && this.vel.y > -.5 && !(alt < P.gearDownAt && this.vel.y < .5)) ? 1 : (alt < P.gearDownAt ? 0 : this.sm.gear > .5 ? 1 : 0);
     // the lean: from the yaw rate and the strafe, not the stick; the nose from acceleration and climb
-    this.roll = lerp(this.roll, -this.yawRate * P.bank - aS * .05, Math.min(1, dt * 3));
-    this.nose = lerp(this.nose, -clamp(fwd * P.nose + this.vel.y * P.noseV, -.42, .42), Math.min(1, dt * 2.5));
+    // The lean comes off the yaw rate and the strafe, never the stick. Rolling about the
+    // ship's own forward axis, positive drops the right side: a left turn wants negative,
+    // and a strafe to the right wants positive -- it was subtracting, and leaned away from
+    // the slide. The nose pitches DOWN under positive X, so it noses into the run and lifts
+    // as it climbs; it used to do exactly the opposite of both.
+    this.roll = lerp(this.roll, -this.yawRate * P.bank + aS * .05, Math.min(1, dt * 3));
+    this.nose = lerp(this.nose, clamp(fwd * P.nose - this.vel.y * P.noseV, -.42, .42), Math.min(1, dt * 2.5));
   }
   update(dt) {
     const b = this.bones; if (!b) return;
@@ -3416,12 +3468,19 @@ class Ship {
       if (pad && g0.pad) pad.rotation[ax] = g0.pad[ax] - amt * gk;
     }
     const breathe = (1 - this.air) * (1 - this.power) * Math.sin(t * .7) * .03;
-    if (b.back_jet_L) { const g0 = this.gear0.back_jet_L.hip; b.back_jet_L.rotation.x = g0.x + sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_L.rotation.y = g0.y - Math.max(0, sm.yaw) * SHIP.yawOut; }   // turning left: left nozzle out
-    if (b.back_jet_R) { const g0 = this.gear0.back_jet_R.hip; b.back_jet_R.rotation.x = g0.x + sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_R.rotation.y = g0.y + Math.max(0, -sm.yaw) * SHIP.yawOut; }  // and the mirror of it
+    // A jet pushes the ship the way it is NOT pointing, so a climb swings the nozzles down
+    // and a descent swings them up. They were doing the reverse, which read as the ship
+    // being blown about rather than flying itself.
+    if (b.back_jet_L) { const g0 = this.gear0.back_jet_L.hip; b.back_jet_L.rotation.x = g0.x - sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_L.rotation.y = g0.y - Math.max(0, sm.yaw) * SHIP.yawOut; }   // turning left: left nozzle out
+    if (b.back_jet_R) { const g0 = this.gear0.back_jet_R.hip; b.back_jet_R.rotation.x = g0.x - sm.pitch * SHIP.pitchTilt + breathe; b.back_jet_R.rotation.y = g0.y + Math.max(0, -sm.yaw) * SHIP.yawOut; }  // and the mirror of it
     // ---- the hatch, only when it is sitting still with nobody inside; and the button ----
-    const want = !flying && playerNear < SHIP.near ? 1 : 0;
+    // The hatch is open when he is beside it on foot, and while he is climbing out of it.
+    const want = (!flying && playerNear < SHIP.near) || this.outT > 0 ? 1 : 0;
+    if (this.outT > 0) this.outT -= dt;
     const canBoard = !flying && this.open > .5 && playerNear < SHIP.near && !(p && p.aboard);
-    const canLeave = pil && this.grounded && this.spool <= .02;
+    // Down is down: the jets can still be winding off. Waiting two seconds for a number to
+    // reach zero before the button appeared read as the button being broken.
+    const canLeave = pil && this.grounded && this.spool < .9;
     if (canBoard) offerAct({ icon: 'ship', label: 'BOARD', run: () => this.board() });
     else if (canLeave) offerAct({ icon: 'ship', label: 'LEAVE', run: () => this.leave() });
     this.open = lerp(this.open, want, Math.min(1, dt * (want ? 2.2 : 1.5)));
@@ -3823,17 +3882,25 @@ function updateMotes(dt) {
     let bright = 0;
     if (best) {
       const dx = best.x - x, dy = best.y - y, dz = best.z - z, d = Math.sqrt(dx * dx + dy * dy + dz * dz) + .01;
-      if (best.out && d < 8) {
+      // Caught on the horizontal distance, not the full one. A jump takes him ten units up
+      // -- twenty-five off the ground against a gravity of thirty-two -- and on a spherical
+      // test the whole swirl fell out of a capture radius of eight the moment he left the
+      // ground, then had nothing but a pull of half a unit a second to climb back with.
+      const dh0 = Math.hypot(dx, dz);
+      if (best.out && dh0 < 8) {
         // The old field had a stable point at four units, so whatever the lamp swept up
         // parked there for good: a ring of specks that hung beside you and never moved.
         // Steer the velocity instead of pushing on it. Each mote circles the light and
         // breathes in and out on its own clock, so the pool is always streaming.
-        const dh = Math.hypot(dx, dz) + .01, rx = dx / dh, rz = dz / dh;
+        const dh = dh0 + .01, rx = dx / dh, rz = dz / dh;
         const want = 3 + Math.sin(t * .55 + mseed[i] * 1.7) * 2.2;
-        const radial = clamp((d - want) * .9, -2.4, 2.4), orb = 3.4;
+        const radial = clamp((dh0 - want) * .9, -2.4, 2.4), orb = 3.4;
         ax += (-rz * orb + rx * radial - vx) * 3.2;
         az += (rx * orb + rz * radial - vz) * 3.2;
-        ay += Math.sin(t * .8 + mseed[i]) * 1.2 - vy * .6;
+        // and held at the lamp's height rather than merely bobbing at whatever height the
+        // ground band happened to leave them: underdamped on purpose, so the swirl arrives
+        // a beat after he does and overshoots a little on the way down
+        ay += (dy * 2.8 - vy * 1.3) + Math.sin(t * .8 + mseed[i]) * 1.2;
       } else {
         const pull = d < 4 ? -.5 : best.w * 1.4; ax += dx / d * pull; ay += dy / d * pull; az += dz / d * pull;
         if (d < 9) { ax += -dz / d * 1.6; az += dx / d * 1.6; }
@@ -3843,7 +3910,11 @@ function updateMotes(dt) {
     }
     ax += Math.sin(t * .6 + mseed[i]) * .9 + (fbm(x * .02 + t * .03, z * .02, 2) - .5) * 3;
     az += Math.cos(t * .5 + mseed[i] * 1.3) * .9 + (fbm(z * .02, x * .02 - t * .03, 2) - .5) * 3;
-    const gy = groundY(x, z), lo = gy + 1.6, hi = gy + 9;
+    // The band a mote drifts in belongs to the ground -- except while it is caught in the
+    // lamp, when it belongs to the lamp. The ceiling used to hold regardless, so a jump
+    // took him up and left the whole swirl standing in the grass underneath him.
+    const gy = groundY(x, z); let lo = gy + 1.6, hi = gy + 9;
+    if (best && best.out) { lo = Math.min(lo, best.y - 4.5); hi = Math.max(hi, best.y + 4.5); }
     if (y < lo) ay += (lo - y) * 4; else if (y > hi) ay -= (y - hi) * 1.2; ay -= vy * .5;
     const rr = Math.hypot(x, z); if (rr > W * .8) { ax -= x / rr * 3; az -= z / rr * 3; }
     if (!isLand(x, z) && !best) { ax -= x * .02; az -= z * .02; }
@@ -4111,10 +4182,10 @@ const _camQ = new THREE.Quaternion(), _camW = new THREE.Vector3();
 function camClear(pol, r) {
   const sx = Math.sin(cam.az) * Math.sin(pol) * r, sy = Math.cos(pol) * r, sz = Math.cos(cam.az) * Math.sin(pol) * r;
   const cx = cam.tgt.x + sx, cy = cam.tgt.y + sy, cz = cam.tgt.z + sz;
-  if (cy < groundY(cx, cz) + 2.6) return false;
+  if (cy < deckY(cx, cz, cy) + 2.6) return false;
   for (let i = 3; i <= 9; i++) {
-    const t = i / 10;
-    if (lerp(cam.tgt.y, cy, t) < groundY(lerp(cam.tgt.x, cx, t), lerp(cam.tgt.z, cz, t)) + 1.4) return false;
+    const t = i / 10, py = lerp(cam.tgt.y, cy, t);
+    if (py < deckY(lerp(cam.tgt.x, cx, t), lerp(cam.tgt.z, cz, t), py) + 1.4) return false;
   }
   return true;
 }
@@ -4504,7 +4575,10 @@ function updatePlayer(dt) {
     }
     // Over deep water the dry target is the surface itself — not flat SEA — so he falls onto
     // the actual swell and the swim picks up from there rather than hovering above a trough.
-    const target = lerp(Math.max(h, wy), Math.max(h, wy - depth), player.swim);
+    // deckY, not height: whatever the ship can land on he can stand on, which right now
+    // means the floating isle. Step out of a ship parked on it and the ground is there.
+    const deck = deckY(player.pos.x, player.pos.z, player.pos.y);
+    const target = lerp(Math.max(deck, wy), Math.max(h, wy - depth), player.swim);
     player.gy = lerp(player.gy, target, Math.min(1, dt * (player.swim > .5 ? 6 : 14)));   // ground snaps; water bobs
     const canLead = RIG.jumpLead > 0 && player.rigH && player.rigH.acts.jumpStart;
     // In the water there is nothing to crouch against, so a surface leap goes straight up
@@ -4780,6 +4854,13 @@ function updateWaypoint(dt) {
   a.needsUpdate = true;
   WAY.trail.material.opacity = .75 * near;
   WAY.trail.visible = d > 5;
+  // Walk through it and it is spent. Leaving it standing on top of him was the one thing
+  // that made the mark feel like scenery rather than something he had set himself.
+  if (d < (player.aboard ? 8 : 2.6)) {
+    world.effects.push(new Burst(WAY.at.x, groundY(WAY.at.x, WAY.at.z) + 2.2, WAY.at.z, '#9fe6ff', 14, 1.4));
+    setWaypoint(null); drawMap();
+    logMsg('He reached the mark, and it went out.');
+  }
 }
 
 // ---------- the map ----------
@@ -5001,7 +5082,7 @@ function toggleMap(on) {
   if (MAP.open) drawMap();
 }
 
-isle.water = water; isle.foam = foam; isle.abyss = abyss; isle.terrain = terrain;
+isle.water = water; isle.foam = foam; isle.abyss = abyss; isle.terrain = terrain; isle.motesGeo = motesGeo;
 isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap; isle.way = WAY; isle.setWaypoint = setWaypoint; isle.clampView = clampView;   // MAP is a const above, so this cannot move any earlier
 
 // What a tap on the right stick would do right now, if anything. Whatever is within reach
