@@ -31,7 +31,7 @@ const WAIT = +arg('wait', 6);
 
 // The game's script is one IIFE, so nothing inside it is reachable from the page. Splice a
 // handle onto the window just before it closes -- the same trick the headless tools use.
-const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep};';
+const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV};';
 function indexHTML() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const cut = html.lastIndexOf('})();');
@@ -210,28 +210,41 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
 
   // Are the procedural joints actually turning? A still frame cannot tell you, so sample a
   // rigged plant's bones across a second of world time and report the widest swing in degrees.
+  // Two questions a still frame cannot answer: is anything moving, and is it moving more than
+  // it is allowed to? Sample a rigged plant across a stretch of world time and report the
+  // widest departure from the bind pose on any axis of any joint -- and list every bone in the
+  // model that is *not* being driven, so "you are only rotating the ones I labelled" is a
+  // thing that can be checked rather than asserted.
   if (has('vibe')) {
-    const snap = () => page.evaluate(() => {
+    const peak = await page.evaluate(async () => {
       const g = window.__g, p = g.world.plants.find(q => q.alive && q.vibe);
       if (!p) return null;
-      return { n: p.vibe.length, t: g.world.clock,
-        r: p.vibe.map(j => [j.b.rotation.x, j.b.rotation.y, j.b.rotation.z]) };
-    });
-    const a = await snap();
-    if (!a) console.log('vibe: no rigged plant in this world');
-    else {
-      const t0 = await page.evaluate(() => window.__g.world.clock);
-      await page.waitForFunction(`window.__g.world.clock > ${t0 + 1}`, null, { timeout: 300000 });
-      const b = await snap();
+      const driven = new Set(p.vibe.map(j => j.b));
+      const all = [], skipped = [];
+      p.model.traverse(o => { if (o.isBone) { all.push(o.name); if (!driven.has(o)) skipped.push(o.name); } });
+      // walk the wobble through a couple of full cycles of the slowest joint, off-clock, so
+      // the answer does not depend on how many frames the harness happened to render
       let worst = 0, moved = 0;
-      for (let i = 0; i < a.r.length; i++) {
-        let d = 0;
-        for (let k = 0; k < 3; k++) d = Math.max(d, Math.abs(a.r[i][k] - b.r[i][k]));
-        if (d > 1e-4) moved++;
-        worst = Math.max(worst, d);
+      const seen = p.vibe.map(() => 0);
+      for (let i = 0; i <= 600; i++) {
+        g.vibeStep(p.vibe, i * 0.08, null);
+        p.vibe.forEach((j, k) => {
+          const d = Math.max(Math.abs(j.b.rotation.x - j.r.x),
+                             Math.abs(j.b.rotation.y - j.r.y),
+                             Math.abs(j.b.rotation.z - j.r.z));
+          if (d > seen[k]) seen[k] = d;
+        });
       }
-      console.log('vibe: ' + a.n + ' joints, ' + moved + ' moved over ' + (b.t - a.t).toFixed(1)
-        + 's of world time, widest swing ' + (worst * 180 / Math.PI).toFixed(1) + ' degrees');
+      for (const d of seen) { worst = Math.max(worst, d); if (d > 1e-4) moved++; }
+      return { n: p.vibe.length, bones: all.length, skipped, worst: worst * 180 / Math.PI, moved,
+        cap: g.VIBE.deg, wind: g.world && g.__wx ? 0 : 0 };
+    });
+    if (!peak) console.log('vibe: no rigged plant in this world');
+    else {
+      console.log('vibe: driving ' + peak.n + ' of ' + peak.bones + ' bones, ' + peak.moved + ' of them moving');
+      console.log('  widest departure from bind, any joint any axis: ' + peak.worst.toFixed(1)
+        + ' degrees (cap ' + peak.cap + ')' + (peak.worst > peak.cap + .05 ? '   *** OVER THE CAP ***' : '   within cap'));
+      console.log('  not driven: ' + (peak.skipped.join(', ') || '(none)'));
     }
   }
 
@@ -244,6 +257,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       biome: g.biomeAt(g.player.pos.x, g.player.pos.z).name,
       ship: g.world.ship ? g.world.ship.state + '@' + (g.world.ship.pos.y | 0) : 'none',
       title: g.world.title ? [g.world.title.position.x|0, g.world.title.position.z|0] : 'NOT PLACED',
+      env: (g.ENV.map ? 'loaded on ' + g.ENV.mats.length + ' materials' : 'NOT LOADED'),
       sites: (g.world.sites || []).map(s => [s.x | 0, s.z | 0]), clock: g.world.clock | 0 };
   });
   console.log(OUT, JSON.stringify(info));

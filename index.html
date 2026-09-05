@@ -2739,10 +2739,16 @@ function noCast(root) { root.traverse(o => { if (o.isMesh) o.castShadow = false;
 // same on every instance; this gives each plant its own phases, costs three sines a joint,
 // needs no keyframes in the file, and can be leant on by the weather, which a clip cannot.
 const VIBE = {
-  match: /anim/i,        // Joint_anim_17, Joint_ANIMR_3 -- either way the name came through
-  deg: 10,               // the tag's amplitude, per axis
+  // Only the joints that were labelled for it. `anim` has to start a name segment, so
+  // Joint_anim_17 and Joint_ANIMR_3 match and nothing else in the file can match by accident.
+  match: /(^|[_\-.])anim/i,
+  // Ten degrees per axis, and it is a *ceiling*, not a starting point. Ten is what the tag
+  // was set to in Cinema 4D and what the rig was authored to survive; past it the plant stops
+  // reading as a plant. The first version multiplied this by the wind and reached thirty-one
+  // in a gale, which is exactly the distortion that got reported.
+  deg: 10,
+  calm: .55,             // what it settles to in still air, as a fraction of deg
   rate: .5,              // how fast the wobble wanders
-  wind: 2.2,             // how much harder it works in a gale
   far: 95,               // past this there is nothing to see, so nothing is computed
 };
 // Every joint the tag was on, with its bind rotation and its own frequencies and phases --
@@ -2762,7 +2768,9 @@ function vibeStep(list, t, pos) {
     const dx = pos.x - cam.tgt.x, dz = pos.z - cam.tgt.z;
     if (dx * dx + dz * dz > VIBE.far * VIBE.far) return;
   }
-  const a = VIBE.deg * (Math.PI / 180) * (1 + WX.windK * VIBE.wind), u = t * VIBE.rate;
+  // The wind moves where in the range this sits. It cannot scale past the top of it.
+  const a = VIBE.deg * (Math.PI / 180) * lerp(VIBE.calm, 1, clamp(WX.windK, 0, 1));
+  const u = t * VIBE.rate;
   for (let i = 0; i < list.length; i++) {
     const j = list[i];
     j.b.rotation.set(j.r.x + Math.sin(u * j.fx + j.px) * a,

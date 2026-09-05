@@ -813,9 +813,25 @@ its own phases, costs three sines per joint, adds nothing to the file, and can b
 the weather — amplitude rises with `WX.windK`, so the meadow works harder in a gale. Past
 `VIBE.far` nothing is computed at all.
 
-Knobs: `VIBE.deg` is the tag's amplitude (10°, matching C4D), `VIBE.rate` how fast the wobble
-wanders, `VIBE.wind` how much the weather adds. `VIBE.match` is the name pattern — `anim` or
-`ANIMR`, either way it came through the exporter.
+**`VIBE.deg` is a ceiling, not a starting point.** Ten degrees per axis is what the tag was set
+to in C4D and what the rig was authored to survive; past it the plant stops reading as a plant.
+The first version multiplied it by the wind and reached thirty-one degrees in a gale, which
+looked exactly as wrong as it sounds. The wind moves where in the range the amplitude sits
+(`VIBE.calm` in still air, up to `deg` in a gale) and cannot scale past the top of it.
+
+`VIBE.match` requires `anim` to start a name segment, so `Joint_anim_17` and `Joint_ANIMR_3`
+match and nothing in the file can match by accident. `VIBE.rate` is how fast the wobble wanders.
+
+`node tools/shot.js --near Bloom --vibe` audits both halves of that. It walks the wobble
+through its cycles off-clock and reports the widest departure from the bind pose on any axis
+of any joint against the cap, and lists every bone in the model that is *not* being driven —
+so "only the joints I labelled, never past ten degrees" is checkable rather than asserted:
+
+```
+vibe: driving 32 of 37 bones, 32 of them moving
+  widest departure from bind, any joint any axis: 6.2 degrees (cap 10)   within cap
+  not driven: root, Joint_1, Joint, Joint_2, Joint_3
+```
 
 `npm run check:model` recognises this shape and says so rather than calling the file broken;
 `node tools/shot.js --near Bloom --vibe` reports how many joints moved and the widest swing
