@@ -816,6 +816,22 @@ its own. Applying it to the pilot, whose velocity *is* the thing being integrate
 held the ship at 42 whatever the engine was set to — raising the thrust could never have
 moved it. The rebuild is now skipped in the piloted state.
 
+### The ground
+
+The meadow has a real surface; the beaches, cliff faces and snowline keep their vertex
+colours. That split is what stops the island reading as one tiled material stretched over a
+shape, and it costs one attribute: `land`, computed per vertex in the terrain build off the
+same height and slope thresholds that chose the colours in the first place. The shader fades
+both the map and its normals out to nothing where `land` is 0.
+
+UVs came free. The chart point each vertex was built from is already a world-space
+coordinate, so `uv = chart / GROUND.tile` is a tiling parameterisation with no seams and no
+unwrap — worth remembering for anything else that wants to be textured across the terrain.
+
+`GROUND.tint` is the knob that matters: at 1 the map is stained flat green by the grass
+colour underneath it and only its relief survives, at 0 the island loses its zoning
+altogether. Just over a half keeps both.
+
 ### The ship's flames and lamps
 
 A jet is a solid thing with a shape, not a cloud of dots. `FLAME_GEO` is a unit cone growing
@@ -1107,6 +1123,7 @@ on where he happens to be standing (it bids 1.85 at 46 units against the great t
 | Ship top speed | `PILOT.thrust / PILOT.drag` — and see the clamp note under The ship |
 | What he can climb onto | `OB_PLAYER.climb` |
 | Waypoint trail spacing | `WAY.gap` (`WAY.N` is only the cap) |
+| Ground texture | `GROUND.tile`, `GROUND.tint`, `GROUND.boost`, `GROUND.normal` |
 | Flame sizes | `SHIP.jet` / `SHIP.side` / `SHIP.lift` / `SHIP.head` / `SHIP.bulb` |
 | Quality tiers | `Q` |
 | Texture ceiling at load | `TEX_CAP` (2048; a ceiling, not a target) |

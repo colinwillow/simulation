@@ -171,7 +171,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b46';
+const BUILD = 'b48';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -912,6 +912,12 @@ bounce.target = fill.target = sun.target;   // every light aims at the ground un
 scene.fog = new THREE.FogExp2(0xa7c8e6, .0038);
 
 // ---------- terrain ----------
+// Declared up here because the mesh build below reads GROUND.tile for its UVs, and a const
+// referenced above its declaration takes the whole rest of the file with it.
+// tint: how much the terrain's own grass colour still tints the texture on the meadow.
+// At 1 the map is stained green and only its relief survives; at 0 the island loses its
+// zoning and becomes one tiled material. Just under a half keeps both.
+const GROUND = { tile: 7, boost: 1.05, normal: .85, tint: .68 };
 // A polar grid instead of a square one: rings running out from the chart origin and spokes
 // running round it, which is the shape the projection wants. Rings are packed tight over the
 // island and open out across the empty ocean beyond it, so the far side of the planet costs
@@ -947,9 +953,15 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
 {
   const pa = terrainGeo.attributes.position, colors = new Float32Array(pa.count * 3), c = new THREE.Color(), c2 = new THREE.Color();
   const chart = new Float32Array(pa.count * 2), hgt = new Float32Array(pa.count), _tv = new THREE.Vector3();
+  // UVs come free: the chart point IS a world-space coordinate, so dividing it by a tile size
+  // is a tiling parameterisation with no seams and no unwrap. And a mask saying how much of
+  // this vertex is meadow, off the same thresholds the colouring below uses -- the ground
+  // texture belongs on grass, not on a cliff face, a beach or a snowline.
+  const uv = new Float32Array(pa.count * 2), land = new Float32Array(pa.count);
   for (let i = 0; i < pa.count; i++) {
     const x = pa.getX(i), z = pa.getZ(i), h = height(x, z);
     chart[i * 2] = x; chart[i * 2 + 1] = z; hgt[i] = h;
+    uv[i * 2] = x / GROUND.tile; uv[i * 2 + 1] = z / GROUND.tile;
     planetPos(x, h, z, _tv); pa.setXYZ(i, _tv.x, _tv.y, _tv.z);
     const sl = slope(x, z);
     const wet = smooth(2.2, -1.2, h);
@@ -968,15 +980,54 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
       c.lerp(c2, clamp((sl - .6) * 1.7, 0, 1) * clamp((h - .5) / 2, 0, 1));
     }
     if (h > 24) c.lerp(P.snow, smooth(27, 40, h) * (1 - clamp((sl - 1.0) * 1.1, 0, 1)));
+    land[i] = smooth(SEA + .8, SEA + 3.4, h) * (1 - smooth(11, 17, h)) * (1 - clamp((sl - .55) * 1.8, 0, 1));
     c.offsetHSL((fbm(x * .3, z * .3, 2) - .5) * .02, 0, (fbm(x * .5, z * .5, 3) - .5) * .07);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
   }
   terrainGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   terrainGeo.setAttribute('chart', new THREE.BufferAttribute(chart, 2));
   terrainGeo.setAttribute('hgt', new THREE.BufferAttribute(hgt, 1));
+  terrainGeo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  terrainGeo.setAttribute('land', new THREE.BufferAttribute(land, 1));
   terrainGeo.computeVertexNormals();
 }
-const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 }));
+// The meadow gets a real surface. Everything else on the island -- the beaches, the cliff
+// faces, the snow -- keeps the vertex colours, which is what makes it read as a place rather
+// than one tiled material stretched over a shape. `land` decides which is which per vertex,
+// and it comes off the same height and slope thresholds that chose the colours.
+const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 });
+{
+  const tl = new THREE.TextureLoader();
+  const rep2 = t => { t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy(); return t; };
+  // sRGB on the colour, linear on the normals: one is a picture, the other is a direction
+  terrainMat.map = rep2(tl.load('images/ground/ground_01_diffuse.webp', t => { t.encoding = THREE.sRGBEncoding; t.needsUpdate = true; }));
+  terrainMat.map.encoding = THREE.sRGBEncoding;
+  terrainMat.normalMap = rep2(tl.load('images/ground/ground_01_normals.webp'));
+  terrainMat.normalScale = new THREE.Vector2(GROUND.normal, GROUND.normal);
+  terrainMat.onBeforeCompile = sh => {
+    sh.uniforms.uBoost = { value: GROUND.boost };
+    sh.uniforms.uTint = { value: GROUND.tint };
+    sh.vertexShader = 'attribute float land;\nvarying float vLand;\n' +
+      sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLand = land;');
+    sh.fragmentShader = 'uniform float uBoost, uTint;\nvarying float vLand;\n' + sh.fragmentShader
+      // off the meadow the vertex colour is the whole story; on it, it steps back so the
+      // texture's own pinks and creams are not stained flat green
+      .replace('#include <color_fragment>',
+        'diffuseColor.rgb *= mix(vec3(1.0), vColor, mix(1.0, uTint, vLand));')
+      // the stock chunk multiplies the map in everywhere; this one fades it out to plain
+      // white off the meadow, so sand stays sand and rock stays rock
+      .replace('#include <map_fragment>',
+        `{
+           vec4 tex = texture2D(map, vUv);
+           diffuseColor.rgb *= mix(vec3(1.0), tex.rgb * uBoost, vLand);
+         }`)
+      // and the relief with it, or a beach picks up bumps that are not there
+      .replace('#include <normal_fragment_maps>',
+        '#include <normal_fragment_maps>\n  normal = normalize(mix(geometryNormal, normal, vLand));');
+  };
+}
+const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 terrain.material.userData.noHole = true;
 terrain.receiveShadow = true; terrain.userData.flat = true; scene.add(terrain);   // built on the sphere already
 
@@ -4256,6 +4307,42 @@ function updateMotes(dt) {
   motesGeo.attributes.position.needsUpdate = true; motesGeo.attributes.color.needsUpdate = true;
 }
 
+// ---------- the title, standing in the world ----------
+// One of these, on the first flat clear ground the island offers near the middle. It is
+// twenty-one thousand triangles, which is fine for a thing there is exactly one of, and
+// nothing else in the file is allowed to be that heavy.
+const TITLE = { url: 'models/plutopia_title.glb', span: 22 };
+function placeTitle() {
+  // Sixteen units clear of everything does not exist on an island with fifty-six trees on
+  // it -- the first version of this asked for exactly that, found nothing, and put no title
+  // anywhere without saying so. Ask for a lot of room, settle for less, and never come away
+  // empty: somewhere flat and central beats somewhere perfect and imaginary.
+  let spot = null;
+  for (const clear of [16, 12, 9, 6, 4, 0]) {
+    for (let i = 0; i < 3000 && !spot; i++) {
+      const x = rnd(-W * .34, W * .34), z = rnd(-W * .34, W * .34);
+      const h = height(x, z);
+      if (h > 4 && h < 13 && slope(x, z) < .18 && (!clear || obClear(x, z, clear))) spot = { x, z };
+    }
+    if (spot) break;
+  }
+  if (!spot) { console.warn('[title] nowhere flat enough to stand it'); return; }
+  loadModel(TITLE.url, e => {
+    const g = new THREE.Group();
+    g.position.set(spot.x, groundY(spot.x, spot.z), spot.z);
+    alignTo(g, spot.x, spot.z, .8);
+    g.rotateY(Math.atan2(-spot.x, -spot.z));           // reading side toward the middle of the island
+    const inst = cloneModel(e.root);
+    const sz = e.box.getSize(new THREE.Vector3());
+    const k = TITLE.span / Math.max(1e-4, Math.max(sz.x, sz.z));
+    inst.scale.setScalar(k); inst.position.y = -e.box.min.y * k;
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.userData.noHole = true; } });
+    g.add(inst); scene.add(g); world.title = g;
+    obAdd(spot.x, spot.z, TITLE.span * .42, null, groundY(spot.x, spot.z) + sz.y * k);
+    logMsg('Something enormous is spelled out in the meadow.');
+  });
+}
+
 // ---------- scatter ----------
 function scatterDecor() {
   const bin = [];
@@ -4349,7 +4436,7 @@ function populate() {
       spawn: (p, v) => { const a = rnd(Math.PI * 2), r = rnd(0, 7); p.set(cx + Math.cos(a) * r, cy + rnd(0, 3), cz + Math.sin(a) * r); v.set(rnd(-.5, .5), rnd(1.2, 3), rnd(-.5, .5)); } });
   }
   world.spawn = world.camp ? { x: world.camp.pos.x + 7, z: world.camp.pos.z + 5 } : (randomLand(1.5, 8, .5, 400, 3) || { x: 0, z: 0 });
-  ferry = new Ferry(); initMotes(); scatterDecor();
+  ferry = new Ferry(); initMotes(); scatterDecor(); placeTitle();
 }
 populate();
 
