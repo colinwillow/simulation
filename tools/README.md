@@ -1024,6 +1024,45 @@ through it rather than finding a wall of backfaces.
 `node tools/shot.js --tree` stands the wanderer just past the biggest modelled tree with the
 camera on the far side of it, which is the shot that shows whether any of this is working.
 
+### The size of the world
+
+`W` is the one knob. Everything horizontal in `index.html` is stated as a fraction of it or
+scaled by `WS`, so raising it moves the coastline, the range, the mesa, the lagoon, the chasm,
+the sea stacks, the ferry's route, the ship's patrol and the map together. It went 240 → 400
+so that nine regions could each be a place rather than a clearing: at 240 the layout fitted
+down to a third of its drawn size and each region was forty units across, about fifteen
+seconds' walk.
+
+| | 240 | 400 |
+|---|---|---|
+| land area | 42k | 112k |
+| walkable | 28k (68%) | 79k (70%) |
+| height bands 0-8 / 8-16 / 16-24 | 69% / 16% / 13% | 51% / 30% / 17% |
+| region layout spread | ±19 | ±113 |
+
+**Four things do not follow `W` and have to be moved by hand.** They are the whole checklist
+for changing it again:
+
+1. **`RELIEF`** — vertical amplitude, which must not scale with width or a bigger island is an
+   alp. It multiplies the finished height field about zero, so the coastline stays exactly
+   where the mask put it. 1.25 against a horizontal 1.67.
+2. **Mesh density** — `TSPOKE`/`TRING` and `WSPOKE`/`WRING`, or the ground gets blockier.
+3. **How many things there are** — `Q.grass`, `MAX`, and the counts in `populate`. These went
+   up by about half against a world that grew two thirds in each direction, so the island is
+   deliberately *less* densely covered than it was.
+4. **Every absolute height window.** This is the one that bites. Fifty-odd calls say things
+   like "somewhere between one and a half and eight units up", meaning a band of ground;
+   `RELIEF` moves the band without moving the numbers. The first casualty was the ship, whose
+   landing site asks for ground under eight units and silently found none. `randomLand` and
+   `nearLand` now scale their windows internally, so the windows stay stated in old-world
+   units and every caller is fixed at once — but the handful of inline `height() > n` tests
+   (the great tree, the cave, the title) had to be done individually. **Check `camp/cave/isle`
+   and `ship` in the headless report after any change here.** Also `Creature.terrainOK`, whose
+   ceiling fenced every creature onto the coastal shelf until it was raised.
+
+Room turned out to be good for the simulation as well as the look: stall episodes went from
+156 to 98 and hard escapes from 78 to 44, because far fewer creatures end up wedged.
+
 ### Art direction
 
 The island read as a pile of assets for a long time, and `shot.js --palette` says exactly

@@ -197,20 +197,37 @@
 const MOBILE = matchMedia('(pointer:coarse)').matches || innerWidth < 700;
 const Q = {
   seg: MOBILE ? 240 : 384,
-  grass: MOBILE ? 7000 : 21000,
+  // Grass and plant counts rose by about half against a world that grew by two thirds in
+  // each direction, so the island is *less* densely covered than it was. That is deliberate:
+  // an even carpet everywhere was the thing that made it read as scattered, and the map this
+  // is being built toward has plenty of empty grassland in it.
+  grass: MOBILE ? 11000 : 33000,
   motes: MOBILE ? 420 : 620,
   shadow: MOBILE ? 1024 : 2048,
   bloomDiv: MOBILE ? 4 : 3,
   dpr: Math.min(devicePixelRatio, MOBILE ? 2 : 2)
 };
 
-const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
+// The world got bigger so that nine regions could each be a place rather than a clearing.
+// At 240 the land was a lobe about 220 units across and the region layout fitted down to a
+// third of its drawn size -- each region forty units, fifteen seconds' walk. Everything
+// horizontal in this file is stated as a fraction of W or scaled by WS, so raising it moves
+// the coastline, the range, the mesa, the lagoon, the chasm, the sea stacks, the ferry's
+// route, the ship's patrol and the map together. Four things are not, and are handled below:
+// the vertical relief (RELIEF), the terrain and water mesh density, how many things there are
+// (Q.grass, MAX, populate), and how high a creature is willing to walk.
+const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
+// Relief does not scale with width -- a wider island at the same amplitudes is a pancake, and
+// at full scale it is an alp. Real coasts get flatter as they get bigger, so this is well
+// under the horizontal factor. It multiplies the finished height field about zero, which
+// leaves the coastline exactly where the mask put it and stretches everything else.
+const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
 const BUILD = 'b49';
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, mushroom: 54, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
+const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -339,7 +356,7 @@ function height(x, z) {
   // from the island, and nothing but the mesh has ever looked at it.
   const rr = Math.hypot(x, z), rM = Math.PI * W;
   if (rr > rM * .86) h = lerp(h, -18.5, smooth(rM * .86, rM, rr));
-  return h;
+  return h * RELIEF;
 }
 function slope(x, z) { const e = 1.5; const dx = height(x + e, z) - height(x - e, z), dz = height(x, z + e) - height(x, z - e); return Math.sqrt(dx * dx + dz * dz) / (2 * e); }
 function groundY(x, z) { return Math.max(height(x, z), SEA); }
@@ -379,13 +396,22 @@ function moisture(x, z, h) {
 // distance so they wander instead of being Voronoi cells with straight walls.
 const RS = W / 170;
 const REGIONS = [
-  { name: 'pasture',  x:   -34, z:  -26, pull: 1.15 },   // Central Grasslands, and the town
-  { name: 'highland', x:    30, z: -104, pull: 1.00 },   // Snowy Mountains
-  { name: 'desert',   x:  -112, z:  -92, pull:  .92 },   // Desert & Canyons
-  { name: 'jungle',   x:  -116, z:  -18, pull:  .95 },   // Jungle Forest
-  { name: 'wetland',  x:  -104, z:   72, pull:  .95 },   // Swamp & Wetlands
-  { name: 'crystal',  x:    74, z:  -22, pull:  .88 },   // Crystal Fields
-  { name: 'fungal',   x:   134, z:  -26, pull:  .85 },   // Mushroom Biome
+  // `pull` divides the distance, so a bigger number reaches further. The middle of the map is
+  // surrounded and wins by position alone; the ones with three neighbours crowding them --
+  // the jungle between desert, swamp and grassland, the crystal fields between mountain,
+  // savannah and mushroom -- need theirs raised or they are squeezed to nothing.
+  { name: 'pasture',  x:   -34, z:  -26, pull: 1.16 },   // Central Grasslands, and the town
+  { name: 'highland', x:    30, z: -104, pull: 0.98 },   // Snowy Mountains
+  { name: 'desert',   x:  -112, z:  -92, pull: 1.02 },   // Desert & Canyons
+  { name: 'jungle',   x:  -116, z:  -18, pull: 1.00 },   // Jungle Forest
+  { name: 'wetland',  x:  -104, z:   72, pull: 1.02 },   // Swamp & Wetlands
+  { name: 'crystal',  x:    74, z:  -22, pull: 1.02 },   // Crystal Fields
+  // The Mushroom Biome is the sister isle -- the second landmass the height field makes, off
+  // to the south-west. It is not part of the fitted layout: it is pinned to that island's own
+  // centre, because a strange place across open water is exactly what mushroom country wants
+  // to be, and because leaving it unclaimed made whichever region happened to be nearest
+  // stretch across the sea to take it, which is how the swamp came to be a third of the world.
+  { name: 'fungal',   x:     0, z:    0, pull: 1.00, iso: 1 },   // Mushroom Biome
   { name: 'scrub',    x:   104, z:   44, pull: 1.00 },   // Savannah & Dry Grassland
 ].map(r => ({ ...r, x: r.x * RS, z: r.z * RS, pull: r.pull * RS }));
 // Declared above the fitting pass below, which assigns it: a `let` referenced before its own
@@ -398,25 +424,49 @@ let REGION_FIT = 1;
 // layout until every anchor is on real ground, then walk any that are still wet to the
 // nearest ground there is. The relationships survive, which is the only part that mattered,
 // and they go on surviving a change to the terrain.
+// Spread as wide as the land allows, and let the stragglers walk in -- rather than shrinking
+// until every last anchor happens to land on ground. Demanding all eight was the mistake: one
+// outlier out over water dragged the whole arrangement into the middle of the island, leaving
+// every region forty units across on a world four times that wide, and it made the layout so
+// crowded that a two percent change to one `pull` swung whole regions across the map.
 (() => {
   const dry = (x, z) => height(x, z) > 3.5;
-  let s = 1;
-  for (; s > .18; s -= .03) if (REGIONS.every(r => dry(r.x * s, r.z * s))) break;
-  for (const r of REGIONS) { r.x *= s; r.z *= s; r.pull *= Math.max(s, .55); }
+  const fit = REGIONS.filter(r => !r.iso);
+  const need = fit.length - 2;
+  let s = .2;
+  for (let t = 2.4; t > .2; t -= .04) {
+    let n = 0;
+    for (const r of fit) if (dry(r.x * t, r.z * t)) n++;
+    if (n >= need) { s = t; break; }
+  }
+  for (const r of fit) { r.x *= s; r.z *= s; r.pull *= Math.max(s, .55); }
+  // the pinned ones go to their landmass's own centre, at whatever size it turned out
+  for (const r of REGIONS) if (r.iso) {
+    // A small pull, deliberately. It only has to beat the mainland anchors from a point on
+    // its own island; give it a big one and it reaches back across the sea and takes the
+    // mainland with it, which is what happened first time.
+    const c = CENTERS[r.iso]; r.x = c[0] * W; r.z = c[1] * W; r.pull = .7;
+  }
   REGION_FIT = s;
+  // and the two or three left standing in water walk to the nearest ground, keeping their
+  // direction from the middle so the arrangement still reads the way it was drawn
   for (const r of REGIONS) {
-    if (dry(r.x, r.z)) continue;
-    for (let rad = 8; rad <= 150 && !dry(r.x, r.z); rad += 8)
-      for (let i = 0; i < 24; i++) {
-        const a = i / 24 * Math.PI * 2, x = r.x + Math.cos(a) * rad, z = r.z + Math.sin(a) * rad;
-        if (dry(x, z)) { r.x = x; r.z = z; break; }
+    if (r.iso || dry(r.x, r.z)) continue;
+    const a0 = Math.atan2(r.z, r.x);
+    let found = false;
+    for (let rad = 10; rad <= 260 && !found; rad += 10)
+      for (let i = 0; i < 20 && !found; i++) {
+        const a = a0 + Math.PI + (i % 2 ? 1 : -1) * (i >> 1) * .22;   // inward first, fanning out
+        const x = r.x + Math.cos(a) * rad, z = r.z + Math.sin(a) * rad;
+        if (dry(x, z)) { r.x = x; r.z = z; found = true; }
       }
   }
 })();
-// How far a border wanders off the straight line. It has to shrink with the layout: at full
-// scale thirty-four units is a soft edge, and on a layout fitted down to a third of that it
-// is larger than the gap between two anchors, which turns every border into confetti.
-const REGION_WOBBLE = 34 * Math.max(REGION_FIT, .35);
+// How far a border wanders off the straight line, in units, scaled to the fitted layout.
+// It warps the *point* before anything is measured rather than jittering each distance:
+// displacing the sample bends every boundary coherently, for two noise lookups, where
+// jittering distances only adds confetti along a line that is still straight.
+const REGION_WARP = 90 * Math.max(REGION_FIT, .35);
 const _bio = { name: 'pasture', k: 0, edge: 0, wet: 0, s: {} };
 function biomeAt(x, z, h, sl, out) {
   out = out || _bio;
@@ -424,17 +474,21 @@ function biomeAt(x, z, h, sl, out) {
   if (sl === undefined) sl = slope(x, z);
   out.wet = moisture(x, z, h);
   // which anchor owns this ground, and by how much
-  const wob = (fbm(x * .0085 + 51.7, z * .0085 + 13.1, 3) - .5) * REGION_WOBBLE;
+  const wx = x + (fbm(x * .0062 + 51.7, z * .0062 + 13.1, 3) - .5) * REGION_WARP;
+  const wz = z + (fbm(x * .0062 + 91.3, z * .0062 + 67.9, 3) - .5) * REGION_WARP;
   let bn = 'pasture', d0 = 1e9, d1 = 1e9;
   for (let i = 0; i < REGIONS.length; i++) {
     const r = REGIONS[i];
-    const d = (Math.hypot(x - r.x, z - r.z) + wob) / r.pull;
+    const d = Math.hypot(wx - r.x, wz - r.z) / r.pull;
     if (d < d0) { d1 = d0; d0 = d; bn = r.name; } else if (d < d1) d1 = d;
   }
   // A beach is a beach and a summit is a summit wherever they fall: those two are still
   // decided by the ground, and they overrule whichever region they are standing in.
   let k = clamp(1 - d0 / (W * 1.15), .25, 1), edge = clamp((d1 - d0) / 46, 0, 1);
-  const cst = smooth(SEA + 4.4, SEA + .3, h), alp = smooth(15, 24, h);
+  // The summit band has to follow RELIEF. Fifteen units was a summit on the old island, where
+  // two percent of the land reached twenty; on this one fifteen percent does, and left alone
+  // that made almost a third of the world "highland" whatever region it stood in.
+  const cst = smooth(SEA + 4.4, SEA + .3, h), alp = smooth(24, 34, h);
   if (alp > .5) { bn = 'highland'; k = alp; edge = clamp((alp - .5) * 2.4, 0, 1); }
   if (cst > .5) { bn = 'coast'; k = cst; edge = clamp((cst - .5) * 2.4, 0, 1); }
   out.name = bn; out.k = k; out.edge = edge;
@@ -1137,7 +1191,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
       if (uHigh > 0.001) {
         float limb = exp(-abs(h) * 8.0);
         vec3 space = mix(vec3(0.011, 0.019, 0.048), c * 1.18, limb * 0.88);
-        c = mix(c, space, uHigh * 0.94);
+        c = mix(c, space, uHigh * 0.8);
       }
       gl_FragColor = vec4(c, 1.0);
     }`
@@ -1273,7 +1327,10 @@ function polarGeo(spokes, rings, rOf) {
 // time it reaches the far pole. The whole globe for fewer vertices than the old flat square.
 const ringR = t => PLANET.rMax * (.62 * t + .38 * Math.pow(t, 2.6));
 const SEG = Q.seg;
-const TSPOKE = MOBILE ? 360 : 448, TRING = MOBILE ? 150 : 208;
+// Rings and spokes up with the world, though not all the way: at 240 the grid was about two
+// units a vertex under the island and this leaves it at about two and three quarters, which
+// is the trade for not doubling the terrain's triangle count again.
+const TSPOKE = MOBILE ? 440 : 560, TRING = MOBILE ? 200 : 290;
 const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
 {
   const pa = terrainGeo.attributes.position, colors = new Float32Array(pa.count * 3), c = new THREE.Color(), c2 = new THREE.Color();
@@ -1334,7 +1391,7 @@ terrain.receiveShadow = true; terrain.userData.flat = true; scene.add(terrain); 
 // The sea is the whole globe: the same polar grid, coarser, with the chart point each vertex
 // came from kept as an attribute, because every wave in the shader is still reckoned in chart
 // space and only wrapped at the end.
-const WSPOKE = MOBILE ? 200 : 288, WRING = MOBILE ? 110 : 152;
+const WSPOKE = MOBILE ? 250 : 360, WRING = MOBILE ? 140 : 190;
 const waterGeo = polarGeo(WSPOKE, WRING, ringR);
 { const pa = waterGeo.attributes.position, na = waterGeo.attributes.normal, N = pa.count;
   const d = new Float32Array(N), ch = new Float32Array(N * 2), v = new THREE.Vector3();
@@ -1617,7 +1674,10 @@ function clearGrass(x, z, r) {
 }
 
 // ---------- world state ----------
-const world = { t: DAY * .28, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '' };
+// Mid-morning, sun well up. It started at .28 -- eleven degrees above the horizon -- which
+// meant the title screen and the first minutes of play were both spent in long raking shadow
+// with most of the frame in the dark half of the value range. .35 puts it at thirty-seven.
+const world = { t: DAY * .35, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '' };
 const logEl = document.getElementById('log');
 function logMsg(s) { const d = document.createElement('div'); d.textContent = s; logEl.appendChild(d); while (logEl.children.length > 5) logEl.removeChild(logEl.firstChild); setTimeout(() => d.remove(), 11500); }
 
@@ -1756,10 +1816,18 @@ WX.W0 = waterUni.uW.value.map(v => v.z);   // resting wave steepness, so storms 
 function count(list, T) { let n = 0; for (const e of list) if (e.alive && e instanceof T) n++; return n; }
 function nearest(list, pos, pred, maxD = 1e9) { let best = null, bd = maxD; for (const e of list) { if (!e.alive || !pred(e)) continue; const d = Math.hypot(e.pos.x - pos.x, e.pos.z - pos.z); if (d < bd) { bd = d; best = e; } } return best; }
 function purge(list) { for (let i = list.length - 1; i >= 0; i--) if (!list[i].alive) { list[i].dispose && list[i].dispose(); list.splice(i, 1); } }
+// Every height window in this file was written against the old relief, and there are dozens
+// of them: "somewhere between one and a half and eight units up" meant a particular band of
+// ground. Raising RELIEF moved that band without moving the numbers, and the first thing it
+// cost was the ship, whose landing site asks for ground under eight units and found none.
+// Scaling the window here fixes every caller at once, which is why the window is stated in
+// old-world units and converted, rather than each of the fifty call sites being rewritten.
 function randomLand(minH = 1.4, maxH = 12, maxSl = .8, tries = 80, clear = 2.2) {
+  minH *= RELIEF; maxH *= RELIEF;
   for (let i = 0; i < tries; i++) { const x = rnd(-W * .95, W * .95), z = rnd(-W * .95, W * .95), h = height(x, z); if (h > minH && h < maxH && slope(x, z) < maxSl && (!clear || obClear(x, z, clear))) return { x, z }; } return null;
 }
 function nearLand(p, r0, r1, minH = 1.4, maxH = 12, maxSl = .8, clear = 2.2) {
+  minH *= RELIEF; maxH *= RELIEF;
   for (let i = 0; i < 24; i++) { const a = rnd(Math.PI * 2), r = rnd(r0, r1), x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r; if (Math.abs(x) > W * .95 || Math.abs(z) > W * .95) continue; const h = height(x, z); if (h > minH && h < maxH && slope(x, z) < maxSl && (!clear || obClear(x, z, clear))) return { x, z }; } return null;
 }
 function randomWater(maxH = SEA - 3) { for (let i = 0; i < 100; i++) { const x = rnd(-W * .9, W * .9), z = rnd(-W * .9, W * .9); if (height(x, z) < maxH) return { x, z }; } return { x: W * .8, z: 0 }; }
@@ -3002,7 +3070,9 @@ class Creature {
       l.knee.rotation.x = Math.max(0, -Math.sin(world.clock * rate + this.phase + l.off - .7)) * amp * 1.1 * this.animK;
     }
   }
-  terrainOK(x, z) { if (Math.hypot(x, z) > PLANET.wander) return false; const h = height(x, z); if (this.flying) return true; if (this.aquatic) return h < SEA - 1.6; return h > SEA + .6 && h < 15.5 && slope(x, z) < 1.25; }
+  // 15.5 was the ceiling when the island's relief was a quarter shallower; left alone it now
+  // fences every creature onto the coastal shelf.
+  terrainOK(x, z) { if (Math.hypot(x, z) > PLANET.wander) return false; const h = height(x, z); if (this.flying) return true; if (this.aquatic) return h < SEA - 1.6; return h > SEA + .6 && h < 20 && slope(x, z) < 1.25; }
   valid(x, z) { return this.terrainOK(x, z) && !this.blocked(x, z); }
   blocked(x, z, pad = 0) {
     if (this.flying) return false;
@@ -5025,7 +5095,7 @@ function placeTitle() {
     for (let i = 0; i < 3000 && !spot; i++) {
       const x = rnd(-W * .34, W * .34), z = rnd(-W * .34, W * .34);
       const h = height(x, z);
-      if (h > 4 && h < 13 && slope(x, z) < .18 && far(x, z, apart) && (!clear || obClear(x, z, clear))) spot = { x, z };
+      if (h > 4 * RELIEF && h < 13 * RELIEF && slope(x, z) < .18 && far(x, z, apart) && (!clear || obClear(x, z, clear))) spot = { x, z };
     }
     if (spot) break;
   }
@@ -5402,28 +5472,28 @@ function populate() {
   let gp = null;
   for (let i = 0; i < 400 && !gp; i++) {
     const x = rnd(-W * .7, W * .7), z = rnd(-W * .7, W * .7), h = height(x, z);
-    if (h > 2.5 && h < 10 && slope(x, z) < .35 && Math.hypot(x - SPIRE.x, z - SPIRE.z) > 55) gp = { x, z };
+    if (h > 2.5 * RELIEF && h < 10 * RELIEF && slope(x, z) < .35 && Math.hypot(x - SPIRE.x, z - SPIRE.z) > 55) gp = { x, z };
   }
   if (!gp) gp = randomLand(2.5, 10, .45, 400, 0);
   if (gp) { world.greatTree = new GreatTree(gp.x, gp.z); world.plants.push(world.greatTree); }
-  for (let i = 0; i < 68; i++) { const p = randomFor(FLORA.tree, 1.6, 12, .8); if (p) world.plants.push(new LanternTree(p.x, p.z, rnd(.35, 1))); }
-  for (let i = 0; i < 80; i++) { const p = randomFor(FLORA.moss, 1.2, 11, .9); if (p) world.plants.push(new MossTuft(p.x, p.z, rnd(.6, 1))); }
-  for (let i = 0; i < 15; i++) { const p = randomFor(FLORA.bloom, 1.6, 10, .7); if (p) world.plants.push(new Bloom(p.x, p.z, rnd(.5, 1))); }
+  for (let i = 0; i < 104; i++) { const p = randomFor(FLORA.tree, 1.6, 12, .8); if (p) world.plants.push(new LanternTree(p.x, p.z, rnd(.35, 1))); }
+  for (let i = 0; i < 124; i++) { const p = randomFor(FLORA.moss, 1.2, 11, .9); if (p) world.plants.push(new MossTuft(p.x, p.z, rnd(.6, 1))); }
+  for (let i = 0; i < 24; i++) { const p = randomFor(FLORA.bloom, 1.6, 10, .7); if (p) world.plants.push(new Bloom(p.x, p.z, rnd(.5, 1))); }
   // mushrooms come up in clumps, in the damp and the shade, three to seven at a time
-  for (let i = 0; i < 13; i++) {
+  for (let i = 0; i < 21; i++) {
     const p = randomFor(FLORA.mushroom, 1, 8, .6); if (!p) continue;
     for (let j = 0, n = 3 + (Math.random() * 5 | 0); j < n; j++) {
       const x = p.x + rnd(-4.5, 4.5), z = p.z + rnd(-4.5, 4.5);
       if (isLand(x, z) && obClear(x, z, .6)) world.plants.push(new Mushroom(x, z, rnd(.5, 1)));
     }
   }
-  for (let i = 0; i < 13; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Grazer(p.x, p.z)); }
-  for (let i = 0; i < 4; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Weaver(p.x, p.z)); }
-  for (let i = 0; i < 6; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Burrower(p.x, p.z)); }
-  for (let i = 0; i < 26; i++) { const p = randomWater(); world.creatures.push(new Skimmer(p.x, p.z)); }
+  for (let i = 0; i < 20; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Grazer(p.x, p.z)); }
+  for (let i = 0; i < 7; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Weaver(p.x, p.z)); }
+  for (let i = 0; i < 9; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Burrower(p.x, p.z)); }
+  for (let i = 0; i < 38; i++) { const p = randomWater(); world.creatures.push(new Skimmer(p.x, p.z)); }
   for (let i = 0; i < 6; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Drifter(p.x, p.z)); }
-  for (let i = 0; i < 3; i++) { const p = randomLand(1.5, 9, .6, 600, 4.5); if (p) world.creatures.push(new Walker(p.x, p.z)); }
-  for (let i = 0; i < 28; i++) { const p = randomLand(1.2, 12, .9); if (p) world.creatures.push(new Hopper(p.x, p.z)); }
+  for (let i = 0; i < 5; i++) { const p = randomLand(1.5, 9, .6, 600, 4.5); if (p) world.creatures.push(new Walker(p.x, p.z)); }
+  for (let i = 0; i < 42; i++) { const p = randomLand(1.2, 12, .9); if (p) world.creatures.push(new Hopper(p.x, p.z)); }
   for (let i = 0; i < 3; i++) { const p = randomWater(SEA - 12); world.creatures.push(new Leviathan(p.x, p.z)); }
   // the camp, on a beach shelf
   const cp = randomLand(1.3, 5, .5, 900, 6) || randomLand(1.2, 7, .7, 900, 4) || randomLand(1, 9, .9, 900, 2.5);
@@ -5434,7 +5504,7 @@ function populate() {
     for (let i = 0; i < 900; i++) {
       const p = randomLand(1.6, 8, .28, 1, 7); if (!p) continue;
       const d = cp ? Math.hypot(p.x - cp.x, p.z - cp.z) : 40;
-      if (d < 26 || d > 95) continue;
+      if (d < 26 || d > 95 * RS) continue;         // the camp is further off on a bigger island
       if (world.greatTree && Math.hypot(p.x - world.greatTree.pos.x, p.z - world.greatTree.pos.z) < 40) continue;   // it has to climb out past the crown
       const sl = slope(p.x, p.z);
       if (sl < best) { best = sl; sp = p; }
@@ -5446,7 +5516,7 @@ function populate() {
   for (let i = 0; i < 900; i++) {
     const a = rnd(Math.PI * 2), r = rnd(22, 46);
     const x = SPIRE.x + Math.cos(a) * r, z = SPIRE.z + Math.sin(a) * r, h = height(x, z), sl = slope(x, z);
-    if (h > 12 && h < 30 && sl > cvS && sl < 2.4) { cvS = sl; cv = { x, z }; }
+    if (h > 12 * RELIEF && h < 30 * RELIEF && sl > cvS && sl < 2.4) { cvS = sl; cv = { x, z }; }
   }
   if (cv) { world.cave = new Cave(cv.x, cv.z); world.structures.push(world.cave); }
   // the floating isle, out over open water
@@ -5754,7 +5824,7 @@ function solveCam(dt) {
   camS.y = Math.max(cam.tgt.y + Math.cos(camS.pol) * camS.r, minY);
 }
 // ZMIN used to be 8, which let a pinch bury the camera inside the wanderer and the scenery.
-const ZMIN = 14, ZMAX = 420;
+const ZMIN = 14, ZMAX = 720;
 const ptr = { down: false, x: 0, y: 0, sx: 0, sy: 0, t: 0, moved: false, pinch: 0, multi: false };
 const pts = new Map();
 const el = renderer.domElement;
@@ -6517,7 +6587,7 @@ function buildMapImage() {
   // block, which reads as a lattice once the relief shading takes its derivative across the
   // flat patches, the gaps are grown into from their neighbours and the height is smoothed
   // before it is shaded. The colour stays crisp.
-  const N = MOBILE ? 288 : 384;
+  const N = MOBILE ? 384 : 512;
   const pa = terrainGeo.attributes.chart, ha = terrainGeo.attributes.hgt, ca = terrainGeo.attributes.color;
   const NN = N * N;
   const H = new Float32Array(NN), R = new Float32Array(NN), G = new Float32Array(NN), B = new Float32Array(NN);
