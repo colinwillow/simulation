@@ -163,7 +163,7 @@ const W = 240, SEA = 0, DAY = 110, GROW_T = 85;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b39';
+const BUILD = 'b40';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 78 : 122, moss: 115, bloom: MOBILE ? 34 : 50, cairn: 7, grazer: 20, weaver: 14, drifter: 9, walker: 4, hopper: 34 };
 
@@ -2036,6 +2036,7 @@ function cloneModel(root) {
 // Attach an instance of a model under `parent`, normalised to cfg.height with its feet at
 // y=0, and wire up whatever of idle/walk/blink the file actually has. Calls back with a
 // handle, or never, if the model cannot be loaded — callers keep their placeholder.
+const RIG_WARNED = new Set();
 function attachRig(parent, cfg, done) {
   loadModel(cfg.url, e => {
     const inst = cloneModel(e.root);
@@ -2045,6 +2046,29 @@ function attachRig(parent, cfg, done) {
     inst.position.y = -e.box.min.y * s;
     inst.rotation.y = cfg.yaw || 0;
     parent.add(inst);
+
+    // A model with nothing to deform, or with only its exporter's default clip, cannot stand
+    // in for a body. Left to itself the code below would hand it over anyway and the caller
+    // would hide its primitives, leaving a rigid sculpt sliding along the ground with its
+    // feet not moving. Refuse it instead: `done` never fires, so the caller keeps the
+    // placeholder it already built, and a species that still walks is a better failure than
+    // one that does not. CINEMA_4D_Main and mixamo.com are the two exporters' names for
+    // "here is the object's transform", which is not a cycle however many channels it has.
+    let skinned = false;
+    inst.traverse(o => { if (o.isSkinnedMesh) skinned = true; });
+    const usable = e.anims.filter(a => !/^(CINEMA_4D|mixamo\.com)/i.test(a.name));
+    if (!skinned || !usable.length) {
+      parent.remove(inst);
+      // once per file, not once per creature: five mudlarks asking the same question of the
+      // same GLB is one broken export, not five
+      if (!RIG_WARNED.has(cfg.url)) {
+        RIG_WARNED.add(cfg.url);
+        const why = !skinned ? 'no armature — nothing can deform it' : 'no clips but the exporter default';
+        console.warn('[rig] ' + cfg.url + ': ' + why + '. Keeping the placeholder body.');
+        logMsg(cfg.url.split('/').pop() + ': ' + why + '.');
+      }
+      return;
+    }
 
     // Locomotion clips are looked up by role, not by exact name, and a file that lacks a role
     // simply does not get it: no run means walk carries on at speed, no jump clips means the
