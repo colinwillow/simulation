@@ -948,7 +948,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b83';
+const BUILD = 'b84';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3789,13 +3789,18 @@ function stepRig(r, dt, speed, grounded, ctx) {
   if (a.rifleRun) a.rifleRun.timeScale = a.run ? a.run.timeScale : 1;
   if (a.rifleShoot) a.rifleShoot.timeScale = 1.35;
   if (a.pickUp) a.pickUp.timeScale = 2;      // the stoop was slow enough to feel like a cutscene
+  if (a.roll) a.roll.timeScale = c.rollRate || 1;
   if (a.swim) a.swim.timeScale = clamp(speed / 6, .6, 1.6);
   if (a.jumpLand) a.jumpLand.timeScale = 1.5;
   if (a.jumpStart) a.jumpStart.timeScale = 2;    // the crouch has to be over by the time he lifts
   // fade every weight toward its target; one-shots restart the moment they are wanted
   for (const k in a) {
     const t = want[k] || 0, prev = r.w[k] || 0;
-    if ((k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll' || k === 'pickUp') && t > .5 && prev <= .5) a[k].reset().play();
+    if ((k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll' || k === 'pickUp') && t > .5 && prev <= .5) {
+      a[k].reset().play();
+      // Past the clip's held lead-in, so the travel and the tumble start on the same frame.
+      if (k === 'roll' && c.rollSkip) a[k].time = c.rollSkip;
+    }
 
     const nw = lerp(prev, t, Math.min(1, dt / .1));
     r.w[k] = nw; a[k].setEffectiveWeight(nw);
@@ -8023,7 +8028,14 @@ const WEAPONS = {
 // leaves the ground at and it is spent by the end of the move, so the distance covered is the
 // clip's own length times about half of it.
 const FLICK = { at: .72, within: .28 };     // what counts: this much travel, released this fast
-const ROLL = { speed: 21, time: .7, cool: .28, turn: 1 };
+// Measured off the clip rather than tuned by eye. `roll` is 1.208 s long and its first
+// 0.12 s is a HELD POSE -- the hips do not translate and the body does not pitch, the same
+// values twice -- so starting the travel at frame 0 skated him a foot and a half across the
+// ground before the animation had begun to happen. Skip that, and run what is left brisk:
+// the tumble proper is 0.12 to 0.85 and the rest of the clip is him getting back on his feet.
+// The move then owns him for (1.208 - .12) / 1.35 = 0.81 s, which is a dodge rather than a
+// manoeuvre. `time` is only the fallback for a rig with no roll clip at all.
+const ROLL = { speed: 21, skip: .12, rate: 1.35, time: .7, cool: .28, turn: 1 };
 function flickRoll(x, y) {
   const p = player;
   if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5 || p.rollT > 0 || p.rollCool > 0) return;
@@ -8032,7 +8044,7 @@ function flickRoll(x, y) {
   const dx = sa * y + ca * x, dz = ca * y - sa * x;      // the same camera-space map the walk uses
   const d = Math.hypot(dx, dz); if (d < 1e-3) return;
   p.rollH = Math.atan2(dx / d, dz / d);
-  p.rollT = p.rollMax = p.rigH.rollT || ROLL.time;
+  p.rollT = p.rollMax = p.rigH.rollT ? (p.rigH.rollT - ROLL.skip) / ROLL.rate : ROLL.time;
   p.rollCool = p.rollT + ROLL.cool;
   p.jump = 0; p.leadT = 0;
   cam.idle = 0;
@@ -9774,7 +9786,7 @@ function updateRig(dt) {
   stepRig(p.rigH, dt, p.speed, !p.fly && p.swim < .5 && p.grounded, {
     top: p.swim > .5 ? MOVE.swimMax : MOVE.max,
     swim: p.swim, air: !p.fly && !p.grounded && p.leadT <= 0 && p.swim < .5,
-    mf, mr, roll: p.rollT > 0,
+    mf, mr, roll: p.rollT > 0, rollSkip: ROLL.skip, rollRate: ROLL.rate,
     // The stoop ramps in and out rather than switching, because the ramp IS the bend.
     lift: p.liftT > 0 ? smooth(0, CARRY.blend, Math.min(p.liftT, CARRY.lift - p.liftT) * 2) : 0,
     holding: p.carryK,
