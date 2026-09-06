@@ -868,7 +868,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b77';
+const BUILD = 'b78';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3428,6 +3428,21 @@ function attachRig(parent, cfg, done) {
     };
     // Retreating: the forward walk, cloned so it can have an action of its own, run backwards.
     if (clips.rifleWalk) { clips.rifleBack = clips.rifleWalk.clone(); clips.rifleBack.name = clips.rifleWalk.name + '__back'; }
+    // Braced. rifle_idle is at ease -- the gun is down and he is standing about -- which is
+    // the wrong body for somebody holding a charge on a trigger. The first frame of the shoot
+    // clip is the same rig already sighted, so trim that clip to its first key and it becomes
+    // the pose he holds while winding one up. Trimmed rather than paused because a paused
+    // action still has a duration the mixer walks, and one keyframe cannot drift.
+    if (clips.rifleShoot) {
+      const aim = clips.rifleShoot.clone(); aim.name = clips.rifleShoot.name + '__aim';
+      for (const t of aim.tracks) {
+        const sz = t.getValueSize();
+        t.times = new t.times.constructor([0]);
+        t.values = t.values.slice(0, sz);
+      }
+      aim.duration = .1;                     // a zero-length clip on repeat divides by its own length
+      clips.rifleAim = aim;
+    }
     // Carrying is an OVERRIDE, not a blend. "From the spine up" is the hold pose; from the
     // spine down is whichever gait he is in. Additive was the first attempt and it is wrong
     // here: it lays the hold on TOP of the run, so the arms get the run's swing plus the
@@ -3475,7 +3490,7 @@ function attachRig(parent, cfg, done) {
       const a = mixer.clipAction(clips[k]);
       acts[k] = a;
       // A pose holds itself: one frame on repeat is a divide by its own zero length.
-      if (k === 'pickUp' || k === 'hold' || k === 'holdUpper') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      if (k === 'pickUp' || k === 'hold' || k === 'holdUpper' || k === 'rifleAim') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
       if (k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
       // The retreat runs its clip backwards, so it has to start at the end of it. From zero a
       // negative time scale spends its first cycle winding round to the far end.
@@ -3577,7 +3592,14 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // Armed swaps the whole locomotion set for the rifle one, at the same weights, so drawing
   // the blaster changes how he stands and walks without touching any of the blending above.
   const arm = a.rifleIdle ? clamp(c.armed || 0, 0, 1) : 0;
-  want.idle = (1 - loco) * (1 - arm); want.rifleIdle = (1 - loco) * arm;
+  // Winding up a shot he is braced, not at ease. Standing still that means the sighted pose
+  // off the first frame of the shoot clip rather than rifle_idle; moving, it means nothing
+  // extra, because the walk, run and strafes already hold the gun up. The swap is a weight
+  // like everything else here, so it eases in and out with the rest of the blend.
+  const aimK = a.rifleAim ? clamp(c.aim || 0, 0, 1) : 0;
+  want.idle = (1 - loco) * (1 - arm);
+  want.rifleIdle = (1 - loco) * arm * (1 - aimK);
+  want.rifleAim = (1 - loco) * arm * aimK;
   want.walk = loco * (1 - runMix) * (1 - arm);
   want.run = loco * runMix * (1 - arm);
   // Armed he does not turn to walk: he faces where he is aiming and travels wherever the
@@ -3612,7 +3634,7 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // The shot is laid over whichever armed pose is running, so the base has to give way or the
   // mixer averages the two and the recoil comes out at half strength.
   const shootK = want.rifleShoot * .8;
-  for (const k of ['idle', 'walk', 'run', 'rifleIdle', 'rifleWalk', 'rifleBack', 'rifleLeft', 'rifleRight', 'rifleRun'])
+  for (const k of ['idle', 'walk', 'run', 'rifleIdle', 'rifleAim', 'rifleWalk', 'rifleBack', 'rifleLeft', 'rifleRight', 'rifleRun'])
     want[k] *= (1 - swim) * (1 - jumpK) * (1 - shootK) * (1 - rollK);
   for (const k of ['swimIdle', 'swim']) want[k] *= swim * (1 - jumpK) * (1 - rollK);
   want.jumpStart *= 1 - rollK; want.jumpAir *= 1 - rollK; want.jumpLand *= 1 - rollK;
@@ -8929,6 +8951,8 @@ function updateRig(dt) {
     // rises and let the run carry the landing instead. A proper roll clip would be better.
     start: p.leadT > 0, landK: p.landT > 0 ? smooth(0, .12, p.landT) * clamp(1 - p.speed / 7, 0, 1) : 0,
     armed: p.armed, shoot: p.shootT > 0,
+    // Holding the stick out with the blaster up is a wind-up, and he stands like it.
+    aim: p.aiming ? 1 : 0,
   });
 }
 
