@@ -1532,6 +1532,36 @@ then pins a world heading and times the boom coming round. The recentring test h
 heading: the stick is read in camera space, so holding it sideways while the boom swings turns
 him as fast as the boom arrives and the two chase each other round a circle for ever.
 
+### The charge, the plasma, and the ship's speed
+
+Holding the aim spins the plasma up at the muzzle before it flies. `WEAPON.charge` fills a
+0..1 level while `aiming` and the cooldown is clear, drains fast when the stick is let go, and
+is floored at `min` so an unaimed jab still throws a (small) bolt. The muzzle orb (`weap.fx`)
+is **not parented to the bone** — a sprite hung off a skeleton joint inherits whatever scale
+the model happened to be authored at — it rides in chart space at `muzzleChart()`, sized in
+world units and turned to face down the shot so its swirl reads as a disc, not an edge. Built
+once, moved and rescaled each armed frame, hidden at rest: a shot a second must allocate
+nothing.
+
+The charge rides onto the `Bolt` as `c` and is stored per bolt, so a charged shot already in
+flight keeps its size when the next one leaves at a different charge. It scales the ball's
+size, its collision radius and its blast (a full charge adds `charge.boost` to the blast over
+the base). The head is an additive stack — small hot pip, strong cyan body, wide violet corona
+— tuned so at full brightness it reads as coloured plasma rather than a white blob; a corkscrew
+on the whole comet, a comet tail fading cyan→violet, and a flicker of `zaps` thrown to new
+places each frame. The **trail** is the new part: a pool of sprites left at world positions
+along the path (in chart space, added to the scene, so the planet projection curves the streak
+with the ground), each fading over a third of a second. `shot.js --bolt` fires a full charge,
+freezes the bolt and pins the camera on it for a clean look, and reports its size, blast and
+how many trail sprites are lit.
+
+**The ship flies faster.** Top speed is `thrust / drag`, so `PILOT.thrust` 9.5→12.6 against a
+slightly lower drag tops it out near 107 rather than 72, and the bigger thrust fills the
+acceleration curve sooner — it was a hair sluggish off the pad. Strafe, climb and yaw came up
+with it so a faster ship is not also one that cannot turn or climb to match. `sortie.js pilot`
+reads the acceleration curve: ~74 at ten seconds now and still climbing, where it used to be
+capped.
+
 ### The armed set, the dodge, and carrying one of them
 
 **Armed, he faces the aim and travels wherever the left stick says.** The armed locomotion is
@@ -1828,6 +1858,8 @@ node tools/shot.js --out shots/x.png   # take a picture of it, in a real browser
 node tools/shot.js --weapon            # draw, aim, lock, fire -- and say what happened at each step
 node tools/shot.js --strafe            # aim one way, walk the other, and name the clips carrying it
 node tools/shot.js --carry             # pick an animal up, walk with it, put it down
+node tools/shot.js --bolt              # charge a full shot, fire, and frame the plasma in flight
+node tools/sortie.js index.html pilot  # fly it by hand and read the acceleration curve
 node tools/shot.js --vault             # stand in the middle of the vault
 node tools/shot.js --drone --hour 22   # frame the drone itself, close, to see what is glowing on it
 node tools/shot.js --bright            # list what is actually hot in the frame

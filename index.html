@@ -855,7 +855,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b72';
+const BUILD = 'b73';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -5102,10 +5102,14 @@ const SHIP = {
 // it answers with motion. Lift-off is a sequence — the jets spool with the hull trembling,
 // then it unsticks and climbs slowly — and landing is a settle, not a stop.
 const PILOT = {
-  thrust: 9.5, reverse: 4.4, drag: .132,        // forward: tops out near 72, and still takes its time getting there
-  strafe: 5.5,                                  // side jets, same drag
-  climb: 6.8, vdrag: .62, g: 9.8,               // vertical: hover is neutral, push to go up or down
-  yawA: 1.0, yawDrag: 1.2,                      // turning builds up, about .8 rad/s flat out, and carries on for a beat when released
+  // Faster, and quicker to get there. Top speed is thrust/drag, so 12.6/.118 tops out near
+  // 107 against the old 72, and the bigger thrust also fills the acceleration curve sooner --
+  // it was a hair sluggish leaving the pad. Everything else that moves the hull comes up with
+  // it, so a faster ship is not also a ship that cannot turn or climb to match.
+  thrust: 12.6, reverse: 5.6, drag: .118,       // forward: tops out near 107
+  strafe: 7.0,                                  // side jets, same drag
+  climb: 8.4, vdrag: .62, g: 9.8,               // vertical: hover is neutral, push to go up or down
+  yawA: 1.18, yawDrag: 1.2,                     // turning builds up, about .95 rad/s flat out, and carries on for a beat when released
   spoolT: 2.5, cool: 2.1,                       // seconds for the jets to come up, and to die down
   bank: .55, nose: .26, noseV: .012,            // lean from the yaw rate, and from the stick rather than from the
                                                 // acceleration, so a bigger engine cannot rear the nose up further
@@ -7642,8 +7646,13 @@ const WEAPON = {
   // climbs at `climb` and settles at `fall`, both in units a second, so a slope steeper than
   // about thirty degrees still stops it -- which is right. A plasma bolt should splash on a
   // cliff; it should not splash on a hummock.
-  bolt: { speed: 74, life: 2.2, rad: 2.2, blast: 14, size: 3.6, grace: 1.8,
-          ride: 2.6, climb: 44, fall: 13, zaps: 4 },
+  // Holding the aim spins the plasma up at the muzzle before it flies. `chargeT` is how long
+  // a full charge takes; a shot loosed early is smaller and weaker, one held to full is a
+  // fat swirling ball. `boost` is how much a full charge adds to the bolt's size and blast
+  // over the base -- kept modest so it reads as juice, not as a damage minigame.
+  charge: { chargeT: .9, min: .35, boost: .8, hue0: '#7fe6ff', hue1: '#c69cff' },
+  bolt: { speed: 76, life: 2.2, rad: 2.2, blast: 14, size: 3.4, grace: 1.8,
+          ride: 2.6, climb: 44, fall: 13, zaps: 7, trail: 12 },
   // The assist. Whatever is in the cone gets a reticle and a gentle pull — on the shot's
   // heading, so a near miss becomes a hit, and through that on the camera, so the thing you
   // are locked onto drifts toward the middle of the frame. Neither is a snap: aim at empty
@@ -7676,8 +7685,56 @@ function flickRoll(x, y) {
   cam.idle = 0;
 }
 
-const weap = { model: null, bone: null, tip: null, ready: false, lastMuzzle: new THREE.Vector3() };
-Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0,
+const weap = { model: null, bone: null, tip: null, ready: false, lastMuzzle: new THREE.Vector3(), fx: null };
+// The ball of plasma gathering at the muzzle while he holds the aim. Not parented to the
+// bone: the bone is in the skeleton's own scaled space and a sprite hung off it inherits a
+// scale that depends on how big the model happened to be. This rides in chart space at the
+// muzzle instead, sized in world units like the bolt it becomes, and oriented down the shot
+// so its swirl faces you. Built once and reused -- a shot a second must allocate nothing.
+function buildChargeFx() {
+  const g = new THREE.Group(); g.visible = false;
+  const core = glow(WEAPON.charge.hue0, 1, .95);            // the white-hot centre
+  const halo = glow(WEAPON.charge.hue1, 1, .6);             // a cooler violet shell
+  g.add(halo, core);
+  const swirl = [];                                        // motes drawn inward as it winds up
+  for (let i = 0; i < 5; i++) { const sp = glow('#eaffff', 1, .9); g.add(sp); swirl.push(sp); }
+  const arc = [];                                          // little licks of lightning off it
+  for (let i = 0; i < 3; i++) { const sp = glow('#dff2ff', 1, .8); g.add(sp); arc.push(sp); }
+  scene.add(g);
+  weap.fx = { g, core, halo, swirl, arc };
+}
+const _fxP = new THREE.Vector3(), _fxQ = new THREE.Quaternion(), _fxQ2 = new THREE.Quaternion();
+// Wind the ball to `c` (0..1) at the muzzle. Called every armed frame; hides itself at rest.
+function stepChargeFx(c, dt) {
+  const fx = weap.fx; if (!fx) return;
+  if (c < .02) { if (fx.g.visible) fx.g.visible = false; return; }
+  fx.g.visible = true;
+  muzzleChart(_fxP); fx.g.position.copy(_fxP);
+  // face the shot, so the swirl is a disc seen head-on rather than edge-on
+  planetQ(player.pos.x, player.pos.z, _fxQ);
+  fx.g.quaternion.copy(_fxQ).multiply(_fxQ2.setFromAxisAngle(_plY, player.aimH));
+  const t = world.clock, siz = lerp(.5, 1.9, c), pulse = 1 + Math.sin(t * 22) * .12 * c;
+  fx.core.scale.setScalar(siz * .7 * pulse);
+  fx.core.material.opacity = .95 * c;
+  fx.halo.scale.setScalar(siz * 1.5 * (1 + Math.sin(t * 9) * .1));
+  fx.halo.material.opacity = .55 * c;
+  fx.halo.material.color.set(WEAPON.charge.hue1);
+  // the swirl: motes on a shrinking spiral, pulled in as the charge fills
+  for (let i = 0; i < fx.swirl.length; i++) {
+    const sp = fx.swirl[i], a = t * (5 + i) + i * 2.51;
+    const r = siz * (1.5 - c) * (.5 + .5 * ((i / fx.swirl.length + t * .3) % 1));
+    sp.position.set(Math.cos(a) * r, Math.sin(a) * r, Math.sin(a * .7) * r * .4);
+    sp.scale.setScalar(siz * .32);
+    sp.material.opacity = c * (.5 + .5 * Math.sin(a * 1.3));
+  }
+  for (let i = 0; i < fx.arc.length; i++) {                // flickering licks
+    const sp = fx.arc[i];
+    sp.position.set(rnd(-1, 1), rnd(-1, 1), rnd(-.5, .5)).multiplyScalar(siz * 1.1);
+    sp.scale.setScalar(siz * rnd(.15, .4));
+    sp.material.opacity = Math.random() < .5 ? c * rnd(.4, 1) : 0;
+  }
+}
+Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0, charge: 0,
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null });
 
@@ -7719,6 +7776,7 @@ function attachWeapon(r) {
     weap.bone.add(inst);
     weap.model = inst; inst.visible = false;
     weap.ready = true;
+    if (!weap.fx) buildChargeFx();
     if (!INTRO.on) armB.hidden = false;
     console.info('[weapon] muzzle marker ' + tipD.toFixed(1) + ' joint units out; barrel reaches '
       + reach.toFixed(3) + ' in the file, so the blaster is scaled ' + k.toFixed(1) + '\u00d7.');
@@ -7862,9 +7920,12 @@ function pickTarget(h) {
   return best;
 }
 
-function fireBolt() {
+function fireBolt(charge) {
   const p = player;
   if (p.cool > 0) return;
+  // A shot loosed the instant he touches the stick is not nothing -- it is a small one. The
+  // charge is floored so an unaimed jab still throws a bolt.
+  const c = Math.max(WEAPON.charge.min, charge || 0);
   p.cool = WEAPON.cool; p.shootT = WEAPON.hold;
   muzzleChart(_wmz);
   // Three things go wrong if the bolt simply starts at the bone, and all three read as "the
@@ -7886,9 +7947,11 @@ function fireBolt() {
   }
   weap.lastMuzzle.copy(_wmz);
   // No elevation to work out any more: the bolt rides the ground, which puts it at the
-  // height of an animal's chest wherever the animal happens to be standing.
-  world.effects.push(new Bolt(_wmz.x, _wmz.y, _wmz.z, Math.sin(p.aimH), 0, Math.cos(p.aimH)));
-  world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#cdf4ff', 4.5, .28));
+  // height of an animal's chest wherever the animal happens to be standing. The bigger the
+  // charge, the bigger and harder the bolt, and the bigger the muzzle flash.
+  world.effects.push(new Bolt(_wmz.x, _wmz.y, _wmz.z, Math.sin(p.aimH), 0, Math.cos(p.aimH), c));
+  world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#dff4ff', 1.8 + c * 1.6, .14 + c * .06));
+  world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#6fc8ff', 2.6 + c * 2.4, .2 + c * .1));
 }
 
 // Returns true while the right stick belongs to the weapon, so the caller knows not to orbit.
@@ -7907,7 +7970,14 @@ function stepWeapon(dt, rx, ry) {
   if (!canHold && p.armed < .02) p.armed = 0;
   if (weap.model) weap.model.visible = p.armed > .05;
   armB.classList.toggle('on', !!p.armWant);
-  if (!(canHold && p.armed > .5)) { p.aiming = 0; p.lock = null; return false; }
+  if (!(canHold && p.armed > .5)) { p.aiming = 0; p.lock = null; p.charge = 0; stepChargeFx(0, dt); return false; }
+  // The charge fills while he is holding the aim and drains when he is not, so a tap fires a
+  // small one and a hold fires a big one. It cannot start filling until the cooldown is up,
+  // or a mash would show a full ball a frame after the last shot.
+  const CH = WEAPON.charge;
+  const filling = p.aiming && p.cool <= 0;
+  p.charge = clamp(p.charge + (filling ? dt / CH.chargeT : -dt / .18), 0, 1);
+  stepChargeFx(p.aiming ? p.charge : 0, dt);
 
   if (Math.hypot(rx, ry) > WEAPON.aimAt) {
     // Latch the frame the stick is measured in when the aim starts. Reading it off the live
@@ -7930,7 +8000,7 @@ function stepWeapon(dt, rx, ry) {
     let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
     cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
   } else if (p.aiming) {
-    p.aiming = 0; fireBolt(); p.lock = null;
+    p.aiming = 0; fireBolt(p.charge); p.charge = 0; p.lock = null;
   }
   return true;
 }
@@ -7938,27 +8008,52 @@ function stepWeapon(dt, rx, ry) {
 // The plasma. It travels in chart space, so it can be tested against the height field, the
 // obstacle grid and the animals with the same arithmetic everything else in the game uses.
 class Bolt {
-  constructor(x, y, z, dx, dy, dz) {
+  constructor(x, y, z, dx, dy, dz, charge) {
     const B = WEAPON.bolt;
     this.alive = true; this.t = 0;
     this.x = x; this.y = y; this.z = z;
     this.vx = dx * B.speed; this.vy = dy * B.speed; this.vz = dz * B.speed;
+    // A full charge makes the ball fatter and its blast wider. It is stored per bolt rather
+    // than read off WEAPON.bolt, so a charged shot in flight keeps its size after the next
+    // one is fired at a different charge.
+    const c = clamp(charge === undefined ? 1 : charge, WEAPON.charge.min, 1);
+    this.c = c;
+    this.size = B.size * (.7 + c * .55);
+    this.rad = B.rad * (.8 + c * .5);
+    this.blast = B.blast * (.75 + c * WEAPON.charge.boost);
     this.g = new THREE.Group();
     // No light on the bolt. Adding and removing a PointLight relights every material in the
-    // scene, and a shot a second would recompile the world mid-stride. The burst carries the
-    // flash instead.
-    this.parts = [];
-    for (let i = 0; i < 5; i++) {
-      const k = i / 4;
-      const sp = glow(i ? '#5fd6ff' : '#eaffff', B.size * lerp(1, .28, k), lerp(1, .16, k));
-      sp.position.z = -k * B.size * 2.2;
-      this.g.add(sp); this.parts.push(sp);
+    // scene, and a shot a second would recompile the world mid-stride. The burst and the
+    // additive stack carry the flash instead.
+    // The head is a stack, coolest and biggest at the back so it reads as a ball wrapped in
+    // haze rather than a flat disc: violet shell, cyan body, white-hot core.
+    const S = this.size;
+    this.core = glow('#ecffff', S * .62, .85);            // a small hot pip, not a floodlight
+    this.body = glow('#3fbfff', S * 1.6, .85);            // the plasma proper: strong cyan
+    this.shell = glow(WEAPON.charge.hue1, S * 2.6, .34);  // a wide violet corona
+    this.g.add(this.shell, this.body, this.core);
+    // A comet tail of shrinking sprites, trailing straight back along -z (the group is turned
+    // to face the way it flies), fading from cyan to violet.
+    this.tail = [];
+    for (let i = 0; i < 6; i++) {
+      const k = (i + 1) / 6;
+      const sp = glow(i < 3 ? '#8fe6ff' : '#b79cff', S * lerp(1.2, .25, k), lerp(.6, .08, k));
+      sp.position.z = -k * S * 3.2;
+      this.g.add(sp); this.tail.push(sp);
     }
-    // The crackle. Four small hot sprites thrown to new places inside the ball every frame,
-    // half of them dark at any moment -- which at thirty frames a second is what electricity
-    // looks like. Cheaper and better than an arc mesh, and it costs no allocation after this.
+    // The crackle: hot sprites thrown to new places inside and just around the ball every
+    // frame, half of them dark at any moment -- which at thirty frames a second is what
+    // electricity looks like, for the cost of moving a few sprites.
     this.zaps = [];
-    for (let i = 0; i < B.zaps; i++) { const z = glow('#eaf6ff', B.size * .3, .9); this.g.add(z); this.zaps.push(z); }
+    for (let i = 0; i < B.zaps; i++) { const zp = glow('#eaffff', S * .3, .9); this.g.add(zp); this.zaps.push(zp); }
+    // The trail proper: sprites left at world positions along the path, so the shot draws a
+    // streak of cooling plasma behind it rather than only carrying a comet with it. In chart
+    // space, added to the scene, so the planet projection curves the streak with the ground.
+    this.trail = []; this.tcur = 0;
+    for (let i = 0; i < B.trail; i++) {
+      const sp = glow('#7fd6ff', S * .9, 0); sp.userData.a = 0;
+      scene.add(sp); this.trail.push(sp);
+    }
     this.g.position.set(x, y, z);
     this.g.quaternion.setFromUnitVectors(_wZ, _wv.set(dx, dy, dz).normalize());
     scene.add(this.g);
@@ -7966,7 +8061,7 @@ class Bolt {
   update(dt) {
     const B = WEAPON.bolt;
     if ((this.t += dt) > B.life) { this.pop('#8fe0ff', 6, .5); return; }
-    // Two half-steps: at seventy units a second a whole frame is a two-unit gap, which is
+    // Two half-steps: at seventy-odd units a second a whole frame is a two-unit gap, which is
     // wide enough for a bolt to pass clean through a mudlark.
     for (let i = 0; i < 2; i++) {
       const h = dt * .5;
@@ -7976,16 +8071,29 @@ class Bolt {
       if (this.strike()) return;
     }
     this.g.position.set(this.x, this.y, this.z);
-    this.g.rotation.z += dt * 9;
-    this.parts[0].scale.setScalar(B.size * (.86 + Math.sin(this.t * 46) * .14));
-    for (const z of this.zaps) {
-      z.position.set(rnd(-1, 1), rnd(-1, 1), rnd(-1.7, .5)).multiplyScalar(B.size * .44);
-      z.scale.setScalar(B.size * rnd(.12, .34));
-      z.material.opacity = Math.random() < .55 ? rnd(.4, 1) : 0;
+    this.g.rotation.z += dt * 11;                        // the whole comet corkscrews as it flies
+    const t = this.t, S = this.size;
+    this.core.scale.setScalar(S * .62 * (.85 + Math.sin(t * 52) * .15));
+    this.body.scale.setScalar(S * 1.6 * (.92 + Math.sin(t * 31 + 1) * .12));
+    this.shell.material.opacity = .34 * (.75 + Math.sin(t * 17) * .25);
+    for (const zp of this.zaps) {
+      zp.position.set(rnd(-1.2, 1.2), rnd(-1.2, 1.2), rnd(-2.2, .6)).multiplyScalar(S * .5);
+      zp.scale.setScalar(S * rnd(.12, .4));
+      zp.material.opacity = Math.random() < .5 ? rnd(.5, 1) : 0;
+    }
+    // stamp the streak: drop a fading sprite at the current place, and age the rest
+    const sp = this.trail[this.tcur]; this.tcur = (this.tcur + 1) % this.trail.length;
+    sp.position.set(this.x, this.y, this.z); sp.userData.a = 1;
+    for (const s of this.trail) {
+      if ((s.userData.a -= dt / .34) <= 0) { s.userData.a = 0; s.material.opacity = 0; continue; }
+      const a = s.userData.a;
+      s.material.opacity = a * .55;
+      s.scale.setScalar(S * (.4 + a * .8));
+      s.material.color.set(a > .5 ? '#8fe6ff' : '#b79cff');
     }
   }
   strike() {
-    const B = WEAPON.bolt;
+    const B = WEAPON.bolt, R = this.rad;
     if (Math.abs(this.x) > W || Math.abs(this.z) > W) { this.alive = false; return true; }
     // The first couple of units are through his own shoulder and whatever he is standing
     // beside. Nothing stops the bolt until it is clear of him.
@@ -7993,13 +8101,13 @@ class Bolt {
     for (const o of world.creatures) {
       if (!o.alive) continue;
       const dx = o.pos.x - this.x, dy = o.pos.y + 1 - this.y, dz = o.pos.z - this.z;
-      const r = B.rad + (o.rad || 1);
+      const r = R + (o.rad || 1);
       if (dx * dx + dy * dy + dz * dz < r * r) { this.pop('#ff9adf', 10, .95); return true; }
     }
     let solid = false;
-    obNear(this.x, this.z, B.rad, o => {
+    obNear(this.x, this.z, R, o => {
       if (solid || this.y > o.top) return;
-      const r = obRad(o) + B.rad * .5, dx = this.x - o.x, dz = this.z - o.z;
+      const r = obRad(o) + R * .5, dx = this.x - o.x, dz = this.z - o.z;
       if (dx * dx + dz * dz < r * r) solid = true;
     });
     if (solid) { this.pop('#d8ffb0', 9, .85); return true; }
@@ -8016,21 +8124,33 @@ class Bolt {
     return false;
   }
   pop(hex, size, life) {
-    const B = WEAPON.bolt;
+    const R = this.rad, BL = this.blast;
     this.alive = false;
-    world.effects.push(new Burst(this.x, this.y, this.z, hex, size, life));
-    world.effects.push(new Burst(this.x, this.y, this.z, '#ffffff', size * .42, life * .45));
+    // A real little detonation: a hot white flash, the coloured splash of whatever it hit, a
+    // violet shockwave ring, and a scatter of sparks. Bigger for a bigger charge.
+    const k = .8 + this.c * .8;
+    world.effects.push(new Burst(this.x, this.y, this.z, '#ffffff', size * .42 * k, life * .5));
+    world.effects.push(new Burst(this.x, this.y, this.z, hex, size * .85 * k, life));
+    world.effects.push(new Burst(this.x, this.y, this.z, WEAPON.charge.hue1, size * 1.2 * k, life * 1.3));
+    for (let i = 0; i < 4 + (this.c * 4 | 0); i++) {
+      const a = rnd(Math.PI * 2), r = rnd(1, R);
+      world.effects.push(new Burst(this.x + Math.cos(a) * r, this.y + rnd(-.4, 1.2), this.z + Math.sin(a) * r, i % 2 ? '#8fe6ff' : '#eaffff', rnd(1.5, 3), rnd(.4, .8)));
+    }
     for (const o of world.creatures) {
       if (!o.alive) continue;
       const d = Math.hypot(o.pos.x - this.x, o.pos.z - this.z);
-      if (d > B.blast) continue;
+      if (d > BL) continue;
       // Right where it went off, it throws. Out at the edge of the blast it only startles.
-      if (d < B.rad + (o.rad || 1) + 1.6 && o.knock) o.knock(this, 1);
-      else if (d < B.blast * .45 && o.knock) o.knock(this, clamp(1 - d / (B.blast * .45), .25, .6));
+      if (d < R + (o.rad || 1) + 1.6 && o.knock) o.knock(this, 1);
+      else if (d < BL * .45 && o.knock) o.knock(this, clamp(1 - d / (BL * .45), .25, .6));
       else if (o.spook) o.spook(this, 10);
     }
   }
-  dispose() { scene.remove(this.g); for (const sp of this.parts) sp.material.dispose(); }
+  dispose() {
+    scene.remove(this.g);
+    this.g.traverse(o => { if (o.material) o.material.dispose(); });
+    for (const s of this.trail) { scene.remove(s); s.material.dispose(); }
+  }
 }
 
 // The lock indicator, in the page rather than the scene: it wants to be crisp and the same

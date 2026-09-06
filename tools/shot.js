@@ -18,6 +18,7 @@
 //   --palette    report what the frame is made of: hue spread, saturation, value range
 //   --weapon     draw the blaster, aim at the nearest animal, and report the lock and the shot
 //   --strafe     draw, aim one way, walk the other, and report which armed clips are running
+//   --bolt       draw, charge a full shot, fire, and frame the plasma in flight
 //   --carry      stand by an animal, pick it up, walk with it, and put it down again
 //   --drone      frame the drone itself, close, to see what is glowing on it
 //   --base       stand under the lander
@@ -318,6 +319,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     const aim = await page.evaluate(() => {
       const g = window.__g, p = g.player;
       return { aiming: p.aiming, lock: p.lock ? p.lock.constructor.name : 'none',
+        charge: +p.charge.toFixed(2), chargeOrbShowing: !!(g.weap.fx && g.weap.fx.g.visible),
         offBy: p.lock ? Math.abs(Math.atan2(Math.sin(Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z) - p.aimH),
                                             Math.cos(Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z) - p.aimH))) * 180 / Math.PI : null,
         retic: !document.getElementById('retic').hidden,
@@ -339,7 +341,18 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
           up: +(m.y - p.pos.y).toFixed(2), ofAHeightOf: g.RIG.height },
         bodyVsAim: Math.round(Math.atan2(Math.sin(p.faceH - p.aimH), Math.cos(p.faceH - p.aimH)) * 57.3) };
     });
-    await step(2.5);
+    // catch the bolt mid-flight for the picture, and read its charged size off it
+    await step(.5);
+    const flight = await page.evaluate(() => {
+      const g = window.__g, b = g.world.effects.find(e => e instanceof g.Bolt);
+      if (!b) return { none: true };
+      g.cam.tgt.set(b.x, b.y + 1, b.z); g.cam.r = 14;      // frame the shot in flight
+      return { size: +b.size.toFixed(2), rad: +b.rad.toFixed(2), blast: +b.blast.toFixed(1),
+        charge: +b.c.toFixed(2), trailLit: b.trail.filter(s => s.material.opacity > .02).length };
+    });
+    if (!flight.none) console.log('  bolt in flight: charge ' + flight.charge + ', size ' + flight.size
+      + ', blast ' + flight.blast + ', ' + flight.trailLit + ' trail sprites lit');
+    await step(2.0);
     const after = await page.evaluate(() => {
       const g = window.__g;
       return { bolts: g.world.effects.filter(e => e instanceof g.Bolt).length,
@@ -351,6 +364,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     console.log('  aiming ' + aim.aiming + ' | locked ' + aim.lock
       + (aim.offBy === null ? '' : ', shot is ' + aim.offBy.toFixed(1) + ' deg off the bearing')
       + ' | reticle ' + (aim.retic ? 'up' : 'down') + ' | camera ' + aim.camBehind.toFixed(0) + ' deg off the aim');
+    console.log('  charge held to ' + aim.charge + ', orb ' + (aim.chargeOrbShowing ? 'showing' : 'HIDDEN'));
     console.log('  muzzle sits ' + shot.muzzle.ahead + ' ahead, ' + shot.muzzle.toTheRight
       + ' to the right, ' + shot.muzzle.up + ' up (he is ' + shot.muzzle.ofAHeightOf + ' tall)'
       + ' | body is ' + shot.bodyVsAim + ' deg off the aim');
@@ -521,6 +535,52 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       console.log('  after setting down: carrying ' + after.stillCarrying + ', any animal left stuck '
         + after.anyStuckCarried + ' | prompt "' + after.label + '"');
     }
+  }
+
+  if (has('bolt')) {
+    const step = async (secs) => { const t = await page.evaluate(() => window.__g.world.clock);
+      await page.waitForFunction(`window.__g.world.clock > ${t + secs}`, null, { timeout: 600000 }); };
+    for (let i = 0; i < 20; i++) {
+      const on = await page.evaluate(() => { const g = window.__g;
+        if (!g.player.armWant) g.toggleArm(); return !!g.player.armWant; });
+      if (on) break;
+      await step(1);
+    }
+    await page.evaluate(() => { const g = window.__g; g.stick.R.x = 0; g.stick.R.y = -1; });   // aim ahead, hold
+    await step(1.2);                                                                            // fill the charge
+    const ch = await page.evaluate(() => ({ charge: +window.__g.player.charge.toFixed(2) }));
+    await page.evaluate(() => { const g = window.__g; g.stick.R.x = g.stick.R.y = 0; });        // release: fire
+    // Catch it a few units out, before it can reach anything and pop. Poll in short hops and
+    // grab the first frame a bolt exists, then let it fly just far enough to draw a streak.
+    let b = { none: true };
+    for (let i = 0; i < 8; i++) {
+      await step(.08);
+      b = await page.evaluate(() => {
+        const g = window.__g, bo = g.world.effects.find(e => e instanceof g.Bolt);
+        if (!bo) return { none: true };
+        return { charge: +bo.c.toFixed(2), size: +bo.size.toFixed(2), rad: +bo.rad.toFixed(2),
+          blast: +bo.blast.toFixed(1), trailLit: bo.trail.filter(s => s.material.opacity > .02).length,
+          travelled: +Math.hypot(bo.x - g.player.pos.x, bo.z - g.player.pos.z).toFixed(0) };
+      });
+      if (!b.none && b.travelled > 12) break;
+    }
+    if (!b.none) await page.evaluate(() => {
+      const g = window.__g, bo = g.world.effects.find(e => e instanceof g.Bolt);
+      if (!bo) return;
+      // Freeze the bolt so it hovers for the photo -- it still animates (core pulse, zaps,
+      // corkscrew, trail decay), it just stops travelling -- and pin the follow camera onto
+      // it every frame, since updatePlayer resets cam.tgt to the wanderer otherwise. The
+      // trail keeps stamping the same spot, so blank the pool to a single fresh streak.
+      bo.vx = bo.vz = bo.vy = 0; bo.t = 0.3;
+      const az = Math.atan2(bo.x - g.player.pos.x, bo.z - g.player.pos.z) + Math.PI;
+      setInterval(() => { g.cam.tgt.set(bo.x, bo.y, bo.z); g.cam.az = az; g.cam.r = 10;
+        g.cam.pol0 = g.cam.pol = 1.32; g.cam.idle = 0; }, 6);
+    });
+    await step(.5);
+    if (b.none) console.log('bolt: no bolt in flight — did it fire?');
+    else console.log('bolt: charge ' + ch.charge + ' -> size ' + b.size + ', rad ' + b.rad + ', blast '
+      + b.blast + ' | ' + b.trailLit + ' trail sprites lit | ' + b.travelled + ' units downrange');
+    await step(.05);
   }
 
   fs.mkdirSync(path.dirname(path.resolve(OUT)), { recursive: true });
