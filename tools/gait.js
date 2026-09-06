@@ -23,7 +23,7 @@ const html=fs.readFileSync(process.argv[2]||'index.html','utf8');
 const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('const BUILD'));
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__W=W;global.__waveY=waveY;global.__SEA=SEA;global.__p=player;global.__stick=stick;global.__h=height;global.__gY=groundY;global.__MOVE=MOVE;global.__OBP=OB_PLAYER;global.__OB=OB;global.__obRad=obRad;global.__obAdd=obAdd;global.__standOn=standOn;global.__slope=slope;global.__WAY=WAY;global.__obClear=obClear;global.__obNear=obNear;global.__setWay=setWaypoint;global.__cam=cam;global.__camS=camS;global.__deckY=deckY;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__W=W;global.__waveY=waveY;global.__SEA=SEA;global.__p=player;global.__stick=stick;global.__h=height;global.__gY=groundY;global.__MOVE=MOVE;global.__OBP=OB_PLAYER;global.__OB=OB;global.__obRad=obRad;global.__obAdd=obAdd;global.__standOn=standOn;global.__slope=slope;global.__WAY=WAY;global.__obClear=obClear;global.__obNear=obNear;global.__setWay=setWaypoint;global.__cam=cam;global.__camS=camS;global.__deckY=deckY;global.__flick=flickRoll;global.__ROLL=ROLL;global.__FLICK=FLICK;'+src.slice(cut);
 eval(src);
 // The title screen parks the camera out at the planet and flies the ship round it. That is
 // the first thing a player sees and the last thing a harness wants: every tool here measures
@@ -263,6 +263,29 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
     plaqueSits: T.y - I.alt + ' above its deck',
     theFallLandsOn: +global.__gY(I.pos.x, I.pos.z).toFixed(1),
     plaqueLoaded: !!W.title }));
+})();
+
+// ---------- 5b3. the dodge ----------
+// A flick of the left stick throws him. Measured rather than eyeballed because the travel is
+// driven from code, not from the clip's root motion: if the speed curve and the clip's length
+// disagree, he slides. Headless there is no rig, so the roll is forced by hand.
+(() => {
+  const q = flatSpot();
+  P.pos.set(q.x, gY(q.x, q.z), q.z); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y; P.swim = 0;
+  global.__cam.tgt.set(q.x, P.pos.y + 3.4, q.z); global.__cam.az = 0;
+  hold(.6, () => { ST.L.x = ST.L.y = 0; });
+  const R = global.__ROLL;
+  P.rollT = P.rollMax = R.time; P.rollH = 0; P.rollCool = R.time + R.cool;   // straight along +z
+  let t = 0, done = null, top = 0;
+  hold(3, () => { ST.L.x = ST.L.y = 0; t += .033;
+    top = Math.max(top, Math.hypot(P.vx, P.vz));
+    if (done === null && P.rollT <= 0 && t > .1) done = t; });
+  console.log('the dodge                 ', JSON.stringify({
+    flickIs: 'over ' + global.__FLICK.at + ' of travel, released inside ' + global.__FLICK.within + 's',
+    lasted: done === null ? 'never ended' : +done.toFixed(2) + ' s',
+    carriedHim: +Math.hypot(P.pos.x - q.x, P.pos.z - q.z).toFixed(1) + ' units',
+    peakSpeed: +top.toFixed(1) + ' (he runs at ' + M.max + ')',
+    facing: Math.round(P.faceH * 57.3) + ' deg', onHisFeet: P.rollT === 0 }));
 })();
 
 // ---------- 5c. getting hit ----------

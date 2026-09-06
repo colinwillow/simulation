@@ -1532,6 +1532,57 @@ then pins a world heading and times the boom coming round. The recentring test h
 heading: the stick is read in camera space, so holding it sideways while the boom swings turns
 him as fast as the boom arrives and the two chase each other round a circle for ever.
 
+### The armed set, the dodge, and carrying one of them
+
+**Armed, he faces the aim and travels wherever the left stick says.** The armed locomotion is
+a four-way blend keyed on the direction of travel *in his own frame* — nothing thresholded, so
+a diagonal is genuinely half the forward clip and half the strafe, which is what stops it
+snapping. There is no authored back-walk and there does not need to be: a *clone* of the
+forward clip at a negative time scale is one, started at the end of its own length so the
+first cycle does not wind round to get there. (A clone, not the same action — three keys an
+action to its clip, so one clip cannot run forwards and backwards at once.)
+
+Forward is `(sin h, cos h)` and **his right is `forward × up`**, which is `(−cos h, sin h)`.
+Written as `up × forward` — the other handedness — the strafes come out mirrored: walk left,
+play the right clip. `shot.js --strafe` walks him round the compass with the aim pinned and
+reports which clips carry it, which is the only way to check this: it needs a rig, so
+`gait.js` cannot see it at all.
+
+**The dodge** is a flick of the left stick, and it is measured on the *release*. On a touch
+stick, starting to run and starting a dodge look identical for the first eighth of a second —
+both are a hard shove from centre — so anything firing on the outward motion fires every time
+you set off at a sprint. Holding is what makes it a walk; letting go straight away is what
+makes it a flick. Its travel is driven from code, not the clip's root motion, because a
+root-motion clip fitted to one speed reads wrong at every other. 0.76 s, 9.5 units, peaking at
+21 against a run of 17.
+
+Only the *steering* is skipped while it runs — the integration, the push-out, the rim clamp,
+gravity and the ground all still happen. Gated round the outside of that block instead, he
+rolled on the spot: the line that actually moves him is four statements below the steering.
+
+**Carrying** is two poses and a socket. `pick_up_object` is a bent-over pose, not a cycle, and
+the *blend into it* is the animation of bending over — fading a standing body into it over a
+third of a second is the movement, and it needs no keys. `holding_item` is shoulders and arms,
+and it is applied **additively from the spine up**: drop every track below the spine, then
+`makeClipAdditive` against the idle pose so what it contributes is "holding minus standing"
+rather than an absolute pose. Three blends by weighted average, so an absolute upper-body clip
+at half weight over a run gives half a run and half a hold in the arms — a shrug. Additive
+gives the run with the hold laid on top, which is the thing, and it means he walks, runs,
+jumps and rolls with an animal in his arms off clips that already exist.
+
+The socket is the **weapon joint** — the same one the blaster hangs on, and they are never
+both in use; `weapon_direction` gives the up vector. Like everything else that touches a bone,
+it is converted into chart space before it is used (`jointChart`), because a bone's world
+position is a point on the sphere and every creature position in the game is a point on the
+flat chart. `shot.js --carry` reports where the animal ends up relative to him, whether the
+legs keep their gait under the carry pose (`{run: 1, holdUp: 1}` is the pass), and that
+setting down leaves nothing stuck.
+
+One bug the harness found on the way that had nothing to do with any of it: wading into water
+cleared `armWant`, so the gun went away at the first puddle and never came back. `armWant` is
+the decision; being in the water is the circumstance, and only boarding or the free camera
+really do put it away.
+
 ### Getting hit
 
 Nothing in this game kills an animal, and `Creature.knock()` does not start. A hit **throws**:
@@ -1775,6 +1826,8 @@ npm run check:swirl                    # does the lamp's swirl of motes go where
 npm run check:gait                     # the ramp, what a hill costs, what he climbs, the camera, the vault
 node tools/shot.js --out shots/x.png   # take a picture of it, in a real browser on a real GPU
 node tools/shot.js --weapon            # draw, aim, lock, fire -- and say what happened at each step
+node tools/shot.js --strafe            # aim one way, walk the other, and name the clips carrying it
+node tools/shot.js --carry             # pick an animal up, walk with it, put it down
 node tools/shot.js --vault             # stand in the middle of the vault
 node tools/shot.js --drone --hour 22   # frame the drone itself, close, to see what is glowing on it
 node tools/shot.js --bright            # list what is actually hot in the frame

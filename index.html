@@ -855,7 +855,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b69';
+const BUILD = 'b71';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3400,11 +3400,36 @@ function attachRig(parent, cfg, done) {
       jumpStart: pickClip(jump, cfg.jumpStart, 'init|initiate|start|launch|crouch|takeoff', 'air|land|mid|loop'),
       jumpAir: pickClip(jump, cfg.jumpAir, 'air|mid|loop|fall|hang', 'init|initiate|start|land'),
       jumpLand: pickClip(jump, cfg.jumpLand, 'land|landing|down|end|touch', 'init|initiate|start|air'),
-      rifleIdle: pickClip(rifle, cfg.rifleIdle, 'idle', 'walk|run|shoot|fire'),
-      rifleWalk: pickClip(rifle, cfg.rifleWalk, 'walk', 'idle|run|shoot|fire'),
-      rifleRun: pickClip(rifle, cfg.rifleRun, 'run|sprint', 'idle|walk|shoot|fire'),
-      rifleShoot: pickClip(rifle, cfg.rifleShoot, 'shoot|fire', 'idle|walk|run'),
+      rifleIdle: pickClip(rifle, cfg.rifleIdle, 'idle', 'walk|run|shoot|fire|strafe'),
+      rifleWalk: pickClip(rifle, cfg.rifleWalk, 'walk', 'idle|run|shoot|fire|strafe'),
+      rifleRun: pickClip(rifle, cfg.rifleRun, 'run|sprint', 'idle|walk|shoot|fire|strafe'),
+      rifleLeft: pickClip(rifle, cfg.rifleLeft, 'left', 'right'),
+      rifleRight: pickClip(rifle, cfg.rifleRight, 'right', 'left'),
+      rifleShoot: pickClip(rifle, cfg.rifleShoot, 'shoot|fire', 'idle|walk|run|strafe'),
+      roll: pickClip(land, cfg.roll, 'roll|dodge|dive', 'idle|walk|run'),
+      // Poses, not cycles: pickClip throws away anything under a quarter of a second because
+      // that is what a junk exporter track looks like, and a one-frame pose looks the same to
+      // it. These are asked for by name.
+      pickUp: pickPose(e.anims, cfg.pickUp),
+      hold: pickPose(e.anims, cfg.hold),
     };
+    // Retreating: the forward walk, cloned so it can have an action of its own, run backwards.
+    if (clips.rifleWalk) { clips.rifleBack = clips.rifleWalk.clone(); clips.rifleBack.name = clips.rifleWalk.name + '__back'; }
+    // Carrying, from the spine up. Two steps and both matter. Drop every track below the
+    // spine, so the clip has nothing to say about the legs; then make what is left ADDITIVE
+    // against the idle pose, so what it contributes is "holding minus standing" rather than
+    // an absolute pose. Three blends actions by weighted average, so an absolute upper-body
+    // clip at half weight over a run gives you half a run and half a hold in the arms -- a
+    // shrug. Additive gives you the run with the hold laid on top, which is the thing.
+    if (clips.hold && THREE.AnimationUtils && THREE.AnimationUtils.makeClipAdditive) {
+      const up = clips.hold.clone();
+      up.name = clips.hold.name + '__upper';
+      up.tracks = up.tracks.filter(t => CARRY.upper.test(t.name));
+      if (up.tracks.length) {
+        try { THREE.AnimationUtils.makeClipAdditive(up, 0, clips.idle || clips.hold, 30); clips.holdUp = up; }
+        catch (err) { console.warn('[rig] could not make the carry pose additive: ' + err.message); }
+      } else console.warn('[rig] the carry pose has no tracks above the spine — check CARRY.upper');
+    }
     for (const k of ['walk', 'run', 'rifleWalk', 'rifleRun']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
     // each clip's own floor, relative to the pose the rig was normalised on, in model units
     for (const k in clips) { const cl = clips[k]; if (cl && e.floors[cl.name] === undefined) e.floors[cl.name] = clipSpan(e.root, cl); }
@@ -3419,8 +3444,16 @@ function attachRig(parent, cfg, done) {
     const acts = {};
     for (const k in clips) {
       if (!clips[k]) continue;
-      const a = mixer.clipAction(clips[k]); acts[k] = a;
-      if (k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      const a = k === 'holdUp' && THREE.AdditiveAnimationBlendMode !== undefined
+        ? mixer.clipAction(clips[k], inst, THREE.AdditiveAnimationBlendMode)
+        : mixer.clipAction(clips[k]);
+      acts[k] = a;
+      // A pose holds itself: one frame on repeat is a divide by its own zero length.
+      if (k === 'pickUp' || k === 'hold' || k === 'holdUp') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      if (k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      // The retreat runs its clip backwards, so it has to start at the end of it. From zero a
+      // negative time scale spends its first cycle winding round to the far end.
+      if (k === 'rifleBack') a.time = clips[k].duration;
       a.play(); a.setEffectiveWeight(k === 'idle' ? 1 : 0);
     }
     const walk = clips.walk, run = clips.run;
@@ -3436,12 +3469,24 @@ function attachRig(parent, cfg, done) {
       rateMax: cfg.rateMax,      // a short-strided clip may need to run faster than the default ceiling
       walkSpeed: walk ? e.strides[walk.name] * s : 0,
       runSpeed: run ? e.strides[run.name] * s : 0,
+      rollT: clips.roll ? clips.roll.duration : 0,        // how long the move should own him
       w: {},                                              // smoothed weight per action
       blink: morphs.length ? { t: 1.5 + Math.random() * 3, p: -1, which: 3, morphs } : null,
     });
   });
 }
 
+// A pose. Same lookup as pickClip minus the duration floor, because a one-frame pose is
+// exactly what that floor exists to reject, and given a length so an action can hold it: a
+// zero-length clip on repeat divides by its own duration.
+function pickPose(anims, name) {
+  if (!name) return null;
+  const low = name.toLowerCase();
+  const c = anims.find(a => a.name === name) || anims.find(a => a.name.toLowerCase() === low)
+    || anims.find(a => a.name.toLowerCase().indexOf(low) >= 0);
+  if (c && c.duration < .05) c.duration = .1;
+  return c || null;
+}
 // Find a clip without insisting on the exact name a previous export happened to use.
 // Exporters decorate freely — 'Armature|walk_fwd', 'idle.001', 'alien_walk_cycle_v2' —
 // so match on whole words inside the name, not on the whole string.
@@ -3490,9 +3535,31 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // the blaster changes how he stands and walks without touching any of the blending above.
   const arm = a.rifleIdle ? clamp(c.armed || 0, 0, 1) : 0;
   want.idle = (1 - loco) * (1 - arm); want.rifleIdle = (1 - loco) * arm;
-  want.walk = loco * (1 - runMix) * (1 - arm); want.rifleWalk = loco * (1 - runMix) * arm;
-  want.run = loco * runMix * (1 - arm); want.rifleRun = loco * runMix * arm;
+  want.walk = loco * (1 - runMix) * (1 - arm);
+  want.run = loco * runMix * (1 - arm);
+  // Armed he does not turn to walk: he faces where he is aiming and travels wherever the
+  // stick says, so the armed set is a four-way blend keyed on the direction of travel IN HIS
+  // OWN FRAME. `c.mf` is how much of it is forward (negative is backing away) and `c.mr` how
+  // much is to his right. Nothing is thresholded -- walking diagonally is genuinely half the
+  // forward clip and half the strafe, which is what stops it snapping between them.
+  const mf = c.mf || 0, mr = c.mr || 0;
+  const dirs = { rifleWalk: Math.max(0, mf), rifleBack: Math.max(0, -mf),
+                 rifleRight: Math.max(0, mr), rifleLeft: Math.max(0, -mr) };
+  let dsum = 0;
+  for (const k in dirs) { if (!a[k]) dirs[k] = 0; dsum += dirs[k]; }
+  // No strafe clips on this rig, or standing dead still with the stick centred: fall back to
+  // the forward walk, which is what it always did.
+  if (dsum < 1e-4) { dirs.rifleWalk = 1; dsum = 1; }
+  const armLoco = loco * arm;
+  for (const k in dirs) want[k] = armLoco * dirs[k] / dsum * (k === 'rifleWalk' ? (1 - runMix) : 1);
+  want.rifleRun = armLoco * runMix * dirs.rifleWalk / dsum;
   want.rifleShoot = c.shoot ? 1 : 0;
+  // The roll owns the body outright while it runs -- it is a whole-body move with its own
+  // travel, and blending a walk into it just makes it look like a stumble. So does the stoop.
+  want.roll = c.roll ? 1 : 0;
+  want.pickUp = c.lift || 0;
+  // And the carry rides on top of everything: additive, upper body, so the legs are free.
+  want.holdUp = c.holding || 0;
   // water: tread <-> swim forward
   const sw = clamp(speed / 6, 0, 1);
   want.swimIdle = 1 - sw; want.swim = sw;
@@ -3500,14 +3567,24 @@ function stepRig(r, dt, speed, grounded, ctx) {
   const air = c.air ? 1 : 0, start = c.start ? 1 : 0, landK = c.landK || 0;
   want.jumpStart = start; want.jumpAir = air * (1 - start); want.jumpLand = landK;
   // mix the layers: water replaces ground; jump phases sit on top of whichever is under them
-  const jumpK = Math.max(start, air, landK);
+  const jumpK = Math.max(start, air, landK), rollK = Math.max(want.roll, want.pickUp);
   // The shot is laid over whichever armed pose is running, so the base has to give way or the
   // mixer averages the two and the recoil comes out at half strength.
   const shootK = want.rifleShoot * .8;
-  for (const k of ['idle', 'walk', 'run', 'rifleIdle', 'rifleWalk', 'rifleRun']) want[k] *= (1 - swim) * (1 - jumpK) * (1 - shootK);
-  for (const k of ['swimIdle', 'swim']) want[k] *= swim * (1 - jumpK);
+  for (const k of ['idle', 'walk', 'run', 'rifleIdle', 'rifleWalk', 'rifleBack', 'rifleLeft', 'rifleRight', 'rifleRun'])
+    want[k] *= (1 - swim) * (1 - jumpK) * (1 - shootK) * (1 - rollK);
+  for (const k of ['swimIdle', 'swim']) want[k] *= swim * (1 - jumpK) * (1 - rollK);
+  want.jumpStart *= 1 - rollK; want.jumpAir *= 1 - rollK; want.jumpLand *= 1 - rollK;
+  want.rifleShoot *= 1 - rollK;
+  want.roll = c.roll ? 1 : 0; want.pickUp = c.lift || 0;   // neither is suppressed by the other
   if (a.walk) a.walk.timeScale = clamp(speed / ref, MODEL.rateMin, r.rateMax || MODEL.rateMax);
-  if (a.rifleWalk) a.rifleWalk.timeScale = a.walk ? a.walk.timeScale : 1;
+  // Every armed gait runs at the pace the unarmed walk was measured to need, including the
+  // one that is the same clip played backwards.
+  const armRate = a.walk ? a.walk.timeScale : 1;
+  if (a.rifleWalk) a.rifleWalk.timeScale = armRate;
+  if (a.rifleBack) a.rifleBack.timeScale = -armRate;
+  if (a.rifleLeft) a.rifleLeft.timeScale = armRate;
+  if (a.rifleRight) a.rifleRight.timeScale = armRate;
   if (a.run) a.run.timeScale = clamp(speed / (r.runSpeed || ref * 3), .75, 1.6);
   if (a.rifleRun) a.rifleRun.timeScale = a.run ? a.run.timeScale : 1;
   if (a.rifleShoot) a.rifleShoot.timeScale = 1.35;
@@ -3517,7 +3594,8 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // fade every weight toward its target; one-shots restart the moment they are wanted
   for (const k in a) {
     const t = want[k] || 0, prev = r.w[k] || 0;
-    if ((k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot') && t > .5 && prev <= .5) a[k].reset().play();
+    if ((k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll' || k === 'pickUp') && t > .5 && prev <= .5) a[k].reset().play();
+    if (k === 'holdUp' && t > .01 && prev <= .01) a[k].reset().play();
     const nw = lerp(prev, t, Math.min(1, dt / .1));
     r.w[k] = nw; a[k].setEffectiveWeight(nw);
   }
@@ -3976,7 +4054,7 @@ class Creature {
       }
     }
     for (const o of world.creatures) {
-      if (o === this || !o.alive || o.flying !== this.flying || o.aquatic !== this.aquatic) continue;
+      if (o === this || !o.alive || o.carried || o.flying !== this.flying || o.aquatic !== this.aquatic) continue;
       const dx = this.pos.x - o.pos.x, dz = this.pos.z - o.pos.z, d2 = dx * dx + dz * dz, r = (this.rad + o.rad) * .9;
       if (d2 < r * r && d2 > 1e-6) {
         const d = Math.sqrt(d2), push = (r - d) / d * .16;
@@ -4255,6 +4333,7 @@ class Creature {
     if (this.legs.length) this.animLegs(this.gait);
   }
   update(dt) {
+    if (this.carried) return;          // somebody has hold of it; carryStep places it
     if (this.fling && this.tumble(dt)) return;
     if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); }
     else if (!this.senses(dt)) this.think(dt);
@@ -7393,8 +7472,23 @@ const RIG = {
   jumpStart: 'jump_initiate', jumpAir: 'jump_in_air', jumpLand: 'jump_landing',
   // The armed set. Same three gaits with the blaster up, plus the shot, which is a one-shot
   // laid over whichever of them is running.
+  // Armed, he faces where he is aiming and travels wherever the left stick says, so the set
+  // is directional: forward, the two strafes, and the forward walk run backwards for
+  // retreating. There is no authored back-walk and there does not need to be -- a clone of
+  // the forward clip at a negative time scale is one, and it is the same feet in the same
+  // order. (A clone, not the same action: three keys an action to its clip, so one clip
+  // cannot be running forwards and backwards at once.)
   rifleIdle: 'rifle_idle_01', rifleWalk: 'rifle_walk_fwd_01', rifleRun: 'rifle_run_fwd_01',
+  rifleLeft: 'rifle_strafe_left', rifleRight: 'rifle_strafe_right',
   rifleShoot: 'rifle_shoot_stationary_01',
+  roll: 'roll',
+  // Two poses rather than two animations, and they are used differently. `pickUp` is played
+  // as a one-shot whose BLEND is the movement -- fading a standing body into a bent-over pose
+  // over a third of a second IS bending over, and needs no keys. `hold` is shoulders and arms
+  // only and is applied additively from the spine up, so the legs keep whatever they were
+  // doing and he can walk, run, jump and roll with something in his arms off clips that
+  // already exist.
+  pickUp: 'pick_up_object', hold: 'holding_item',
   // The crouch before a jump only reads if the body is still on the ground while it plays.
   // This holds the physical launch for that long after the button, so the initiate clip
   // leads and the legs extend as he lifts. Feels late? Set 0 and he launches on the press.
@@ -7543,10 +7637,38 @@ const WEAPON = {
   // heading, so a near miss becomes a hit, and through that on the camera, so the thing you
   // are locked onto drifts toward the middle of the frame. Neither is a snap: aim at empty
   // ground and the bolt goes exactly where the stick pointed.
-  lock: { cone: .5, range: 95, pull: 3.2, grab: .85, keep: .8 },
+  // A nudge, not a lock. `grab` is the fraction of the way onto the bearing the aim settles
+  // at while held, and at .85 it was doing the aiming for you: point roughly at an animal and
+  // the shot went to it, every time, which is not aim assist -- it is auto-aim with a reticle
+  // drawn on. A third of the way, inside a seventeen-degree cone at seventy units, means most
+  // shots go exactly where the stick pointed and one you were already nearly on gets helped.
+  lock: { cone: .30, range: 70, pull: 3.0, grab: .34, keep: .55 },
 };
+// The dodge. A flick of the left stick throws him that way: the clip owns the body outright
+// while it runs and the travel is driven from here rather than from the animation, because a
+// root-motion clip fitted to one speed reads wrong at every other one. `speed` is what he
+// leaves the ground at and it is spent by the end of the move, so the distance covered is the
+// clip's own length times about half of it.
+const FLICK = { at: .72, within: .28 };     // what counts: this much travel, released this fast
+const ROLL = { speed: 21, time: .7, cool: .28, turn: 1 };
+function flickRoll(x, y) {
+  const p = player;
+  if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5 || p.rollT > 0 || p.rollCool > 0) return;
+  if (!p.rigH || !p.rigH.acts.roll || !p.grounded) return;
+  const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
+  const dx = sa * y + ca * x, dz = ca * y - sa * x;      // the same camera-space map the walk uses
+  const d = Math.hypot(dx, dz); if (d < 1e-3) return;
+  p.rollH = Math.atan2(dx / d, dz / d);
+  p.rollT = p.rollMax = p.rigH.rollT || ROLL.time;
+  p.rollCool = p.rollT + ROLL.cool;
+  p.jump = 0; p.leadT = 0;
+  cam.idle = 0;
+}
+
 const weap = { model: null, bone: null, tip: null, ready: false, lastMuzzle: new THREE.Vector3() };
-Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0 });
+Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0,
+  rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
+  carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -7590,6 +7712,107 @@ function attachWeapon(r) {
     console.info('[weapon] muzzle marker ' + tipD.toFixed(1) + ' joint units out; barrel reaches '
       + reach.toFixed(3) + ' in the file, so the blaster is scaled ' + k.toFixed(1) + '\u00d7.');
   });
+}
+
+
+// ---------- carrying one of them ----------
+// The socket is the weapon joint -- the same one the blaster hangs on, and they are never
+// both in use. `weapon_direction` sits one bone-length down its +Z, and the line between them
+// is the up vector, so a creature stands on his hands the way the blaster lies along them.
+//
+// Everything about where it sits is worked out in CHART space, for the same reason the bolt
+// is: `player.g` is added to `scene`, so a bone's world position is a point on the sphere
+// while every creature position in the game is a point on the flat chart.
+const CARRY = {
+  reach: 4.6,        // how near you have to be for the prompt to appear
+  size: 2.0,         // the biggest thing he can get his arms round, by its collider radius
+  lift: .62,         // how long the stoop owns him
+  place: .42,        // and the set-down
+  blend: .22,        // how much of each is the ramp in and out -- the ramp is the bend
+  cool: .35,
+  drop: 2.0,         // how far in front of him it goes down
+  // What "from the spine up" means, in the names this rig's bones actually have.
+  upper: /spine|chest|neck|head|shoulder|arm|hand|fore|clavicle/i,
+};
+const _cyA = new THREE.Vector3(), _cyB = new THREE.Vector3(), _cyU = new THREE.Vector3(), _cyQ = new THREE.Quaternion();
+// A joint's place in chart coordinates. Same conversion muzzleChart does, factored out
+// because the carry needs two of them (the socket and the tip that gives it an up vector).
+function jointChart(b, out) {
+  const p = player;
+  b.getWorldPosition(out);
+  p.g.worldToLocal(out);
+  return out.applyQuaternion(p.g.quaternion).add(p.g.position);
+}
+function carryOffer() {
+  const p = player;
+  if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5 || p.liftT > 0 || p.placeT > 0) return;
+  if (p.carry) { offerAct({ icon: 'put', label: 'SET DOWN', run: setDown }); return; }
+  if (p.armWant || p.carryCool > 0) return;          // both hands are on the blaster
+  let best = null, bd = CARRY.reach;
+  for (const o of world.creatures) {
+    if (!o.alive || o.carried || o.aquatic || o.flying || (o.rad || 1) > CARRY.size) continue;
+    const d = Math.hypot(o.pos.x - p.pos.x, o.pos.z - p.pos.z);
+    if (d < bd) { bd = d; best = o; }
+  }
+  if (best) offerAct({ icon: 'lift', label: 'PICK UP', run: () => pickUp(best) });
+}
+function pickUp(o) {
+  const p = player;
+  if (!o || !o.alive || p.carry || p.liftT > 0) return;
+  p.liftT = CARRY.lift; p.carryPend = o;
+  o.carried = 1; o.fling = null; o.abandon(); o.wp = null; o.target = null; o.alarm = 0;
+  p.heading = Math.atan2(o.pos.x - p.pos.x, o.pos.z - p.pos.z);
+  p.vx = p.vz = 0;
+  logMsg('He stoops and gets his arms round it.');
+}
+function setDown() {
+  const p = player;
+  if (!p.carry || p.placeT > 0) return;
+  p.placeT = CARRY.place;
+  const fx = p.pos.x + Math.sin(p.faceH) * CARRY.drop, fz = p.pos.z + Math.cos(p.faceH) * CARRY.drop;
+  p.placeAt = p.carry.terrainOK(fx, fz) ? { x: fx, z: fz } : { x: p.pos.x, z: p.pos.z };
+}
+function carryStep(dt) {
+  const p = player;
+  p.carryCool = Math.max(0, p.carryCool - dt);
+  // Anything that needs both hands, or both feet, puts it down where he stands.
+  if (p.carry && (p.aboard || p.free || p.swim > .5 || !p.carry.alive)) { p.placeAt = { x: p.pos.x, z: p.pos.z }; p.placeT = 0; finishPlace(); }
+  if (p.liftT > 0 && (p.liftT -= dt) <= 0) {        // the stoop is over: it is in his arms now
+    p.liftT = 0;
+    if (p.carryPend && p.carryPend.alive) { p.carry = p.carryPend; world.carried = (world.carried || 0) + 1; }
+    else if (p.carryPend) p.carryPend.carried = 0;
+    p.carryPend = null;
+  }
+  if (p.placeT > 0 && (p.placeT -= dt) <= 0) { p.placeT = 0; finishPlace(); }
+  p.carryK = lerp(p.carryK, p.carry && p.placeT <= 0 ? 1 : 0, Math.min(1, dt * 7));
+  const c = p.carry;
+  if (!c) return;
+  // Hang it on the socket. Without the joints -- a rig that never loaded -- it rides in front
+  // of his chest, which is wrong but is not a crash.
+  if (weap.bone && weap.tip) {
+    jointChart(weap.bone, _cyA); jointChart(weap.tip, _cyB);
+    _cyU.copy(_cyB).sub(_cyA);
+    if (_cyU.lengthSq() < 1e-6) _cyU.copy(_plY); else _cyU.normalize();
+  } else {
+    _cyA.set(p.pos.x + Math.sin(p.faceH) * .9, p.pos.y + RIG.height * .55, p.pos.z + Math.cos(p.faceH) * .9);
+    _cyU.copy(_plY);
+  }
+  c.pos.copy(_cyA); c.rx = _cyA.x; c.rz = _cyA.z; c.px0 = _cyA.x; c.pz0 = _cyA.z;
+  c.animK = 0; c.moving = 0; c.stall = 0;
+  c.g.position.copy(_cyA);
+  c.g.quaternion.setFromUnitVectors(_plY, _cyU).multiply(_cyQ.setFromAxisAngle(_plY, p.faceH + Math.PI));
+  if (c.rig) c.rig.mixer.update(dt);              // it keeps breathing while it is held
+}
+function finishPlace() {
+  const p = player, c = p.carry;
+  p.carry = null; p.carryPend = null; p.carryK = 0; p.carryCool = CARRY.cool;
+  if (!c) return;
+  const a = p.placeAt || { x: p.pos.x, z: p.pos.z };
+  c.carried = 0;
+  c.pos.set(a.x, groundY(a.x, a.z), a.z);
+  c.rx = a.x; c.rz = a.z; c.px0 = a.x; c.pz0 = a.z; c.lastGood.set(a.x, 0, a.z);
+  c.ghost = 1.2; c.stall = 0; c.stuck = 0; c.pinned = 0; c.roamT = 3;   // it wanders off rather than bolting
+  world.effects.push(new Burst(a.x, c.pos.y + .5, a.z, '#cdbf9c', 7, .7));
 }
 
 // Where the muzzle is, in chart coordinates. The bone's world position is on the sphere, so
@@ -7662,13 +7885,18 @@ function stepWeapon(dt, rx, ry) {
   const p = player;
   p.cool = Math.max(0, p.cool - dt);
   p.shootT = Math.max(0, p.shootT - dt);
-  // Both hands are busy in the water, and there is no swimming-with-a-rifle clip.
-  if (p.swim > .5 || p.aboard || p.free || !weap.ready) p.armWant = 0;
-  p.armed = lerp(p.armed, p.armWant, Math.min(1, dt * WEAPON.drawRate));
-  if (!p.armWant && p.armed < .02) p.armed = 0;
+  // `armWant` is the decision and this is the circumstance. Both hands are busy in the water
+  // and there is no swimming-with-a-rifle clip, so it goes down -- but wading through a
+  // stream must not make him un-decide to be carrying it, which is what clearing armWant
+  // here did: the gun went away at the first puddle and never came back. Boarding or the
+  // free camera genuinely do put it away.
+  if (p.aboard || p.free) p.armWant = 0;
+  const canHold = p.armWant && p.swim < .5 && !p.aboard && !p.free && weap.ready ? 1 : 0;
+  p.armed = lerp(p.armed, canHold, Math.min(1, dt * WEAPON.drawRate));
+  if (!canHold && p.armed < .02) p.armed = 0;
   if (weap.model) weap.model.visible = p.armed > .05;
   armB.classList.toggle('on', !!p.armWant);
-  if (!(p.armWant && p.armed > .5)) { p.aiming = 0; p.lock = null; return false; }
+  if (!(canHold && p.armed > .5)) { p.aiming = 0; p.lock = null; return false; }
 
   if (Math.hypot(rx, ry) > WEAPON.aimAt) {
     // Latch the frame the stick is measured in when the aim starts. Reading it off the live
@@ -7847,24 +8075,32 @@ function disposeTree(o) {
 }
 
 const stick = { L: { x: 0, y: 0 }, R: { x: 0, y: 0 } };
-function bindStick(el, out, onTap) {
-  const knob = el.querySelector('.knob'); let id = null, t0 = 0, far = 0; const RAD = 52;
+// A flick is a stick thrown out and let go, and it is worth saying why it is measured on the
+// RELEASE rather than on the way out. On a touch stick, starting to run and starting a dodge
+// look identical for the first eighth of a second -- both are a hard shove from centre -- so
+// anything that fires on the outward motion fires every time you set off at a sprint. Holding
+// is what makes it a walk; letting go straight away is what makes it a flick. `onTap` cannot
+// collide with it: a tap is under .3 of travel and a flick is over .7.
+function bindStick(el, out, onTap, onFlick) {
+  const knob = el.querySelector('.knob'); let id = null, t0 = 0, far = 0, lx = 0, ly = 0; const RAD = 52;
   const set = (cx, cy) => {
     const r = el.getBoundingClientRect();
     let dx = cx - (r.left + r.width / 2), dy = cy - (r.top + r.height / 2);
     const d = Math.hypot(dx, dy); if (d > RAD) { dx *= RAD / d; dy *= RAD / d; }
-    out.x = dx / RAD; out.y = dy / RAD; knob.style.transform = `translate(${dx}px,${dy}px)`;
+    out.x = lx = dx / RAD; out.y = ly = dy / RAD; knob.style.transform = `translate(${dx}px,${dy}px)`;
   };
   el.addEventListener('pointerdown', e => { id = e.pointerId; t0 = performance.now(); far = 0; el.setPointerCapture(id); el.classList.add('act'); set(e.clientX, e.clientY); e.stopPropagation(); e.preventDefault(); });
   el.addEventListener('pointermove', e => { if (e.pointerId !== id) return; set(e.clientX, e.clientY); far = Math.max(far, Math.hypot(out.x, out.y)); e.stopPropagation(); });
   const end = e => {
     if (e.pointerId !== id) return;
-    if (onTap && far < .3 && performance.now() - t0 < 240) onTap();
+    const held = performance.now() - t0;
+    if (onFlick && far > FLICK.at && held < FLICK.within * 1000 && Math.hypot(lx, ly) > .35) onFlick(lx, ly);
+    if (onTap && far < .3 && held < 240) onTap();
     id = null; out.x = out.y = 0; knob.style.transform = 'translate(0,0)'; el.classList.remove('act'); e.stopPropagation();
   };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
 }
-bindStick(document.getElementById('stkL'), stick.L);
+bindStick(document.getElementById('stkL'), stick.L, null, flickRoll);
 // A tap is the interact button when there is something to interact with, and the jump
 // otherwise. On foot with nothing in reach it behaves exactly as it always did.
 bindStick(document.getElementById('stkR'), stick.R, () => {
@@ -7883,6 +8119,7 @@ const flyB = document.getElementById('flyB'), freeB = document.getElementById('f
 const armB = document.getElementById('armB'), reticEl = document.getElementById('retic');
 function toggleArm() {
   if (armB.hidden || player.aboard || player.free) return;
+  if (player.carry || player.liftT > 0) { logMsg('Not with his arms full.'); return; }
   player.armWant = player.armWant ? 0 : 1;
   armB.textContent = player.armWant ? 'holster' : 'draw';
   logMsg(player.armWant ? 'He unclips the blaster. Hold the right stick to aim; let go to fire.' : 'The blaster goes away.');
@@ -7992,9 +8229,21 @@ function updatePlayer(dt) {
       player.heading = Math.atan2(dx, dz);
     }
   }
-  // Standing still, he turns onto the aim. Walking, the legs win: the rifle clips are
-  // forward cycles, and facing one way while travelling another is a moonwalk.
-  if (player.aiming && mag <= .1) player.heading = player.aimH;
+  // Aiming, he faces the aim -- always now, not only when standing still. That used to be a
+  // moonwalk because the only armed gait was a forward walk; with the strafes and the
+  // reversed walk in, travelling one way while facing another is the whole point of them.
+  if (player.aiming) player.heading = player.aimH;
+  // The dodge takes the wheel: its own heading, its own speed curve, no steering. The rest of
+  // the frame -- gravity, the ground, the collider -- runs exactly as it does otherwise.
+  player.rollCool = Math.max(0, player.rollCool - dt);
+  const rolling = player.rollT > 0;
+  if (rolling) {
+    player.rollT = Math.max(0, player.rollT - dt);
+    const k = 1 - player.rollT / (player.rollMax || ROLL.time);
+    const sp = ROLL.speed * (1 - k * k);      // out of the crouch hard, spent by the time he is up
+    player.vx = Math.sin(player.rollH) * sp; player.vz = Math.cos(player.rollH) * sp;
+    player.heading = player.rollH; player.wmag = 0; player.moving = 1;
+  }
   if (!player.fly) {
     // Steer velocity toward what the stick asks for, at acc while pushing and drag while
     // letting go -- but speeding up and changing direction are different problems and must
@@ -8023,7 +8272,13 @@ function updatePlayer(dt) {
     const rate = want ? (inW ? MOVE.swimAcc : onG ? MOVE.acc * ramp : MOVE.airAcc)
                       : (inW ? MOVE.swimDrag : onG ? MOVE.drag : MOVE.airDrag);
     const ax = tvx - player.vx, az = tvz - player.vz;
-    if (sp0 > .5) {
+    // The dodge has already said what the velocity is. Only the STEERING is skipped -- the
+    // integration below it, the push-out, the rim clamp, gravity and the ground all still run,
+    // which is the whole reason this sits inside the block rather than replacing it. Gated
+    // round the outside instead, he rolled on the spot: the line that actually moves him is
+    // four statements further down.
+    if (rolling) { /* nothing steers a roll */ }
+    else if (sp0 > .5) {
       const ux = player.vx / sp0, uz = player.vz / sp0;
       const along = ax * ux + az * uz;                       // how much faster or slower
       const lx = ax - ux * along, lz = az - uz * along;      // and how much to the side
@@ -8311,9 +8566,23 @@ isle.fairy = fairy; isle.stick = stick; isle.cam = cam; isle.camS = camS; isle.p
 
 function updateRig(dt) {
   const p = player;
+  // Which way he is travelling in his OWN frame, which is what the armed set blends on. Off
+  // the velocity rather than the stick, so the blend follows the body through a turn instead
+  // of snapping the instant the thumb moves.
+  // Forward is (sin h, cos h) and HIS RIGHT is forward x up, which is (-cos h, sin h) --
+  // not up x forward, which is his left. Written the other way round the strafes came out
+  // mirrored: walk left, play the right clip.
+  let mf = 0, mr = 0;
+  const sp = Math.hypot(p.vx, p.vz);
+  if (sp > .4) { const c = Math.cos(p.faceH), s2 = Math.sin(p.faceH);
+    mf = (p.vx * s2 + p.vz * c) / sp; mr = (-p.vx * c + p.vz * s2) / sp; }
   stepRig(p.rigH, dt, p.speed, !p.fly && p.swim < .5 && p.grounded, {
     top: p.swim > .5 ? MOVE.swimMax : MOVE.max,
     swim: p.swim, air: !p.fly && !p.grounded && p.leadT <= 0 && p.swim < .5,
+    mf, mr, roll: p.rollT > 0,
+    // The stoop ramps in and out rather than switching, because the ramp IS the bend.
+    lift: p.liftT > 0 ? smooth(0, CARRY.blend, Math.min(p.liftT, CARRY.lift - p.liftT) * 2) : 0,
+    holding: p.carryK,
     // The landing clip is planted, so at speed it slides. Fade it out as the ground speed
     // rises and let the run carry the landing instead. A proper roll clip would be better.
     start: p.leadT > 0, landK: p.landT > 0 ? smooth(0, .12, p.landT) * clamp(1 - p.speed / 7, 0, 1) : 0,
@@ -8713,6 +8982,7 @@ function frame(now) {
 
   updatePlayer(dt);
   updateFairy(dt);
+  carryStep(dt);                           // after the body has moved: it hangs off his hands
   if (INTRO.on) introFrame(dt);
   else if (player.aboard && world.ship && !player.free) {
     // The chase view: behind and above, flatter than the walking camera, and lagging the
@@ -8774,6 +9044,7 @@ function frame(now) {
   updateWeather(dt);
   updateSky();
   ACT.now = null;                          // whatever is in reach re-offers itself below
+  carryOffer();                            // first, so the ship's own offer wins where they overlap
   for (const e of world.plants) if (e.alive) e.update(dt);
   for (const e of world.structures) if (e.alive) e.update(dt);
   for (const e of world.creatures) if (e.alive) e.update(dt);

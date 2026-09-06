@@ -17,6 +17,8 @@
 //   --probe      also report what the sun's shadow pass costs, in calls and triangles
 //   --palette    report what the frame is made of: hue spread, saturation, value range
 //   --weapon     draw the blaster, aim at the nearest animal, and report the lock and the shot
+//   --strafe     draw, aim one way, walk the other, and report which armed clips are running
+//   --carry      stand by an animal, pick it up, walk with it, and put it down again
 //   --drone      frame the drone itself, close, to see what is glowing on it
 //   --base       stand under the lander
 //   --title      shoot the title screen instead, before the world is entered
@@ -35,7 +37,7 @@ const WAIT = +arg('wait', 6);
 
 // The game's script is one IIFE, so nothing inside it is reachable from the page. Splice a
 // handle onto the window just before it closes -- the same trick the headless tools use.
-const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV,stick,weap,WEAPON,toggleArm,Bolt,isle,DRONE,camS,GIMBAL,muzzleChart,RIG,skyUni};';
+const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV,stick,weap,WEAPON,toggleArm,Bolt,isle,DRONE,camS,GIMBAL,muzzleChart,RIG,skyUni,ACT,CARRY};';
 function indexHTML() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const cut = html.lastIndexOf('})();');
@@ -405,6 +407,120 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     });
     const t = await page.evaluate(() => window.__g.world.clock);
     await page.waitForFunction(`window.__g.world.clock > ${t + 1.5}`, null, { timeout: 600000 });
+  }
+
+  // Armed, he faces the aim and travels wherever the left stick says. This walks him round
+  // the compass with the aim pinned and reports which clips carry it -- the one thing about
+  // the armed set that cannot be checked without a rig, and therefore cannot be checked in
+  // gait.js at all.
+  if (has('strafe')) {
+    const step = async (secs) => { const t = await page.evaluate(() => window.__g.world.clock);
+      await page.waitForFunction(`window.__g.world.clock > ${t + secs}`, null, { timeout: 600000 }); };
+    for (let i = 0; i < 20; i++) {
+      const on = await page.evaluate(() => { const g = window.__g;
+        if (!g.player.armWant) g.toggleArm(); return !!g.player.armWant; });
+      if (on) break;
+      await step(1);
+    }
+    await step(1.4);
+    const clips = await page.evaluate(() => Object.keys(window.__g.player.rigH ? window.__g.player.rigH.acts : {}));
+    console.log('armed set: ' + clips.filter(k => /rifle|roll/.test(k)).join(' '));
+    for (const [name, lx, ly] of [['forward', 0, -1], ['back', 0, 1], ['left', -1, 0], ['right', 1, 0], ['diagonal', .8, -.8]]) {
+      // Put him back where he started each time rather than pinning him there. Turned loose he
+      // covers thirty units a case and ends up in the sea, where the gun goes down and every
+      // armed weight reads zero; pinned every eight milliseconds, two cases in five came back
+      // holding the PREVIOUS case's answer. A teleport between cases is neither.
+      await page.evaluate(([lx, ly]) => { const g = window.__g, p = g.player;
+        if (!g.__home) g.__home = { x: p.pos.x, z: p.pos.z };
+        p.pos.x = g.__home.x; p.pos.z = g.__home.z; p.vx = p.vz = 0;
+        g.cam.tgt.x = p.pos.x; g.cam.tgt.z = p.pos.z;
+        g.stick.R.x = 0; g.stick.R.y = -1;      // aim held straight ahead throughout
+        g.stick.L.x = lx; g.stick.L.y = ly;
+      }, [lx, ly]);
+      await step(1.8);
+      const w = await page.evaluate(() => {
+        const g = window.__g, p = g.player, r = p.rigH;
+        const sp = Math.hypot(p.vx, p.vz);
+        const c = Math.cos(p.faceH), s2 = Math.sin(p.faceH);
+        const out = {};
+        for (const k of ['rifleIdle', 'rifleWalk', 'rifleBack', 'rifleLeft', 'rifleRight', 'rifleRun'])
+          if (r && r.w[k] > .02) out[k] = +r.w[k].toFixed(2);
+        return { w: out, speed: +sp.toFixed(1), swimming: +p.swim.toFixed(1),
+          stickWants: [+p.wx.toFixed(2), +p.wz.toFixed(2)],
+          travelVsFacing: sp > .4 ? Math.round(Math.atan2(-p.vx * c + p.vz * s2, p.vx * s2 + p.vz * c) * 57.3) : null,
+          bodyOffAim: Math.round(Math.atan2(Math.sin(p.faceH - p.aimH), Math.cos(p.faceH - p.aimH)) * 57.3) };
+      });
+      console.log('  walking ' + name.padEnd(9) + (w.swimming > .3 ? ' IN WATER' : '') + ' speed ' + String(w.speed).padStart(4)
+        + ' | travelling ' + String(w.travelVsFacing).padStart(4) + ' deg off his facing'
+        + ' | body ' + w.bodyOffAim + ' deg off the aim | ' + JSON.stringify(w.w));
+    }
+    await page.evaluate(() => { const g = window.__g; g.stick.L.x = 1; g.stick.L.y = 0; g.stick.R.y = -1; g.cam.r = 9; });
+    await step(1.5);
+  }
+
+  // Pick one up, carry it, put it down. The interesting number is where it ends up relative
+  // to him: the socket is a joint on a skeleton in sphere space and everything else in the
+  // game is on the flat chart, so an error there puts the animal on the far side of the world
+  // rather than slightly wrong.
+  if (has('carry')) {
+    const step = async (secs) => { const t = await page.evaluate(() => window.__g.world.clock);
+      await page.waitForFunction(`window.__g.world.clock > ${t + secs}`, null, { timeout: 600000 }); };
+    const pre = await page.evaluate(() => {
+      const g = window.__g, p = g.player;
+      const c = g.world.creatures.filter(o => o.alive && !o.aquatic && !o.flying && o.rad <= 2)
+        .sort((a, b) => a.pos.distanceTo(p.pos) - b.pos.distanceTo(p.pos))[0];
+      if (!c) return { none: true };
+      const a = Math.atan2(c.pos.x - p.pos.x, c.pos.z - p.pos.z);
+      const x = c.pos.x - Math.sin(a) * 3, z = c.pos.z - Math.cos(a) * 3;
+      p.pos.set(x, g.groundY(x, z) + 1, z); p.vx = p.vz = 0; p.faceH = p.heading = a;
+      g.cam.tgt.set(x, p.pos.y + 3.4, z); g.cam.az = a + Math.PI; g.cam.r = 8;
+      if (p.armWant) g.toggleArm();
+      return { who: c.constructor.name, size: c.rad, poses: Object.keys(p.rigH ? p.rigH.acts : {}).filter(k => /pickUp|hold/.test(k)) };
+    });
+    if (pre.none) console.log('carry: no land animal to try it on');
+    else {
+      await step(1.2);
+      const off = await page.evaluate(() => ({ label: document.querySelector('#stkR .lbl').textContent,
+        ring: document.getElementById('stkR').classList.contains('hot') }));
+      await page.evaluate(() => { const a = window.__g.isle ? null : null; const A = window.__g; if (A.ACT && A.ACT.now) A.ACT.now.run(); });
+      await step(1.6);
+      const held = await page.evaluate(() => {
+        const g = window.__g, p = g.player, c = p.carry;
+        if (!c) return { holding: false };
+        const dx = c.pos.x - p.pos.x, dz = c.pos.z - p.pos.z;
+        const co = Math.cos(p.faceH), s2 = Math.sin(p.faceH);
+        return { holding: true, who: c.constructor.name,
+          ahead: +(dx * s2 + dz * co).toFixed(2), toTheSide: +(-dx * co + dz * s2).toFixed(2),
+          up: +(c.pos.y - p.pos.y).toFixed(2), ofAHeightOf: g.RIG.height,
+          holdWeight: +(p.rigH ? p.rigH.w.holdUp || 0 : 0).toFixed(2),
+          label: document.querySelector('#stkR .lbl').textContent };
+      });
+      // and walk with it, which is the whole point of the upper-body layer
+      await page.evaluate(() => { window.__g.stick.L.y = -1; });
+      await step(1.6);
+      const walking = await page.evaluate(() => {
+        const g = window.__g, p = g.player, r = p.rigH, out = {};
+        for (const k of ['walk', 'run', 'idle', 'holdUp']) if (r && r.w[k] > .02) out[k] = +r.w[k].toFixed(2);
+        return { w: out, speed: +Math.hypot(p.vx, p.vz).toFixed(1), stillHolding: !!p.carry };
+      });
+      await page.evaluate(() => { const g = window.__g; g.stick.L.y = 0; if (g.ACT && g.ACT.now) g.ACT.now.run(); });
+      await step(1.5);
+      const after = await page.evaluate(() => {
+        const g = window.__g, p = g.player;
+        const c = g.world.creatures.find(o => o.carried);
+        return { stillCarrying: !!p.carry, anyStuckCarried: !!c,
+          label: document.querySelector('#stkR .lbl').textContent };
+      });
+      console.log('carry: ' + pre.who + ' (r ' + pre.size + ') | poses ' + (pre.poses.join(' ') || 'NONE'));
+      console.log('  prompt before: "' + off.label + '"' + (off.ring ? ' with the ring lit' : ' NO RING'));
+      console.log('  ' + (held.holding ? 'holding it, ' + held.ahead + ' ahead, ' + held.toTheSide
+        + ' to the side, ' + held.up + ' up (he is ' + held.ofAHeightOf + ' tall) | carry pose at '
+        + held.holdWeight + ' | prompt "' + held.label + '"' : 'DID NOT PICK IT UP'));
+      console.log('  walking with it: speed ' + walking.speed + ' ' + JSON.stringify(walking.w)
+        + ' | still holding ' + walking.stillHolding);
+      console.log('  after setting down: carrying ' + after.stillCarrying + ', any animal left stuck '
+        + after.anyStuckCarried + ' | prompt "' + after.label + '"');
+    }
   }
 
   fs.mkdirSync(path.dirname(path.resolve(OUT)), { recursive: true });
