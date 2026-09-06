@@ -150,20 +150,30 @@
     -webkit-mask:radial-gradient(circle,transparent 62%,#000 65%);
     mask:radial-gradient(circle,transparent 62%,#000 65%)}
   /* The rack. Opens upward out of the key, one slot per weapon he has. */
-  #wrack{display:flex;flex-direction:column-reverse;gap:8px;align-items:center;
-    animation:rackin .16s ease-out}
-  @keyframes rackin{from{opacity:0;transform:translateY(9px) scale(.9)}to{opacity:1;transform:none}}
-  .wslot{width:54px;height:54px;border-radius:16px;padding:0;font-family:inherit;color:#f2e4c8;
-    cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-    background:rgba(10,18,28,.55);border:1px solid rgba(240,228,200,.24);
-    -webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);
-    box-shadow:0 3px 14px rgba(0,0,0,.5);transition:border-color .15s,background .15s}
-  .wslot .wico{width:26px;height:26px;display:block;opacity:.66}
-  .wslot span:last-child{font-size:9px;letter-spacing:.1em;opacity:.5;font-variant:small-caps;line-height:1}
-  .wslot.sel{border-color:rgba(150,246,255,.85);background:rgba(24,58,74,.6);
-    box-shadow:0 0 16px rgba(120,238,255,.35)}
-  .wslot.sel .wico{opacity:1;filter:drop-shadow(0 0 5px rgba(140,240,255,.85))}
-  .wslot.sel span:last-child{opacity:.9;color:#bff4ff}
+  /* Side by side, not stacked: stacked, the slots sat under the thumb that opened them, and
+     you cannot choose between things your own hand is covering. Wide and shallow, so a short
+     slide sideways picks one. It never takes pointer events -- the whole gesture belongs to
+     the key underneath, which has capture. */
+  #wrack{display:flex;flex-direction:row;gap:9px;align-items:flex-end;
+    animation:rackin .15s ease-out;pointer-events:none}
+  @keyframes rackin{from{opacity:0;transform:translateY(10px) scale(.92)}to{opacity:1;transform:none}}
+  .wslot{width:62px;height:66px;border-radius:18px;padding:0;font-family:inherit;color:#f2e4c8;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    background:rgba(10,18,28,.62);border:1px solid rgba(240,228,200,.24);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    box-shadow:0 4px 16px rgba(0,0,0,.55);
+    transition:border-color .12s,background .12s,transform .12s,box-shadow .12s}
+  .wslot .wico{width:30px;height:30px;display:block;opacity:.6;transition:opacity .12s,filter .12s}
+  .wslot span:last-child{font-size:9.5px;letter-spacing:.1em;opacity:.5;font-variant:small-caps;line-height:1}
+  /* `sel` is what is racked now. `over` is what the thumb is on, and what letting go takes. */
+  .wslot.sel{border-color:rgba(150,246,255,.5);background:rgba(20,44,58,.6)}
+  .wslot.sel .wico{opacity:.85}
+  .wslot.sel span:last-child{opacity:.75;color:#bff4ff}
+  .wslot.over{border-color:rgba(160,248,255,.95);background:rgba(28,72,92,.72);
+    transform:translateY(-7px) scale(1.07);
+    box-shadow:0 0 24px rgba(120,238,255,.55),0 6px 18px rgba(0,0,0,.5)}
+  .wslot.over .wico{opacity:1;filter:drop-shadow(0 0 7px rgba(150,246,255,.95))}
+  .wslot.over span:last-child{opacity:1;color:#d6fbff}
   /* The lock. Positioned in px by the frame loop, so it needs no layout of its own. */
   #retic{position:fixed;z-index:5;left:0;top:0;width:64px;height:64px;margin:-32px 0 0 -32px;
     pointer-events:none;will-change:transform,opacity;transition:opacity .16s}
@@ -938,7 +948,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b82';
+const BUILD = 'b83';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -1485,6 +1495,22 @@ function holePatch(sh) {
 THREE.MeshStandardMaterial.prototype.onBeforeCompile = function (sh) {
   if (this.userData.noHole) return;
   holePatch(sh);
+};
+// And this is the line that makes the flag above actually mean anything.
+//
+// r128 builds a program cache key out of the material's PARAMETERS and nothing else --
+// onBeforeCompile is not in it, only customProgramCacheKey is. So two MeshStandardMaterials
+// with identical parameters but different `noHole` hash to the same key, share one compiled
+// program, and whichever of them compiled FIRST decides for both. That is the whole of "the
+// drone goes see-through, the blaster goes see-through, the animals go see-through when I get
+// close": their materials were colliding with a scenery material's cache entry and inheriting
+// its hole. Nothing was wrong with the flags; the flag simply never reached the compiler.
+//
+// `shaderTag` is the same problem one level up: a material carrying its own onBeforeCompile
+// (the water, the grass, the tinted models) is a different shader from a plain one with the
+// same parameters, and has to say so here or it will collide too.
+THREE.Material.prototype.customProgramCacheKey = function () {
+  return (this.userData.noHole ? 'nh' : 'h') + (this.userData.shaderTag || '');
 };
 // The hole is for scenery standing between the lens and the wanderer. It is not for the
 // wanderer, and not for anything else alive: seeing his own eyeballs through the back of his
@@ -2247,6 +2273,7 @@ const waterGeo = polarGeo(WSPOKE, WRING, ringR);
   waterGeo.setAttribute('dep', new THREE.BufferAttribute(d, 1));
   waterGeo.setAttribute('chart', new THREE.BufferAttribute(ch, 2)); }
 const waterMat = new THREE.MeshStandardMaterial({ color: col('#2b7fa4'), transparent: true, opacity: .85, roughness: .08, metalness: .42 });
+waterMat.userData.shaderTag = 'water';
 waterMat.onBeforeCompile = sh => {
   for (const k in waterUni) sh.uniforms[k] = waterUni[k];
   // Gerstner waves: points move in a circle, not just up and down, which is what
@@ -2446,6 +2473,7 @@ foam.renderOrder = 1; foam.userData.flat = true; scene.add(foam);
 // ---------- grass field (instanced, wind in the vertex shader) ----------
 const grassUni = { uT: { value: 0 }, uWind: { value: new THREE.Vector3(1, 0, 0) } };   // dir.x, dir.z, strength
 const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: .92 });
+grassMat.userData.shaderTag = 'grass';
 grassMat.onBeforeCompile = s => {
   s.uniforms.uT = grassUni.uT; s.uniforms.uWind = grassUni.uWind;
   s.vertexShader = 'uniform float uT; uniform vec3 uWind;\n' + s.vertexShader.replace('#include <begin_vertex>', `
@@ -3312,7 +3340,9 @@ function shrinkTexture(t) {
 // arrived rigged, at which point every bloom on the island went solid. The caller knows, so
 // the caller says -- attachRig and the ship mark themselves, and everything else is scenery.
 function markBody(root, on = true) {
-  root.traverse(o => { for (const m of [].concat(o.material || [])) if (m) m.userData.noHole = on; });
+  // needsUpdate because the flag is part of the program cache key now: flipping it on an
+  // already-compiled material has to ask for the other program.
+  root.traverse(o => { for (const m of [].concat(o.material || [])) if (m && !!m.userData.noHole !== !!on) { m.userData.noHole = on; m.needsUpdate = true; } });
   return root;
 }
 function prepModel(root) {
@@ -3889,6 +3919,7 @@ function worldTint(mat, cfg) {
     uKeep: { value: cfg.keep }, uTint: { value: cfg.col },
     uLumA: { value: cfg.lum[0] }, uLumB: { value: cfg.lum[1] },
   };
+  mat.userData.shaderTag = 'tint';
   mat.onBeforeCompile = sh => {
     // An instance hook shadows the prototype's, so the see-through hole has to be chained on
     // by hand -- and skipped on the same terms the prototype skips it. Anything riding with
@@ -7975,7 +8006,7 @@ const NET = {
   dragHold: 6,                        // and the floor that keeps while you are dragging it
   fade: 7,                            // an empty net on the ground lasts this long
   cling: 3.2,                         // how hard the cords are drawn down onto whatever is inside
-  cord: '#cfe8d8', lit: '#8ff0d8', knot: .3,
+  cord: '#cfe8d8', lit: '#8ff0d8', knot: .3, thick: .075,
   drag: { reach: 5.2, rope: 3.4, pull: 30, slow: .42 },
 };
 // What he can carry. The rack is built from this, in this order, so adding a third weapon is
@@ -8292,25 +8323,38 @@ function netOffer() {
 
 // The cord in his fist: two vertices in a group sitting at their own midpoint, the same trick
 // the net uses, so the planet projection curves it with the ground for nothing.
-let dragRope = null;
+// Three strands laid up together and a catenary between his fist and the net: a rope hangs,
+// and how far it hangs is how much of it is not being used. Pulled taut it straightens by
+// itself, which is the whole tell that he is actually leaning into it.
+const DRAGROPE = { seg: 12, thick: .085, lay: .055, turns: 3.4 };
+let dragRope = null, dragRopeG = null;
 function stepDrag() {
   const p = player, o = p.drag;
   if (!dragRope) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-    dragRope = new THREE.Line(g, new THREE.LineBasicMaterial({ color: new THREE.Color(NET.lit), transparent: true, opacity: .8 }));
-    dragRope.frustumCulled = false; dragRope.visible = false; scene.add(dragRope);
+    dragRope = new Rope(3, DRAGROPE.thick, NET.cord, .92, DRAGROPE.seg);
+    dragRopeG = new THREE.Group(); dragRopeG.add(dragRope.mesh); dragRopeG.visible = false;
+    scene.add(dragRopeG);
   }
-  if (!o || !o.alive || !o.net || INTRO.on) { dragRope.visible = false; return; }
+  if (!o || !o.alive || !o.net || INTRO.on) { dragRopeG.visible = false; return; }
   const ax = p.pos.x, ay = p.pos.y + RIG.height * .52, az = p.pos.z;
   const bx = o.pos.x, by = o.pos.y + o.pivotY(), bz = o.pos.z;
   const mx = (ax + bx) * .5, my = (ay + by) * .5, mz = (az + bz) * .5;
-  const a = dragRope.geometry.attributes.position.array;
-  a[0] = ax - mx; a[1] = ay - my; a[2] = az - mz;
-  a[3] = bx - mx; a[4] = by - my; a[5] = bz - mz;
-  dragRope.geometry.attributes.position.needsUpdate = true;
-  dragRope.position.set(mx, my, mz);
-  dragRope.visible = true;
+  dragRopeG.position.set(mx, my, mz);
+  dragRopeG.visible = true;
+  const span = Math.hypot(bx - ax, bz - az);
+  const slack = Math.max(0, NET.drag.rope - span);   // taut at the rope's length, bellied under it
+  const sag = .18 + slack * .5;
+  // Three strands, offset off the line and wound round it, so it reads as laid rope rather
+  // than as one fat tube. The offset is perpendicular to the run and turns along it.
+  const dx = (bx - ax) / (span || 1), dz = (bz - az) / (span || 1);
+  dragRope.begin(dragRopeG);
+  for (let i = 0; i < 3; i++) {
+    const a = i / 3 * Math.PI * 2 + world.clock * .6;
+    const ox = -dz * Math.cos(a) * DRAGROPE.lay, oy = Math.sin(a) * DRAGROPE.lay, oz = dx * Math.cos(a) * DRAGROPE.lay;
+    dragRope.strand(ax - mx + ox, ay - my + oy, az - mz + oz,
+                    bx - mx + ox, by - my + oy, bz - mz + oz, sag);
+  }
+  dragRope.end();
 }
 
 // The wind-up ring on the right stick. Cheap enough to poke every frame -- it is two style
@@ -8754,6 +8798,67 @@ function fireNet() {
   world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#dff6ea', 2.2, .18));
 }
 
+// ---------- rope, drawn as rope ----------
+// A LineSegments cord is one pixel wide however close you get to it, which is why the net
+// read as a wireframe rather than as something woven. Every strand here is a camera-facing
+// ribbon instead: a quadratic Bezier that bows under its own slack, cut into segments, each
+// segment a quad turned edge-on to the lens. Thickness for the price of a cross product per
+// vertex, and the curve comes free with the sampling -- a cord under tension samples to a
+// straight line by itself, and only a slack one bows.
+const ROPE = { seg: 4, sag: .6 };
+class Rope {
+  constructor(cords, width, colour, opacity, seg = ROPE.seg) {
+    this.seg = seg; this.w = width; this.k = 0;
+    this.eye = new THREE.Vector3();
+    this._x = new Float32Array(seg + 1); this._y = new Float32Array(seg + 1); this._z = new Float32Array(seg + 1);
+    const quads = cords * seg;
+    this.pos = new Float32Array(quads * 4 * 3);
+    const idx = new Uint16Array(quads * 6);
+    for (let q = 0; q < quads; q++) {
+      const v = q * 4, o = q * 6;
+      idx[o] = v; idx[o + 1] = v + 1; idx[o + 2] = v + 2;
+      idx[o + 3] = v; idx[o + 4] = v + 2; idx[o + 5] = v + 3;
+    }
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    this.geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    this.mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(colour), transparent: true,
+      opacity, side: THREE.DoubleSide, depthWrite: false });
+    this.mat.userData.noHole = true;
+    this.mesh = new THREE.Mesh(this.geo, this.mat);
+    this.mesh.frustumCulled = false;                 // rebuilt every frame; its bounds are a lie
+  }
+  // `g` is the group the strand coordinates are relative to. The eye has to be in that same
+  // space or every ribbon turns the wrong way, and the group is on the sphere while the
+  // strands are in the chart, so it goes through the group's own matrix.
+  begin(g) { this.k = 0; g.updateMatrixWorld(); this.eye.copy(camera.position); g.worldToLocal(this.eye); }
+  strand(ax, ay, az, bx, by, bz, sag, w) {
+    const S = this.seg, P = this.pos, X = this._x, Y = this._y, Z = this._z;
+    const half = (w === undefined ? this.w : w) * .5;
+    const mx = (ax + bx) * .5, my = (ay + by) * .5 - sag, mz = (az + bz) * .5;
+    for (let i = 0; i <= S; i++) {
+      const t = i / S, u = 1 - t, A = u * u, B = 2 * u * t, C = t * t;
+      X[i] = A * ax + B * mx + C * bx; Y[i] = A * ay + B * my + C * by; Z[i] = A * az + B * mz + C * bz;
+    }
+    const base = this.k * S * 12;
+    for (let i = 0; i < S; i++) {
+      const tx = X[i + 1] - X[i], ty = Y[i + 1] - Y[i], tz = Z[i + 1] - Z[i];
+      const ex = this.eye.x - X[i], ey = this.eye.y - Y[i], ez = this.eye.z - Z[i];
+      let sx = ty * ez - tz * ey, sy = tz * ex - tx * ez, sz = tx * ey - ty * ex;
+      const sl = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1e-6;
+      sx = sx / sl * half; sy = sy / sl * half; sz = sz / sl * half;
+      const o = base + i * 12;
+      P[o] = X[i] - sx; P[o + 1] = Y[i] - sy; P[o + 2] = Z[i] - sz;
+      P[o + 3] = X[i] + sx; P[o + 4] = Y[i] + sy; P[o + 5] = Z[i] + sz;
+      P[o + 6] = X[i + 1] + sx; P[o + 7] = Y[i + 1] + sy; P[o + 8] = Z[i + 1] + sz;
+      P[o + 9] = X[i + 1] - sx; P[o + 10] = Y[i + 1] - sy; P[o + 11] = Z[i + 1] - sz;
+    }
+    this.k++;
+  }
+  end() { this.geo.setDrawRange(0, this.k * this.seg * 6); this.geo.attributes.position.needsUpdate = true; }
+  dispose() { this.geo.dispose(); this.mat.dispose(); }
+}
+
 // The net. Read NET above for the shape of it. Three lives: kinematic in flight, then either
 // draped over an animal or settling on the ground, both simulated.
 const _nsA = new THREE.Vector3(), _nsB = new THREE.Vector3(), _nsC = new THREE.Vector3();
@@ -8790,11 +8895,7 @@ class NetShot {
     // sheet into a bag: the rim falls faster than the middle, swings under, and closes.
     this.heavy = new Uint8Array(n);
     for (let s = 0; s < S; s++) this.heavy[1 + (R - 1) * S + s] = 1;
-    this.geo = new THREE.BufferGeometry();
-    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(la.length * 6), 3));
-    this.mat = new THREE.LineBasicMaterial({ color: new THREE.Color(NET.cord), transparent: true, opacity: .95 });
-    this.mesh = new THREE.LineSegments(this.geo, this.mat);
-    this.mesh.frustumCulled = false;                 // the geometry is rebuilt every frame; its bounds are a lie
+    this.rope = new Rope(la.length, NET.thick, NET.cord, .95);
     // A knot at every crossing. Additive points, so at distance the cords fade to a haze and
     // the knots stay as a constellation -- which is what keeps it legible on a phone.
     this.kgeo = new THREE.BufferGeometry();
@@ -8802,7 +8903,7 @@ class NetShot {
     this.kmat = new THREE.PointsMaterial({ map: glowTex, color: new THREE.Color(NET.lit), size: NET.knot,
       sizeAttenuation: true, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false });
     this.knots = new THREE.Points(this.kgeo, this.kmat); this.knots.frustumCulled = false;
-    this.g = new THREE.Group(); this.g.add(this.mesh, this.knots);
+    this.g = new THREE.Group(); this.g.add(this.rope.mesh, this.knots);
     this.hub = glow(NET.lit, 1.5, .8); this.g.add(this.hub);
     scene.add(this.g);
     this.place(0); this.draw();
@@ -8874,7 +8975,7 @@ class NetShot {
     o.abandon(); o.wp = null; o.target = null; o.fling = null; o.alarm = 0; o.stall = 0;
     this.px = o.pos.x; this.py = o.pos.y; this.pz = o.pos.z;
     this.drape(o);
-    this.mat.color.set(NET.lit);
+    this.rope.mat.color.set(NET.lit);
     world.effects.push(new Burst(o.pos.x, o.pos.y + (o.rad || 1), o.pos.z, '#9ff0d8', 11, .9));
     logMsg('The net comes down over it. Walk up and take hold to drag it.');
   }
@@ -8975,25 +9076,31 @@ class NetShot {
     let cx = 0, cy = 0, cz = 0;
     for (let i = 0; i < n; i++) { const i3 = i * 3; cx += p[i3]; cy += p[i3 + 1]; cz += p[i3 + 2]; }
     cx /= n; cy /= n; cz /= n;
-    const a = this.geo.attributes.position.array;
+    this.g.position.set(cx, cy, cz);
+    // A cord under tension is straight and a slack one bows: the sag comes straight off how
+    // much shorter than its cut length the cord currently is, so the net visibly loosens as
+    // it cinches instead of staying a taut diagram.
+    this.rope.begin(this.g);
     for (let k = 0; k < la.length; k++) {
-      const i = la[k] * 3, j = lb[k] * 3, o = k * 6;
-      a[o] = p[i] - cx; a[o + 1] = p[i + 1] - cy; a[o + 2] = p[i + 2] - cz;
-      a[o + 3] = p[j] - cx; a[o + 4] = p[j + 1] - cy; a[o + 5] = p[j + 2] - cz;
+      const i = la[k] * 3, j = lb[k] * 3;
+      const dx = p[j] - p[i], dy = p[j + 1] - p[i + 1], dz = p[j + 2] - p[i + 2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const sag = Math.min(Math.max(0, this.rest[k] - d) * ROPE.sag, this.rest[k] * .45);
+      this.rope.strand(p[i] - cx, p[i + 1] - cy, p[i + 2] - cz,
+                       p[j] - cx, p[j + 1] - cy, p[j + 2] - cz, sag);
     }
-    this.geo.attributes.position.needsUpdate = true;
+    this.rope.end();
     const kb = this.kgeo.attributes.position.array;
     for (let i = 0; i < n; i++) { const i3 = i * 3; kb[i3] = p[i3] - cx; kb[i3 + 1] = p[i3 + 1] - cy; kb[i3 + 2] = p[i3 + 2] - cz; }
     this.kgeo.attributes.position.needsUpdate = true;
     this.kmat.opacity = .85 * this.op;
-    this.g.position.set(cx, cy, cz);
-    this.mat.opacity = .95 * this.op;
+    this.rope.mat.opacity = .95 * this.op;
     this.hub.visible = this.state === 'fly';
     if (this.hub.visible) this.hub.scale.setScalar(1.4 + Math.sin(this.t * 24) * .3);
   }
   dispose() {
     if (this.prey) { this.prey.net = null; if (player.drag === this.prey) player.drag = null; }
-    scene.remove(this.g); this.geo.dispose(); this.mat.dispose(); this.kgeo.dispose(); this.kmat.dispose();
+    scene.remove(this.g); this.rope.dispose(); this.kgeo.dispose(); this.kmat.dispose();
     if (this.hub.material) this.hub.material.dispose();
   }
 }
@@ -9098,11 +9205,10 @@ const armIco = document.getElementById('armIco'), armLbl = document.getElementBy
 // The rack is built from WEAPONS, in its order, so a third weapon is one more entry there
 // and nothing here.
 for (const k in WEAPONS) {
-  const b = document.createElement('button');
+  const b = document.createElement('div');
   b.className = 'wslot'; b.dataset.w = k; b.title = WEAPONS[k].label;
   b.innerHTML = '<span class="wico">' + WEAPONS[k].icon + '</span><span>' + WEAPONS[k].label + '</span>';
-  b.addEventListener('click', e => { e.stopPropagation(); pickWeapon(k); closeRack(); });
-  wrack.appendChild(b);
+  wrack.appendChild(b);                     // no listener: the gesture belongs to the key below
 }
 function paintWeapon() {
   const w = WEAPONS[player.wpn];
@@ -9129,12 +9235,18 @@ function toggleArm() {
     ? 'He unclips the ' + WEAPONS[player.wpn].label + '. Hold the right stick to aim; let go to fire.'
     : 'It goes away.');
 }
-// Tap draws or puts away; hold opens the rack. The ring winds round the key while the hold is
-// counting, so a press that is about to open something says so before it does -- otherwise a
-// long press and a slow tap are indistinguishable until one of them surprises you.
+// One gesture, two outcomes. Press and let go and it draws or puts away. Press, keep holding
+// until the rack opens, slide the thumb onto a slot and let go, and that is what he racks --
+// no second tap, and no lifting off in between. The whole thing is one pointer stream on the
+// key, captured, so the slots never need to receive an event of their own; the thumb is over
+// the rack rather than on it, and hit-testing the rects is what "over" means.
+//
+// The ring winds round the key while the hold is counting, so a press that is about to open
+// something says so before it does -- otherwise a long press and a slow tap are the same
+// thing right up until one of them surprises you.
 {
-  const HOLD = 380;
-  let t0 = 0, timer = 0, raf = 0, down = false, opened = false;
+  const HOLD = 340;
+  let t0 = 0, timer = 0, raf = 0, down = false, opened = false, over = null;
   const tick = () => {
     if (!down) return;
     armB.style.setProperty('--h', Math.min(1, (performance.now() - t0) / HOLD).toFixed(3));
@@ -9144,17 +9256,49 @@ function toggleArm() {
     down = false; clearTimeout(timer); cancelAnimationFrame(raf);
     armB.classList.remove('hold'); armB.style.setProperty('--h', '0');
   };
+  // Which slot the thumb is on. Generous vertically -- a thumb sliding up off a phone screen
+  // is aiming at a column, not at a rectangle -- and nearest-column horizontally, so there is
+  // no dead gap between slots to lose a choice in.
+  const hit = (x, y) => {
+    if (wrack.hidden) return null;
+    const r = wrack.getBoundingClientRect();
+    if (y > r.bottom + 26 || y < r.top - 90) return null;
+    let best = null, bd = 1e9;
+    for (const s of wrack.children) {
+      const b = s.getBoundingClientRect(), d = Math.abs(x - (b.left + b.width / 2));
+      if (d < bd) { bd = d; best = s; }
+    }
+    return bd < 64 ? best : null;
+  };
+  const mark = s => {
+    if (s === over) return;
+    if (over) over.classList.remove('over');
+    over = s; if (s) s.classList.add('over');
+  };
   armB.addEventListener('pointerdown', e => {
     e.stopPropagation(); e.preventDefault();
     down = true; opened = false; t0 = performance.now();
+    armB.setPointerCapture(e.pointerId);        // the slide has to keep arriving here
     armB.classList.add('hold'); raf = requestAnimationFrame(tick);
-    timer = setTimeout(() => { if (down) { opened = true; openRack(); clear(); } }, HOLD);
+    timer = setTimeout(() => {
+      if (!down) return;
+      opened = true; openRack(); clear(); down = true;   // clear stops the ring; the press is still down
+      armB.classList.remove('hold');
+    }, HOLD);
   });
-  const end = e => { e.stopPropagation(); const was = down; clear(); if (was && !opened) { closeRack(); toggleArm(); } };
+  armB.addEventListener('pointermove', e => { if (down && opened) mark(hit(e.clientX, e.clientY)); });
+  const end = e => {
+    e.stopPropagation();
+    const was = down, chose = over && over.dataset.w;
+    clear(); mark(null);
+    if (!was) return;
+    if (opened) { if (chose) pickWeapon(chose); closeRack(); }
+    else toggleArm();
+  };
   armB.addEventListener('pointerup', end);
-  armB.addEventListener('pointercancel', e => { e.stopPropagation(); clear(); });
-  // Anywhere outside the dock closes it. The dock's own handlers stop the event, so pressing
-  // the key or a slot never closes the thing being pressed.
+  armB.addEventListener('pointercancel', e => { e.stopPropagation(); clear(); mark(null); closeRack(); });
+  // Anywhere outside the dock closes it. The key stops its own events, so pressing the key
+  // never closes the thing it is opening.
   addEventListener('pointerdown', e => { if (!wrack.hidden && !wdock.contains(e.target)) closeRack(); });
   paintWeapon();
 }
