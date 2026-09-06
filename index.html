@@ -90,6 +90,22 @@
   #sticks .stick.hot .lbl{opacity:1;color:#bff4ff;letter-spacing:.24em;
     text-shadow:0 0 10px rgba(120,238,255,.8)}
   #stkL{left:calc(20px + env(safe-area-inset-left))} #stkR{right:calc(20px + env(safe-area-inset-right))}
+  /* The blaster button sits just inboard of the right stick, where the thumb already is. */
+  #armB{position:fixed;z-index:6;right:calc(150px + env(safe-area-inset-right));
+    bottom:calc(58px + env(safe-area-inset-bottom));min-width:62px}
+  #armB.on{color:#bff4ff;border-color:rgba(150,246,255,.7);
+    box-shadow:0 0 16px rgba(120,238,255,.45),inset 0 0 14px rgba(90,220,255,.2)}
+  /* The lock. Positioned in px by the frame loop, so it needs no layout of its own. */
+  #retic{position:fixed;z-index:5;left:0;top:0;width:52px;height:52px;margin:-26px 0 0 -26px;
+    pointer-events:none;will-change:transform,opacity;transition:opacity .16s}
+  #retic span{position:absolute;inset:0;border-radius:50%;
+    border:2px solid rgba(150,246,255,.9);
+    box-shadow:0 0 12px rgba(120,238,255,.75),inset 0 0 10px rgba(120,238,255,.4);
+    animation:reticspin 2.6s linear infinite}
+  #retic span::before,#retic span::after{content:'';position:absolute;left:50%;top:50%;
+    width:2px;height:11px;margin:-26px 0 0 -1px;background:rgba(180,250,255,.95);border-radius:1px}
+  #retic span::after{margin-top:15px}
+  @keyframes reticspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
   #sticks .knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;
     border-radius:50%;pointer-events:none;
     background:radial-gradient(circle at 38% 32%,rgba(255,242,220,.55),rgba(255,196,124,.26) 58%,rgba(206,132,62,.14));
@@ -169,6 +185,8 @@
     <ellipse cx="20" cy="24" rx="16" ry="6.2" stroke="#7a4a18" stroke-opacity=".5"/>
   </svg></div><div class="lbl">LOOK</div></div>
 </div>
+<button id="armB" class="tog" hidden>draw</button>
+<div id="retic" hidden><span></span></div>
 <div id="ui">
   <canvas id="mini" title="open the map"></canvas>
   <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
@@ -225,7 +243,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b59';
+const BUILD = 'b61';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -789,7 +807,20 @@ const M = {
   walker: std(col('#6d675f'), { roughness: .95 }), walker2: std(col('#4e4941'), { roughness: .95 }),
   walkerShell: std(col('#7d8a6a'), { roughness: .9 }),
   hopper: [std(col('#d9c58f'), { roughness: .85 }), std(col('#c2a874'), { roughness: .85 }), std(col('#e6d7ad'), { roughness: .85 })],
-  hopper2: std(col('#8a7550'), { roughness: .85 })
+  hopper2: std(col('#8a7550'), { roughness: .85 }),
+  // The vault. Pale shell, dark ribs, and two lights: cold blue for the building's own
+  // lamps and violet for anything to do with the splicer, so at a glance you can tell the
+  // architecture from the machine inside it.
+  // All three carry a little emissive of their own. A dark stone at roughness .9 crushes to
+  // black in any shade, and the vault is lit from inside by its own machine at night -- an
+  // unlit rib next to a lit one read as a hole cut in the building.
+  vaultA: std(col('#bdb8cc'), { roughness: .84, emissive: col('#2e2c40'), emissiveIntensity: .5 }),
+  vaultB: std(col('#575270'), { roughness: .88, emissive: col('#211f30'), emissiveIntensity: .55 }),
+  vaultC: std(col('#7b7594'), { roughness: .86, emissive: col('#2a2840'), emissiveIntensity: .5 }),
+  vaultLit: std(col('#cfe9ff'), { emissive: col('#5ec8ff'), emissiveIntensity: 1.5, roughness: .3 }),
+  vaultCore: std(col('#ecd6ff'), { emissive: col('#a85cff'), emissiveIntensity: 1.7, roughness: .26 }),
+  vaultGlass: new THREE.MeshStandardMaterial({ color: col('#bfe8ff'), transparent: true, opacity: .34,
+    roughness: .16, metalness: .1, emissive: col('#3fa8d8'), emissiveIntensity: .4, side: THREE.DoubleSide, depthWrite: false })
 };
 
 // ---------- geometry helpers ----------
@@ -1857,7 +1888,7 @@ function updateWeather(dt) {
   else WX.rainbow = lerp(WX.rainbow, 0, Math.min(1, dt / 6));
   // The shot is pitched down at the island and never shows much sky. A rainbow and a storm
   // are the two things worth looking up for, so the camera lifts for both.
-  cam.pol = lerp(cam.pol0, 1.42, Math.max(smooth(.05, .9, WX.rainbow), smooth(.3, .9, WX.storm) * .8));
+  cam.pol = lerp(cam.pol0 + cam.polBias, 1.42, Math.max(smooth(.05, .9, WX.rainbow), smooth(.3, .9, WX.storm) * .8));
   // lightning
   if (WX.storm > .4) { WX.boltT -= dt; if (WX.boltT <= 0) { strike(); WX.boltT = rnd(4, 15) * (1.8 - WX.storm); } }
   WX.flash = clamp(WX.flash - dt * 6.5, 0, 1);
@@ -2698,7 +2729,10 @@ function attachRig(parent, cfg, done) {
     // Locomotion clips are looked up by role, not by exact name, and a file that lacks a role
     // simply does not get it: no run means walk carries on at speed, no jump clips means the
     // old procedural stretch, no swim clips means the walk plays in the water.
-    const land = e.anims.filter(a => !/swim|tread|water|jump|leap|hop/i.test(a.name));
+    // The armed set is pulled out of `land` before anything else looks at it: rifle_idle_01
+    // matches "idle" and would otherwise be a candidate for the unarmed idle.
+    const rifle = e.anims.filter(a => /rifle|weapon|gun|aim/i.test(a.name));
+    const land = e.anims.filter(a => !/swim|tread|water|jump|leap|hop|rifle|weapon|gun|aim/i.test(a.name));
     const water = e.anims.filter(a => /swim|tread|water/i.test(a.name));
     const jump = e.anims.filter(a => /jump|leap|hop/i.test(a.name));
     const clips = {
@@ -2710,8 +2744,12 @@ function attachRig(parent, cfg, done) {
       jumpStart: pickClip(jump, cfg.jumpStart, 'init|initiate|start|launch|crouch|takeoff', 'air|land|mid|loop'),
       jumpAir: pickClip(jump, cfg.jumpAir, 'air|mid|loop|fall|hang', 'init|initiate|start|land'),
       jumpLand: pickClip(jump, cfg.jumpLand, 'land|landing|down|end|touch', 'init|initiate|start|air'),
+      rifleIdle: pickClip(rifle, cfg.rifleIdle, 'idle', 'walk|run|shoot|fire'),
+      rifleWalk: pickClip(rifle, cfg.rifleWalk, 'walk', 'idle|run|shoot|fire'),
+      rifleRun: pickClip(rifle, cfg.rifleRun, 'run|sprint', 'idle|walk|shoot|fire'),
+      rifleShoot: pickClip(rifle, cfg.rifleShoot, 'shoot|fire', 'idle|walk|run'),
     };
-    for (const k of ['walk', 'run']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
+    for (const k of ['walk', 'run', 'rifleWalk', 'rifleRun']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
     // each clip's own floor, relative to the pose the rig was normalised on, in model units
     for (const k in clips) { const cl = clips[k]; if (cl && e.floors[cl.name] === undefined) e.floors[cl.name] = clipSpan(e.root, cl); }
     const refF = (clips.idle ? e.floors[clips.idle.name] : clips.walk ? e.floors[clips.walk.name] : { lo: 0 }).lo;
@@ -2726,7 +2764,7 @@ function attachRig(parent, cfg, done) {
     for (const k in clips) {
       if (!clips[k]) continue;
       const a = mixer.clipAction(clips[k]); acts[k] = a;
-      if (k === 'jumpStart' || k === 'jumpLand') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      if (k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
       a.play(); a.setEffectiveWeight(k === 'idle' ? 1 : 0);
     }
     const walk = clips.walk, run = clips.run;
@@ -2792,7 +2830,13 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // every rigged animal in a permanent full run the moment it moved. They pass their own.
   const rA = c.runAt !== undefined ? c.runAt : MODEL.runAt, rF = c.runFull !== undefined ? c.runFull : MODEL.runFull;
   const runMix = a.run ? smooth(rA, rF, frac) : 0;
-  want.idle = (1 - loco); want.walk = loco * (1 - runMix); want.run = loco * runMix;
+  // Armed swaps the whole locomotion set for the rifle one, at the same weights, so drawing
+  // the blaster changes how he stands and walks without touching any of the blending above.
+  const arm = a.rifleIdle ? clamp(c.armed || 0, 0, 1) : 0;
+  want.idle = (1 - loco) * (1 - arm); want.rifleIdle = (1 - loco) * arm;
+  want.walk = loco * (1 - runMix) * (1 - arm); want.rifleWalk = loco * (1 - runMix) * arm;
+  want.run = loco * runMix * (1 - arm); want.rifleRun = loco * runMix * arm;
+  want.rifleShoot = c.shoot ? 1 : 0;
   // water: tread <-> swim forward
   const sw = clamp(speed / 6, 0, 1);
   want.swimIdle = 1 - sw; want.swim = sw;
@@ -2801,17 +2845,23 @@ function stepRig(r, dt, speed, grounded, ctx) {
   want.jumpStart = start; want.jumpAir = air * (1 - start); want.jumpLand = landK;
   // mix the layers: water replaces ground; jump phases sit on top of whichever is under them
   const jumpK = Math.max(start, air, landK);
-  for (const k of ['idle', 'walk', 'run']) want[k] *= (1 - swim) * (1 - jumpK);
+  // The shot is laid over whichever armed pose is running, so the base has to give way or the
+  // mixer averages the two and the recoil comes out at half strength.
+  const shootK = want.rifleShoot * .8;
+  for (const k of ['idle', 'walk', 'run', 'rifleIdle', 'rifleWalk', 'rifleRun']) want[k] *= (1 - swim) * (1 - jumpK) * (1 - shootK);
   for (const k of ['swimIdle', 'swim']) want[k] *= swim * (1 - jumpK);
   if (a.walk) a.walk.timeScale = clamp(speed / ref, MODEL.rateMin, r.rateMax || MODEL.rateMax);
+  if (a.rifleWalk) a.rifleWalk.timeScale = a.walk ? a.walk.timeScale : 1;
   if (a.run) a.run.timeScale = clamp(speed / (r.runSpeed || ref * 3), .75, 1.6);
+  if (a.rifleRun) a.rifleRun.timeScale = a.run ? a.run.timeScale : 1;
+  if (a.rifleShoot) a.rifleShoot.timeScale = 1.35;
   if (a.swim) a.swim.timeScale = clamp(speed / 6, .6, 1.6);
   if (a.jumpLand) a.jumpLand.timeScale = 1.5;
   if (a.jumpStart) a.jumpStart.timeScale = 2;    // the crouch has to be over by the time he lifts
   // fade every weight toward its target; one-shots restart the moment they are wanted
   for (const k in a) {
     const t = want[k] || 0, prev = r.w[k] || 0;
-    if ((k === 'jumpStart' || k === 'jumpLand') && t > .5 && prev <= .5) a[k].reset().play();
+    if ((k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot') && t > .5 && prev <= .5) a[k].reset().play();
     const nw = lerp(prev, t, Math.min(1, dt / .1));
     r.w[k] = nw; a[k].setEffectiveWeight(nw);
   }
@@ -2935,7 +2985,11 @@ function worldTint(mat, cfg) {
     uLumA: { value: cfg.lum[0] }, uLumB: { value: cfg.lum[1] },
   };
   mat.onBeforeCompile = sh => {
-    holePatch(sh);                       // an instance hook shadows the prototype's; chain it
+    // An instance hook shadows the prototype's, so the see-through hole has to be chained on
+    // by hand -- and skipped on the same terms the prototype skips it. Anything riding with
+    // him is not scenery between the lens and his chest: the drone hovers inside the hole's
+    // radius all day, and cutting it would dissolve the one thing lighting him.
+    if (!mat.userData.noHole) holePatch(sh);
     for (const k in uni) sh.uniforms[k] = uni[k];
     sh.fragmentShader = 'uniform float uLo, uHi, uK, uKeep, uLumA, uLumB;\nuniform vec3 uTint;\nfloat _glowK;\n'
       + sh.fragmentShader
@@ -5466,6 +5520,248 @@ function siteSpot(what, names, minH, maxH, maxSl, clears, placed) {
   console.warn('[site] nowhere to put the ' + what);
   return null;
 }
+
+// ---------- the vault ----------
+// His station: the thing a specimen gets carried back to. It is one building rather than a
+// scatter of props, so it is worth saying how it is put together.
+//
+// It is open to the sky, and that is architecture rather than a shortcut. A third-person
+// camera on a twenty-unit boom cannot be inside a closed room; every way round that is a
+// system (fade the roof out, a separate interior scene, a top-down mode indoors), and a hall
+// ringed by spires with nothing over it solves the same problem in the shape of the building.
+// The curtain wall is tall enough to enclose you and low enough for the drone to look over.
+// Inside, the walls stop the wanderer and are invisible to the boom solver -- `seeThru` --
+// because the primitives are single-sided, so a lens that ends up past one just sees the room.
+//
+// It has no plinth, and that is the second thing worth saying. The first build stood on a
+// two-metre platform, which looked right and was a wall: on ground that falls away a unit
+// over the twenty-five it covers, the step up is over the height a body can climb, and the
+// harness walked at it from all twenty-four bearings and never got in. The floor is the
+// island now. The paving follows the height field, the wall panels are sunk deep enough that
+// a dip never opens a gap under them, and the only thing you climb is the three shallow steps
+// of the dais in the middle.
+//
+// The whole shell is siteAt primitives merged by material -- seven draw calls for a building
+// forty-four units across. Only what actually moves is a live object.
+const VAULT = {
+  R: 22,            // the curtain wall
+  wallH: 8.6,
+  sink: 4,          // how far the wall's foot is buried, so uneven ground never shows under it
+  gate: .40,        // half the gateway, in radians of wall
+  reach: 7,         // how near the splicer you have to be for it to offer itself
+  tanks: 6,
+};
+// The court's floor is the island, so the paving is laid on the height field rather than on
+// the site's plane -- the same trick the steading's tilled earth uses, and the reason it does
+// not float off the far side of a rise.
+const M_PAVE = new THREE.MeshStandardMaterial({ color: col('#8b86a2'), roughness: .84,
+  emissive: col('#2b2842'), emissiveIntensity: .5,
+  transparent: true, opacity: .92, alphaMap: wornTex, depthWrite: false,
+  polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+// A drum-stacked spire: each drum narrower than the last and turned a little against it, with
+// a lit seam at every joint. Nothing here is a castle shape -- no battlements, no square
+// keep -- but the proportions are a keep's, which is what makes it read as somewhere lived in
+// rather than a rock formation.
+function vaultSpire(S, px, pz, h, r0, spin) {
+  const N = 7;
+  let y = -VAULT.sink, r = r0 * 1.15;
+  for (let i = 0; i < N; i++) {
+    const sh = (h + VAULT.sink) / N * (1 + (i - 3) * .05);
+    S.put(G.cylT, i % 2 ? M.vaultA : M.vaultC, r * 2, sh, r * 2, px, y + sh / 2, pz, 0, spin + i * .5, 0);
+    if (i) S.put(G.cyl, M.vaultLit, r * 1.42, .17, r * 1.42, px, y, pz);
+    y += sh; r *= .82;
+  }
+  S.put(G.cone, M.vaultB, r * 2.8, h * .16, r * 2.8, px, y + h * .08, pz);
+  S.put(G.sph, M.vaultCore, r * 1.4, r * 2.2, r * 1.4, px, y + h * .18, pz);
+}
+// A tower: fatter, shorter, with a balcony you can count the railings on from the ground and
+// four lit slits at head height, which is what tells you it is a building and not a rock.
+function vaultTower(S, px, pz, h, r0, spin) {
+  S.put(G.cyl, M.vaultC, r0 * 2, h + VAULT.sink, r0 * 2, px, (h - VAULT.sink) / 2, pz);
+  S.put(G.cyl, M.vaultB, r0 * 2.55, .65, r0 * 2.55, px, h * .72, pz);
+  for (let i = 0; i < 11; i++) { const a = i / 11 * Math.PI * 2;
+    S.put(G.box, M.vaultA, .28, .95, .28, px + Math.sin(a) * r0 * 1.16, h * .72 + .78, pz + Math.cos(a) * r0 * 1.16); }
+  for (let i = 0; i < 4; i++) { const a = i / 4 * Math.PI * 2 + spin;
+    S.put(G.box, M.vaultLit, .36, 2.3, .36, px + Math.sin(a) * r0 * .99, h * .44, pz + Math.cos(a) * r0 * .99); }
+  S.put(G.cyl, M.vaultA, r0 * 1.75, h * .2, r0 * 1.75, px, h * 1.1, pz);
+  S.put(G.cone, M.vaultB, r0 * 2.1, h * .3, r0 * 2.1, px, h * 1.35, pz);
+  S.put(G.sph, M.vaultLit, r0 * .7, r0 * 1, r0 * .7, px, h * 1.54, pz);
+}
+// A culture tank: a glass cylinder on a sunk plinth, with a cap and three ribs. What floats
+// inside it is not built here -- it moves, so it belongs to the Vault object.
+function vaultTank(S, px, pz, a) {
+  S.put(G.cyl, M.vaultB, 3.1, 4.0, 3.1, px, -1.0, pz);
+  S.put(G.cyl, M.vaultC, 2.5, .55, 2.5, px, 1.25, pz);
+  S.put(G.cyl, M.vaultLit, 1.9, .14, 1.9, px, 1.6, pz);
+  S.put(G.cyl, M.vaultGlass, 2.2, 4.4, 2.2, px, 3.7, pz);
+  S.put(G.cyl, M.vaultA, 2.8, .6, 2.8, px, 6.2, pz);
+  S.put(G.cyl, M.vaultB, 1.0, 1.5, 1.0, px, 7.2, pz);
+  for (let i = 0; i < 3; i++) { const b = a + i / 3 * Math.PI * 2;
+    S.put(G.box, M.vaultC, .3, 4.9, .3, px + Math.sin(b) * 1.06, 3.75, pz + Math.cos(b) * 1.06); }
+}
+class Vault {
+  constructor(x, z, yaw) {
+    const V = VAULT, R = V.R;
+    this.alive = true;
+    const S = siteAt(x, z, yaw);
+    this.site = S;
+    this.pos = new THREE.Vector3(x, S.base, z);
+    clearGrass(x, z, R + 8);
+    // Nothing grows where the court is, or through the wall. The sites are built after the
+    // world is populated, so anything already standing in the footprint has to go rather than
+    // be built around -- and the radius has to reach past the wall itself, or a mushroom the
+    // size of a shed comes up through a spire.
+    for (const pl of world.plants) if (pl.alive && Math.hypot(pl.pos.x - x, pl.pos.z - z) < R + 5) pl.alive = false;
+
+    // the floor: paving laid on the height field, thinning out toward the wall
+    for (let i = 0; i < 90; i++) {
+      const a = rnd(Math.PI * 2), rr = Math.sqrt(Math.random()) * (R - 1.5), sz2 = rnd(4, 9);
+      S.ground(G.plane, M_PAVE, sz2, sz2, Math.sin(a) * rr, Math.cos(a) * rr, rnd(Math.PI * 2));
+    }
+    // and the lit inlay running out from the dais, laid the same way so it follows the ground
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 + .39;
+      for (let j = 0; j < 7; j++) { const rr = 9 + j * 1.7;
+        S.ground(G.plane, M.vaultLit, .5, 1.5, Math.sin(a) * rr, Math.cos(a) * rr, a, .18); } }
+
+    const inGate = a => Math.abs(Math.atan2(Math.sin(a - Math.PI), Math.cos(a - Math.PI))) < V.gate;
+    const SEG = 44, panel = R * 2 * Math.PI / SEG * 1.16;
+    for (let i = 0; i < SEG; i++) {
+      const a = (i + .5) / SEG * Math.PI * 2;
+      if (inGate(a)) continue;
+      const px = Math.sin(a) * R, pz = Math.cos(a) * R;
+      const h = V.wallH * (.9 + Math.sin(a * 3.7) * .1);
+      S.put(G.box, i % 3 ? M.vaultA : M.vaultC, panel, h + V.sink, 1.9, px, (h - V.sink) / 2, pz, 0, a, 0);
+      if (i % 4 === 0) {                    // a rib, and the lit seam on its inner face
+        S.put(G.box, M.vaultB, 1.05, h + 2.3 + V.sink, 2.7, px, (h + 2.3 - V.sink) / 2, pz, 0, a, 0);
+        S.put(G.box, M.vaultLit, .34, h * .7, .34, Math.sin(a) * (R - 1.15), h * .5, Math.cos(a) * (R - 1.15), 0, a, 0);
+      }
+    }
+    // the gateway: an arch swung across the opening, its blocks turned to follow the curve
+    const gw = R * Math.sin(V.gate);
+    for (let i = 0; i < 13; i++) {
+      const t = (i + .5) / 13, ang = Math.PI * t;
+      const rz = Math.atan2(Math.cos(ang) * 5.6, -Math.sin(ang) * gw);
+      S.put(G.box, i % 2 ? M.vaultC : M.vaultA, 2.1, 1.5, 2.4, Math.cos(ang) * gw, 6.0 + Math.sin(ang) * 5.6, -R, 0, 0, rz);
+    }
+    S.put(G.box, M.vaultLit, gw * 1.7, .3, .5, 0, 12.0, -R + .1);
+
+    // five spires round the wall, and the two towers that flank the gate
+    const spires = [[.30, 34, 2.6], [1.28, 26, 2.1], [2.42, 39, 3.0], [4.05, 27, 2.2], [5.05, 31, 2.5]];
+    for (const [a, h, r0] of spires) vaultSpire(S, Math.sin(a) * R, Math.cos(a) * R, h, r0, a);
+    const gateT = [];
+    for (const sgn of [1, -1]) {
+      const a = Math.PI + sgn * (V.gate + .13);
+      gateT.push([Math.sin(a) * R, Math.cos(a) * R]);
+      vaultTower(S, Math.sin(a) * R, Math.cos(a) * R, 16, 2.9, a);
+    }
+
+    // the dais: three shallow steps, and the splicer standing on the top of them
+    for (let i = 0; i < 3; i++) S.put(G.cyl, i % 2 ? M.vaultC : M.vaultB, (8.4 - i * 1.2) * 2, .5 + i * .5, (8.4 - i * 1.2) * 2, 0, (.5 + i * .5) / 2 + i * .5, 0);
+    // The splicer is two drums with four units of nothing between them, and the core hangs in
+    // the gap. Built as one shaft it swallowed its own light: the core is a unit and a half
+    // across and the column was one point seven.
+    const D = 1.5, CY = D + 7.6;
+    S.put(G.cylT, M.vaultB, 5.4, 2.2, 5.4, 0, D + 1.1, 0);
+    S.put(G.cyl, M.vaultA, 3.4, 3.4, 3.4, 0, D + 3.9, 0);
+    S.put(G.cyl, M.vaultB, 4.2, .5, 4.2, 0, D + 5.7, 0);
+    S.put(G.cyl, M.vaultB, 4.2, .5, 4.2, 0, D + 9.5, 0);
+    S.put(G.cyl, M.vaultA, 3.4, 2.4, 3.4, 0, D + 10.9, 0);
+    for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2;   // six rods carry the top drum over the gap
+      S.put(G.box, M.vaultC, .55, 4.0, .55, Math.sin(a) * 2.05, CY, Math.cos(a) * 2.05, 0, a, 0);
+      S.put(G.box, M.vaultLit, .2, 3.4, .2, Math.sin(a) * 1.72, CY, Math.cos(a) * 1.72, 0, a, 0); }
+    S.put(G.cyl, M.vaultB, 6.2, .7, 6.2, 0, D + 12.4, 0);
+    S.put(G.cone, M.vaultC, 5.0, 2.6, 5.0, 0, D + 14.0, 0);
+
+    // six tanks round the inside of the wall, and two consoles facing the dais
+    this.tankAt = [];
+    for (let i = 0; i < V.tanks; i++) {
+      const a = i / V.tanks * Math.PI * 2 + .5;
+      const px = Math.sin(a) * 15.4, pz = Math.cos(a) * 15.4;
+      vaultTank(S, px, pz, a);
+      this.tankAt.push([px, 3.7, pz]);
+    }
+    for (const sgn of [1, -1]) {
+      S.put(G.box, M.vaultB, 3.6, 3.5, 1.7, sgn * 9.4, -.25, 3.6);
+      S.put(G.box, M.vaultLit, 3.1, .12, 1.6, sgn * 9.4, 1.62, 3.55, -.5, 0, 0);
+      S.put(G.box, M.vaultC, .5, 1.4, .5, sgn * 9.4, 2.4, 4.3);
+    }
+
+    this.shell = S.done();
+
+    // ---- what stops him, and what the camera is allowed through ----
+    const mark = (px, pz, r, top) => { const w = S.world(px, pz); const o = obAdd(w.x, w.z, r, null, top); o.seeThru = 1; return o; };
+    this.obs = [];
+    for (let i = 0; i < 40; i++) {
+      const a = (i + .5) / 40 * Math.PI * 2;
+      if (inGate(a)) continue;
+      this.obs.push(mark(Math.sin(a) * R, Math.cos(a) * R, 2.3, S.base + V.wallH));
+    }
+    for (const [a, , r0] of spires) this.obs.push(mark(Math.sin(a) * R, Math.cos(a) * R, r0 * 1.3, Infinity));
+    for (const [px, pz] of gateT) this.obs.push(mark(px, pz, 3.4, Infinity));
+    // The dais, as three steps rather than one block: each is half a unit over the last, and
+    // half a unit is well inside what he can walk up.
+    for (let i = 0; i < 3; i++) this.obs.push(mark(0, 0, 8.4 - i * 1.2, S.base + 1 + i * .5));
+    this.obs.push(mark(0, 0, 2.9, Infinity));                        // the splicer's column
+    for (const [px, , pz] of this.tankAt) this.obs.push(mark(px, pz, 1.8, Infinity));
+
+    // ---- the parts that move ----
+    // A live group, not merged: it is projected onto the planet like anything else added to
+    // the scene, so it is placed exactly the way the site was and then left alone.
+    const g = new THREE.Group();
+    g.position.set(x, S.base, z);
+    g.quaternion.setFromUnitVectors(_plY, normalAt(x, z).lerp(_plY, .5).normalize())
+      .multiply(new THREE.Quaternion().setFromAxisAngle(_plY, yaw));
+    this.g = g; scene.add(g);
+    this.coreY = CY;
+    this.core = mesh(G.sph, M.vaultCore, 1.5, 1.5, 1.5, 0, CY, 0); g.add(this.core);
+    this.coreGl = glow('#c48cff', 7, .8); this.coreGl.position.set(0, CY, 0); g.add(this.coreGl);
+    this.light = new THREE.PointLight(0xa85cff, 2.2, 54, 2); this.light.position.set(0, CY + .5, 0); g.add(this.light);
+    // Three rings, each turning about its own axis at its own rate. G.torus has a major
+    // radius of one, so the scale IS the ring's radius.
+    this.rings = [];
+    for (let i = 0; i < 3; i++) {
+      const rr = 2.7 + i * .95;
+      const r = mesh(G.torus, M.vaultLit, rr, rr, rr, 0, CY, 0);
+      r.rotation.set(i * .7, 0, i * .5);
+      r.userData.sp = (i % 2 ? 1 : -1) * (.35 + i * .18);
+      g.add(r); this.rings.push(r);
+    }
+    this.blobs = [];
+    for (let i = 0; i < this.tankAt.length; i++) {
+      const [px, py, pz] = this.tankAt[i];
+      const b = mesh(pick(G.blob), M.vaultCore, .95, 1.2, .95, px, py, pz);
+      b.userData.p = i / this.tankAt.length * 6.3; g.add(b); this.blobs.push(b);
+    }
+    world.vault = this;
+    logMsg('A vault stands in the ' + biomeAt(x, z).name + ', lit and empty.');
+  }
+  update(dt) {
+    const t = world.clock;
+    for (const r of this.rings) { r.rotation.y += dt * r.userData.sp; r.rotation.x += dt * r.userData.sp * .4; }
+    const pulse = .86 + Math.sin(t * 1.7) * .1 + Math.sin(t * 4.3) * .04;
+    this.core.scale.setScalar(1.5 * pulse); this.core.rotation.y += dt * .3;
+    this.coreGl.scale.setScalar((6 + world.night * 5) * pulse);
+    this.light.intensity = (1.4 + world.night * 2.2) * pulse;
+    for (let i = 0; i < this.blobs.length; i++) {
+      const b = this.blobs[i], ph = b.userData.p;
+      b.position.y = this.tankAt[i][1] + Math.sin(t * .7 + ph) * .55;
+      b.rotation.y += dt * .5; b.rotation.x = Math.sin(t * .4 + ph) * .3;
+      b.scale.setScalar(.9 + Math.sin(t * 1.3 + ph) * .08);
+    }
+    // Standing on the dais, the splicer offers itself. It has nothing to work with yet and
+    // says so -- the specimen half of this is not built, and a button that pretended
+    // otherwise would be worse than no button.
+    // The offer takes the right stick's tap away from the jump while it stands, so it is kept
+    // tight to the splicer rather than covering the whole court.
+    if (!INTRO.on && !player.aboard && !player.free && Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) < VAULT.reach)
+      offerAct({ icon: 'splice', label: 'SPLICE', run: () => {
+        world.effects.push(new Burst(this.pos.x, this.pos.y + this.coreY, this.pos.z, '#c48cff', 13, 1.1));
+        logMsg('The splicer turns over and finds the tanks empty. Nothing has been brought back yet.');
+      } });
+  }
+  dispose() { for (const o of this.obs) obRemove(o); scene.remove(this.g); scene.remove(this.shell); }
+}
+
 function buildSites() {
   const out = [];
   const farm = siteSpot('steading', ['pasture'], 2.6, 10, .2, [15, 12, 9, 7, 5], out);
@@ -5474,6 +5770,21 @@ function buildSites() {
   if (ring) out.push(buildStones(ring.x, ring.z));
   const huddle = siteSpot('huddle', ['scrub', 'pasture'], 2.6, 12, .2, [16, 13, 10, 8, 6], out);
   if (huddle) out.push(buildHuddle(huddle.x, huddle.z, rnd(Math.PI * 2)));
+  // The vault wants more room and flatter ground than anything else here -- forty-four units
+  // across -- and it is the one place you come back to, so unlike every other site it is not
+  // allowed to land on the sister isle across the water. It gets first refusal on the map.
+  const iso = { x: CENTERS[1][0] * W, z: CENTERS[1][1] * W };
+  const reachable = q => q && Math.hypot(q.x - iso.x, q.z - iso.z) > W * .34;
+  let vault = null;
+  for (const c of [32, 26, 22, 18]) {
+    for (const nm of ['pasture', 'scrub', 'highland'])
+      for (let i = 0; i < 8 && !vault; i++) { const q = randomBiome(nm, 3, 26, .12, 500, c); if (reachable(q)) vault = q; }
+    if (vault) break;
+  }
+  if (!vault) for (const c of [26, 20, 16])
+    for (let i = 0; i < 60 && !vault; i++) { const q = randomLand(3, 26, .12, 400, c); if (reachable(q)) vault = q; }
+  if (vault) { world.structures.push(new Vault(vault.x, vault.z, rnd(Math.PI * 2))); out.push({ x: vault.x, z: vault.z }); }
+  else console.warn('[site] nowhere to put the vault');
   const ruin = siteSpot('ruin', ['jungle', 'wetland'], 3, 14, .3, [13, 10, 8, 6, 4], out);
   if (ruin) {
     out.push(buildRuin(ruin.x, ruin.z, rnd(Math.PI * 2)));
@@ -5889,8 +6200,32 @@ function diveFrame(dt) {
 // and nine over his head, which puts the treeline and the sky in frame without the boom
 // getting any shorter — sin(pol)*r barely moves, so he stays the same size on screen.
 const CAM_POL = 1.28;
-const cam = { az: .7, pol: CAM_POL, pol0: CAM_POL, r: 20, tgt: new THREE.Vector3(0, 6, 0), idle: 0, rWalk: 0 };   // pol0: the pitch before the weather leans it
+const cam = { az: .7, pol: CAM_POL, pol0: CAM_POL, polBias: 0, r: 20, tgt: new THREE.Vector3(0, 6, 0), idle: 0, rWalk: 0, lift: 0 };   // pol0: the pitch before the weather leans it
 const camS = { pol: CAM_POL, r: 24 };       // what the camera actually flies at
+// The drone. Everything here is one idea: the camera is a machine flying itself, not a boom
+// bolted to his back. It has a mount that follows him with slack, a gimbal that tilts to hold
+// the ground he is walking into, and it climbs over things rather than being shoved through
+// them. Every number is a rate or a distance, so all of it is tunable from here.
+const GIMBAL = {
+  // How the mount chases him. Sideways is brisk. Up and down is deliberately slow, because
+  // the ground under him is a staircase of rocks and roots and every one of them used to be
+  // a jolt in the frame -- but it stiffens as the gap opens, so a step is smoothed and a
+  // cliff is not left half a field behind.
+  lag: { xz: 9, up: 2.6, down: 4.2, catch: 13, gap: [2.5, 11] },
+  lead: .30, leadMax: 7,             // seconds of travel the frame is pushed ahead of him
+  recentre: 1.6, recentreAt: 1.1,    // how briskly, and how soon, it works its way back behind him
+  clear: 2.5,                        // how far off the ground the boom flies
+  // The climb. `maxK` is how far straight up it will go to clear a ridge, as a fraction of
+  // the boom -- a fixed ceiling was wrong in both directions: thirty units is a silly climb
+  // on a twenty-unit boom and nowhere near enough on a ninety-unit one, where it saturated
+  // over any relief at all and pulled a wide shot back in to a third of what was asked for.
+  // Past `off` the boom is a look at the island rather than a shot of him, and the solver
+  // stands down entirely: nothing is between you and the ground from up there.
+  lift: { maxK: .7, min: 14, max: 120, up: 6, down: 1.8, pull: .55, off: [70, 120] },
+  // The gimbal's tilt, read off the ground ahead rather than the slope underfoot -- which
+  // would pitch just as hard running along a contour as straight up the face.
+  pitch: { ahead: 17, k: .34, max: .30, rate: 1.8 },
+};
 const _camWant = new THREE.Vector3(), _holeP = new THREE.Vector3(), _holeV = new THREE.Vector3();
 const _camQ = new THREE.Quaternion(), _camW = new THREE.Vector3();
 // Treat the terrain as a heightfield and march the boom: if the shot is blocked,
@@ -5903,27 +6238,63 @@ const _camQ = new THREE.Quaternion(), _camW = new THREE.Vector3();
 function camInside(x, y, z) {
   let hit = false;
   obNear(x, z, 3, o => {
-    if (hit || y > o.top) return;
+    // A building you walk about inside is the one thing this test must not react to. The
+    // vault's walls stop the wanderer and nothing else: pulling the boom in every time he
+    // stood near one would make the whole interior unusable, and there is no need -- the
+    // primitives are single-sided, so a lens that ends up past a wall simply sees the room.
+    if (hit || o.seeThru || y > o.top) return;
     const r = obRad(o) + 1.1, dx = x - o.x, dz = z - o.z;
     if (dx * dx + dz * dz < r * r) hit = true;
   });
   return hit;
 }
+// The ground is boomLift's job now, and it answers in units rather than yes-or-no. What is
+// left for this is the thing a height field cannot see: the lens parked inside a solid.
 function camClear(pol, r) {
   const sx = Math.sin(cam.az) * Math.sin(pol) * r, sy = Math.cos(pol) * r, sz = Math.cos(cam.az) * Math.sin(pol) * r;
-  const cx = cam.tgt.x + sx, cy = cam.tgt.y + sy, cz = cam.tgt.z + sz;
-  if (cy < deckY(cx, cz, cy) + 2.6) return false;
-  if (camInside(cx, cy, cz)) return false;
-  for (let i = 3; i <= 9; i++) {
-    const t = i / 10, py = lerp(cam.tgt.y, cy, t);
-    if (py < deckY(lerp(cam.tgt.x, cx, t), lerp(cam.tgt.z, cz, t), py) + 1.4) return false;
+  return !camInside(cam.tgt.x + sx, cam.tgt.y + sy, cam.tgt.z + sz);
+}
+// How far the boom would have to rise for the whole of it to clear the ground. Marching the
+// height field is the same idea as before; what changed is that the answer is a distance
+// rather than a yes or no. Raising the lens by L raises the point a fraction t along the
+// boom by t*L, so the lift the worst sample asks for is its shortfall divided by its own t,
+// and the lift the boom needs is the largest of those. A continuous number eases; the old
+// ladder of seven fixed pitch rungs could only pop between them, which is what made a walk
+// along a ridge look like the camera was being kicked.
+function boomLift(pol, r) {
+  const sx = Math.sin(cam.az) * Math.sin(pol) * r, sy = Math.cos(pol) * r, sz = Math.cos(cam.az) * Math.sin(pol) * r;
+  let need = 0;
+  for (let i = 3; i <= 10; i++) {
+    const t = i / 10;
+    const x = cam.tgt.x + sx * t, z = cam.tgt.z + sz * t, y = cam.tgt.y + sy * t;
+    // the last sample is the lens itself and wants the full standoff; the shaft only wants
+    // enough not to be buried
+    const want = deckY(x, z, y) + (i === 10 ? GIMBAL.clear : GIMBAL.clear * .55);
+    if (want > y) need = Math.max(need, (want - y) / t);
   }
-  return true;
+  return need;
 }
 function solveCam(dt) {
-  let pol = cam.pol, r = cam.r, ok = camClear(pol, r);
-  if (!ok) for (let k = 1; k <= 7 && !ok; k++) { pol = Math.max(.16, cam.pol - k * .11); ok = camClear(pol, r); }
-  if (!ok) { pol = Math.max(.16, cam.pol - .77); for (let k = 1; k <= 9 && !ok; k++) { r = cam.r * (1 - k * .095); ok = camClear(pol, r); } }
+  const pol0 = cam.pol, r0 = cam.r;
+  // What the ground is asking for this frame, eased: it rises quickly, because being inside a
+  // hill is the one thing that must not persist, and comes back down slowly, so cresting a
+  // ridge does not drop the camera into the far side of it.
+  const L = GIMBAL.lift;
+  const cap = clamp(r0 * L.maxK, L.min, L.max);
+  const fade = 1 - smooth(L.off[0], L.off[1], r0);
+  const want = Math.min(cap, boomLift(pol0, r0)) * fade;
+  cam.lift = lerp(cam.lift, want, Math.min(1, dt * (want > cam.lift ? L.up : L.down)));
+  // Fly the climb: the lens goes straight up by `lift` while its distance over the ground
+  // stays what the player asked for, which is what a drone lifting over a ridge actually
+  // does. Falling out of that is a new pitch and a slightly longer boom, not a new mode.
+  let hx = Math.sin(pol0) * r0, hy = Math.cos(pol0) * r0 + cam.lift;
+  // Only if climbing could not clear it does it come in -- and it comes in on the horizontal,
+  // so he stays the same size on screen instead of the shot going flat.
+  if (fade > .5 && cam.lift > cap - .5) hx *= L.pull;
+  let r = Math.max(5, Math.hypot(hx, hy)), pol = clamp(Math.atan2(hx, hy), .16, 1.5);
+  // The last resort, and the only discrete step left: the lens is inside something the height
+  // field knows nothing about -- a mushroom the size of a shed -- so pull in until it is not.
+  for (let k = 0; k < 4 && !camClear(pol, r); k++) r *= .9;
   r = Math.max(5, r);
   camS.pol = lerp(camS.pol, pol, Math.min(1, dt * (pol < camS.pol ? 10 : 3)));
   camS.r = lerp(camS.r, r, Math.min(1, dt * (r < camS.r ? 12 : 2.5)));
@@ -5932,6 +6303,42 @@ function solveCam(dt) {
   const minY = groundY(cam.tgt.x + sx, cam.tgt.z + sz) + 2.2;
   camS.y = Math.max(cam.tgt.y + Math.cos(camS.pol) * camS.r, minY);
 }
+// The mount and the gimbal. Three separate jobs that used to be one stiff lerp:
+//   * where it hangs -- ahead of him by however far he will travel in the next third of a
+//     second, so a sprint shows the ground he is running into rather than the ground he has
+//     left. Standing still the lead is nothing and it sits over him as before.
+//   * how it hangs there -- fast across the ground, slow up and down, and stiffening as the
+//     gap opens. This is the whole of "it doesn't go up": a two-unit rock used to be a
+//     two-unit jolt, and a cliff used to leave the frame behind for a beat.
+//   * where it points -- tilted by the ground it is flying into. Cresting a rise the drone
+//     tips down to hold what is beyond it; stepping off a ledge it tips the other way.
+function followCam(dt) {
+  const p = player, G = GIMBAL;
+  const lead = Math.min(G.leadMax, p.speed * G.lead);
+  _camWant.set(p.pos.x + Math.sin(p.faceH) * lead, p.pos.y + 3.4, p.pos.z + Math.cos(p.faceH) * lead);
+  const kxz = Math.min(1, dt * G.lag.xz);
+  cam.tgt.x = lerp(cam.tgt.x, _camWant.x, kxz);
+  cam.tgt.z = lerp(cam.tgt.z, _camWant.z, kxz);
+  const dy = _camWant.y - cam.tgt.y;
+  const rate = (dy > 0 ? G.lag.up : G.lag.down) + smooth(G.lag.gap[0], G.lag.gap[1], Math.abs(dy)) * G.lag.catch;
+  cam.tgt.y = lerp(cam.tgt.y, _camWant.y, Math.min(1, dt * rate));
+
+  // It works its way back behind him -- but only while he is actually going somewhere, only
+  // once the look control has been quiet for a moment, and never while he is aiming, which
+  // has its own claim on the azimuth. The rate scales with how fast he is moving, so a
+  // stroll swings round gently and a sprint gets there before the next corner.
+  const sp = clamp(p.speed / MOVE.max, 0, 1);
+  if (!p.aiming && !p.fly && cam.idle > G.recentreAt && sp > .12) {
+    let d = (p.faceH + Math.PI) - cam.az; d = Math.atan2(Math.sin(d), Math.cos(d));
+    cam.az += d * Math.min(1, dt * G.recentre * sp * smooth(G.recentreAt, G.recentreAt + .9, cam.idle));
+  }
+
+  const P = G.pitch;
+  const ah = groundY(cam.tgt.x + Math.sin(p.faceH) * P.ahead, cam.tgt.z + Math.cos(p.faceH) * P.ahead);
+  const rise = clamp((ah - (cam.tgt.y - 3.4)) / P.ahead, -1, 1);
+  cam.polBias = lerp(cam.polBias, clamp(-rise * P.k, -P.max, P.max), Math.min(1, dt * P.rate));
+}
+
 // ZMIN used to be 8, which let a pinch bury the camera inside the wanderer and the scenery.
 const ZMIN = 14, ZMAX = 720;
 const ptr = { down: false, x: 0, y: 0, sx: 0, sy: 0, t: 0, moved: false, pinch: 0, multi: false };
@@ -5984,6 +6391,29 @@ for (const t of ['gesturestart', 'gesturechange', 'gestureend'])
 addEventListener('dblclick', e => e.preventDefault(), { passive: false });
 addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });   // trackpad pinch
 
+// ---------- the drone ----------
+// The little machine that follows him. It was a bulb in a glow sprite, which is why the
+// wanderer disappeared whenever it drifted close at night: an additive card four to ten
+// units across, a foot from his face, is a white hole. The model replaces the bulb, the
+// card shrinks to something that reads as a lens flare rather than a flashbang, and the
+// light becomes a wide cone aimed past him at the ground he is walking on.
+const DRONE = {
+  url: 'models/alien_drone.glb',
+  size: 1.25,                        // across its longest axis, in world units
+  turn: 3.4,                         // how briskly it swings onto the way it is going
+  // Only the warm, bright texels glow -- the eye and the jets on its flanks. Everything else
+  // is desaturated and stained cool. That is the same treatment every plant and rock on the
+  // island gets, which is what makes a generated model belong here instead of looking bolted
+  // on: the machinery is worldTint, and all this does is key it a little tighter, because a
+  // drone has two small hot spots rather than a canopy full of them.
+  glow: { lo: .04, hi: .21, k: 1.9, keep: .5, col: col('#c6d2de'), lum: [.24, .96] },
+  // A wide-aperture lamp instead of a bare bulb. A point light at his shoulder blew him out
+  // from a foot away, and it got worse the closer the spring pulled it in. A cone aimed past
+  // him at the ground lights the scene he is standing in and only ever grazes the body.
+  spot: { ang: 1.02, pen: .78, decay: 1.3, dist: 62, day: .45, night: 3.4 },
+  fill: { dist: 13, day: .16, night: .9 },   // and just enough not to leave the hull black
+};
+
 // ---------- the wanderer: a body to move through the world with ----------
 // MAX is the top speed; ACC is how fast velocity closes on it and DRAG how fast it bleeds
 // off with no input. Air numbers are deliberately tiny: once he is off the ground the jump
@@ -6033,6 +6463,10 @@ const RIG = {
   run: 'run_fwd',
   swim: 'swim_fwd', swimIdle: 'swim_idle',
   jumpStart: 'jump_initiate', jumpAir: 'jump_in_air', jumpLand: 'jump_landing',
+  // The armed set. Same three gaits with the blaster up, plus the shot, which is a one-shot
+  // laid over whichever of them is running.
+  rifleIdle: 'rifle_idle_01', rifleWalk: 'rifle_walk_fwd_01', rifleRun: 'rifle_run_fwd_01',
+  rifleShoot: 'rifle_shoot_stationary_01',
   // The crouch before a jump only reads if the body is still on the ground while it plays.
   // This holds the physical launch for that long after the button, so the initiate clip
   // leads and the legs extend as he lifts. Feels late? Set 0 and he launches on the press.
@@ -6072,13 +6506,33 @@ const RIG = {
   // the night lighting and the mote attractor both key off it.
   // The lantern is its own creature now, so it lives in the scene rather than on the body.
   const lamp = new THREE.Group(); lamp.position.set(.66, 2.75, .12);
-  lamp.add(mesh(G.sph, M.lantern, .19, .24, .19, 0, 0, 0));
-  const gl = glow('#ffc276', 7, .75); lamp.add(gl);
-  const light = new THREE.PointLight(0xffb468, 2.2, 34, 2); light.position.set(0, .15, 0); lamp.add(light);
+  const bulb = mesh(G.sph, M.lantern, .19, .24, .19, 0, 0, 0); lamp.add(bulb);
+  const gl = glow('#ffc276', 2.4, .6); lamp.add(gl);
+  const light = new THREE.PointLight(0xffb468, .9, DRONE.fill.dist, 2); light.position.set(0, .15, 0); lamp.add(light);
+  // The cone, and the thing it points at. The target is parented to the body rather than
+  // placed in the world, so it rides the same projected transform he does and needs no
+  // chart-to-sphere conversion of its own -- and it always sits a stride in front of his
+  // feet, which is the ground you actually want lit.
+  const spot = new THREE.SpotLight(0xffc89a, 0, DRONE.spot.dist, DRONE.spot.ang, DRONE.spot.pen, DRONE.spot.decay);
+  lamp.add(spot);
+  const spotAt = new THREE.Object3D(); spotAt.position.set(0, .3, 2.2); g.add(spotAt); spot.target = spotAt;
   scene.add(lamp);
+  loadModel(DRONE.url, e => {
+    const inst = markBody(cloneModel(e.root));      // it rides with him; the hole must not cut it
+    const w = Math.max(e.box.max.x - e.box.min.x, e.box.max.y - e.box.min.y, e.box.max.z - e.box.min.z);
+    const k = DRONE.size / (w || 1);
+    inst.scale.setScalar(k);
+    inst.position.y = -(e.box.max.y + e.box.min.y) * .5 * k;
+    inst.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = false;                          // it is a lamp; its own shadow is noise
+      for (const m of [].concat(o.material)) if (m && !m.userData.droneTint) { m.userData.droneTint = 1; worldTint(m, DRONE.glow); }
+    });
+    lamp.add(inst); player.drone = inst; bulb.visible = false;
+  });
   g.traverse(m => { if (m.isMesh) m.castShadow = true; });
   scene.add(g);
-  Object.assign(player, { g, ph, legs, lamp, gl, light, rig: null, rigH: null, mixer: null, acts: null, blink: null, speed: 0 });
+  Object.assign(player, { g, ph, legs, lamp, gl, light, spot, bulb, drone: null, rig: null, rigH: null, mixer: null, acts: null, blink: null, speed: 0 });
   const sp = world.spawn || { x: 0, z: 0 };
   player.pos.set(sp.x, Math.max(height(sp.x, sp.z), SEA), sp.z);
   g.position.copy(player.pos);
@@ -6107,7 +6561,240 @@ function loadRig(g) {
     { const h = Math.hypot(fairy.off.x, fairy.off.z) || 1;
       if (h < FAIRY.rest) { fairy.off.x *= FAIRY.rest / h; fairy.off.z *= FAIRY.rest / h; } }
     logMsg('The wanderer takes shape.');
+    attachWeapon(r);
   });
+}
+
+// ---------- the blaster ----------
+// One weapon, one shot at a time. Drawing it swaps the whole locomotion set — stepRig does
+// that off `armed` — and while it is out the right stick stops orbiting the camera and
+// becomes the aim: push it somewhere, hold, and let go to fire that way.
+//
+// Everything the shot does happens in chart space, off `player.aimH` — never off the weapon
+// bone's world matrix. `player.g` is added to `scene`, so it carries the planet projection:
+// a bone's world position is a point on the sphere, while every collider, height query and
+// creature position in this game is a point on the flat chart. The bone is used for two
+// things only: hanging the model, and finding where the muzzle is (which is converted back
+// to the chart before anything is done with it).
+const WEAPON = {
+  url: 'models/alien_blaster.glb',
+  bone: 'weapon',                  // the joint just off the right hand; the model drops on at identity
+  tip: 'weapon_direction',         // its child, one bone-length down the barrel: the muzzle
+  drawRate: 3.6,                   // how fast `armed` crosses 0..1
+  aimAt: .32,                      // stick magnitude that counts as an aim rather than a nudge
+  cool: .5,                        // seconds before he can shoot again
+  hold: .34,                       // how long the shot clip owns the arms
+  camEase: 2.6,                    // how briskly the camera swings in behind the aim
+  bolt: { speed: 74, life: 2.2, rad: 2.2, blast: 14, size: 3.6 },
+  // The assist. Whatever is in the cone gets a reticle and a gentle pull — on the shot's
+  // heading, so a near miss becomes a hit, and through that on the camera, so the thing you
+  // are locked onto drifts toward the middle of the frame. Neither is a snap: aim at empty
+  // ground and the bolt goes exactly where the stick pointed.
+  lock: { cone: .5, range: 95, pull: 3.2, grab: .85, keep: .8 },
+};
+const weap = { model: null, bone: null, tip: null, ready: false };
+Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0 });
+
+function attachWeapon(r) {
+  // The two joints the model was exported with. Matched on the end of the name because an
+  // exporter is free to prefix them, and the tip is tested first: 'weapon_direction' ends
+  // with 'weapon_direction' but not with 'weapon'.
+  r.root.traverse(o => {
+    if (!o.isBone) return;
+    const nm = o.name.toLowerCase();
+    if (nm.endsWith(WEAPON.tip)) weap.tip = o;
+    else if (nm.endsWith(WEAPON.bone)) weap.bone = o;
+  });
+  if (!weap.bone || !r.acts.rifleIdle) {
+    console.warn('[weapon] ' + (weap.bone ? 'no rifle clips on the rig' : 'no `weapon` joint on the rig') + ' — no blaster.');
+    return;
+  }
+  loadModel(WEAPON.url, e => {
+    // Both joints carry unit scale, and the blaster is authored in the same units as the
+    // body, so parenting at identity is the whole alignment. Nothing to line up by hand.
+    const inst = markBody(cloneModel(e.root));
+    envUse(inst, .55);
+    inst.traverse(m => { if (m.isMesh) m.castShadow = true; });
+    weap.bone.add(inst);
+    weap.model = inst; inst.visible = false;
+    weap.ready = true;
+    armB.hidden = false;
+  });
+}
+
+// Where the muzzle is, in chart coordinates. The bone's world position is on the sphere, so
+// it is taken back into the body's own frame and then out again through the body's *chart*
+// rotation — which is what `g.quaternion` holds, planetUpdateMatrix having composed the
+// planet turn on top of it rather than into it.
+const _wmz = new THREE.Vector3(), _wv = new THREE.Vector3(), _wZ = new THREE.Vector3(0, 0, 1);
+function muzzleChart(out) {
+  const p = player;
+  if (!weap.tip) return out.set(p.pos.x + Math.sin(p.faceH) * .9, p.pos.y + RIG.height * .62, p.pos.z + Math.cos(p.faceH) * .9);
+  weap.tip.getWorldPosition(out);
+  p.g.worldToLocal(out);
+  return out.applyQuaternion(p.g.quaternion).add(p.g.position);
+}
+
+// Angle first, distance only to break a tie. Returns -1 for anything outside the cone.
+function targetScore(o, hx, hz, cone) {
+  const p = player, L = WEAPON.lock;
+  const dx = o.pos.x - p.pos.x, dz = o.pos.z - p.pos.z, d = Math.hypot(dx, dz);
+  if (d < 3 || d > L.range) return -1;
+  const dot = (dx * hx + dz * hz) / d;
+  if (dot < Math.cos(cone)) return -1;
+  return (1 - dot) * 4 + d / L.range;
+}
+function pickTarget(h) {
+  const L = WEAPON.lock, hx = Math.sin(h), hz = Math.cos(h), held = player.lock;
+  let best = null, bs = 1e9;
+  // Whatever is already locked keeps it on a wider cone and a discount, so the reticle does
+  // not flicker between two animals standing shoulder to shoulder.
+  if (held && held.alive) { const sc = targetScore(held, hx, hz, L.cone * (1 + L.keep)); if (sc >= 0) { best = held; bs = sc * .7; } }
+  for (const o of world.creatures) {
+    if (!o.alive || o === held) continue;
+    const sc = targetScore(o, hx, hz, L.cone);
+    if (sc >= 0 && sc < bs) { bs = sc; best = o; }
+  }
+  return best;
+}
+
+function fireBolt() {
+  const p = player;
+  if (p.cool > 0) return;
+  p.cool = WEAPON.cool; p.shootT = WEAPON.hold;
+  muzzleChart(_wmz);
+  // Lift the shot toward whatever is locked, so an animal standing on a rise is not fired
+  // under. With nothing locked the bolt travels flat.
+  let dy = 0;
+  if (p.lock) {
+    const d = Math.hypot(p.lock.pos.x - _wmz.x, p.lock.pos.z - _wmz.z);
+    if (d > 2) dy = clamp((p.lock.pos.y + 1.2 - _wmz.y) / d, -.55, .55);
+  }
+  const nk = 1 / Math.hypot(1, dy);
+  world.effects.push(new Bolt(_wmz.x, _wmz.y, _wmz.z, Math.sin(p.aimH) * nk, dy * nk, Math.cos(p.aimH) * nk));
+  world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#cdf4ff', 4.5, .28));
+}
+
+// Returns true while the right stick belongs to the weapon, so the caller knows not to orbit.
+function stepWeapon(dt, rx, ry) {
+  const p = player;
+  p.cool = Math.max(0, p.cool - dt);
+  p.shootT = Math.max(0, p.shootT - dt);
+  // Both hands are busy in the water, and there is no swimming-with-a-rifle clip.
+  if (p.swim > .5 || p.aboard || p.free || !weap.ready) p.armWant = 0;
+  p.armed = lerp(p.armed, p.armWant, Math.min(1, dt * WEAPON.drawRate));
+  if (!p.armWant && p.armed < .02) p.armed = 0;
+  if (weap.model) weap.model.visible = p.armed > .05;
+  armB.classList.toggle('on', !!p.armWant);
+  if (!(p.armWant && p.armed > .5)) { p.aiming = 0; p.lock = null; return false; }
+
+  if (Math.hypot(rx, ry) > WEAPON.aimAt) {
+    // Latch the frame the stick is measured in when the aim starts. Reading it off the live
+    // camera azimuth while the camera is swinging to follow the aim is a feedback loop: hold
+    // the stick anywhere but straight forward and he spins on the spot forever.
+    if (!p.aiming) { p.aiming = 1; p.aimAz = cam.az; p.aimAdj = 0; }
+    const sa = Math.sin(p.aimAz), ca = Math.cos(p.aimAz);
+    const raw = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
+    p.lock = pickTarget(raw + p.aimAdj);
+    // The ease is a correction that accumulates while the aim is held, not a fraction
+    // reapplied to a fresh stick reading every frame -- which is what it was, and which meant
+    // holding an aim for a second still left it a good five degrees off the animal. It
+    // settles at `grab` of the way there, so a lock is forgiving without being a snap, and it
+    // unwinds the moment the stick is pointed somewhere else.
+    let e = 0;
+    if (p.lock) { const b = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z);
+      e = Math.atan2(Math.sin(b - raw), Math.cos(b - raw)) * WEAPON.lock.grab; }
+    p.aimAdj = lerp(p.aimAdj, e, Math.min(1, dt * WEAPON.lock.pull));
+    p.aimH = raw + p.aimAdj;
+    let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
+    cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
+  } else if (p.aiming) {
+    p.aiming = 0; fireBolt(); p.lock = null;
+  }
+  return true;
+}
+
+// The plasma. It travels in chart space, so it can be tested against the height field, the
+// obstacle grid and the animals with the same arithmetic everything else in the game uses.
+class Bolt {
+  constructor(x, y, z, dx, dy, dz) {
+    const B = WEAPON.bolt;
+    this.alive = true; this.t = 0;
+    this.x = x; this.y = y; this.z = z;
+    this.vx = dx * B.speed; this.vy = dy * B.speed; this.vz = dz * B.speed;
+    this.g = new THREE.Group();
+    // No light on the bolt. Adding and removing a PointLight relights every material in the
+    // scene, and a shot a second would recompile the world mid-stride. The burst carries the
+    // flash instead.
+    this.parts = [];
+    for (let i = 0; i < 5; i++) {
+      const k = i / 4;
+      const sp = glow(i ? '#5fd6ff' : '#eaffff', B.size * lerp(1, .28, k), lerp(1, .16, k));
+      sp.position.z = -k * B.size * 2.2;
+      this.g.add(sp); this.parts.push(sp);
+    }
+    this.g.position.set(x, y, z);
+    this.g.quaternion.setFromUnitVectors(_wZ, _wv.set(dx, dy, dz).normalize());
+    scene.add(this.g);
+  }
+  update(dt) {
+    const B = WEAPON.bolt;
+    if ((this.t += dt) > B.life) { this.pop('#8fe0ff', 6, .5); return; }
+    // Two half-steps: at seventy units a second a whole frame is a two-unit gap, which is
+    // wide enough for a bolt to pass clean through a mudlark.
+    for (let i = 0; i < 2; i++) {
+      const h = dt * .5;
+      this.x += this.vx * h; this.y += this.vy * h; this.z += this.vz * h;
+      if (this.strike()) return;
+    }
+    this.g.position.set(this.x, this.y, this.z);
+    this.parts[0].scale.setScalar(B.size * (.86 + Math.sin(this.t * 46) * .14));
+  }
+  strike() {
+    const B = WEAPON.bolt;
+    if (Math.abs(this.x) > W || Math.abs(this.z) > W) { this.alive = false; return true; }
+    for (const o of world.creatures) {
+      if (!o.alive) continue;
+      const dx = o.pos.x - this.x, dy = o.pos.y + 1 - this.y, dz = o.pos.z - this.z;
+      const r = B.rad + (o.rad || 1);
+      if (dx * dx + dy * dy + dz * dz < r * r) { this.pop('#ff9adf', 10, .95); return true; }
+    }
+    let solid = false;
+    obNear(this.x, this.z, B.rad, o => {
+      if (solid || this.y > o.top) return;
+      const r = obRad(o) + B.rad * .5, dx = this.x - o.x, dz = this.z - o.z;
+      if (dx * dx + dz * dz < r * r) solid = true;
+    });
+    if (solid) { this.pop('#d8ffb0', 9, .85); return true; }
+    const g = groundY(this.x, this.z);
+    if (this.y <= g + .3) { this.y = g + .35; this.pop(this.y < SEA + .5 ? '#9fe8ff' : '#ffd9a0', 10, .9); return true; }
+    return false;
+  }
+  pop(hex, size, life) {
+    this.alive = false;
+    world.effects.push(new Burst(this.x, this.y, this.z, hex, size, life));
+    world.effects.push(new Burst(this.x, this.y, this.z, '#ffffff', size * .42, life * .45));
+    for (const o of world.creatures)
+      if (o.alive && o.spook && Math.hypot(o.pos.x - this.x, o.pos.z - this.z) < WEAPON.bolt.blast) o.spook(this, 10);
+  }
+  dispose() { scene.remove(this.g); for (const sp of this.parts) sp.material.dispose(); }
+}
+
+// The lock indicator, in the page rather than the scene: it wants to be crisp and the same
+// size however far away the animal is, which a sprite in a bloomed, gamma-corrected render
+// target is not. Runs after the camera has been placed, so the projection is this frame's.
+const _wr = new THREE.Vector3();
+function drawReticle() {
+  const p = player, t = p.lock;
+  if (!t || !t.alive || !p.aiming || INTRO.on) { if (!reticEl.hidden) reticEl.hidden = true; return; }
+  planetPos(t.pos.x, t.pos.y + (t.rad || 1) * .8, t.pos.z, _wr);
+  const vz = _wv.copy(_wr).applyMatrix4(camera.matrixWorldInverse).z;
+  _wr.project(camera);
+  if (vz > -1 || Math.abs(_wr.x) > 1.2 || Math.abs(_wr.y) > 1.2) { reticEl.hidden = true; return; }
+  reticEl.hidden = false;
+  const sc = clamp(34 / Math.max(8, -vz) + .55, .55, 1.5);
+  reticEl.style.transform = `translate(${(_wr.x * .5 + .5) * innerWidth}px,${(-_wr.y * .5 + .5) * innerHeight}px) scale(${sc.toFixed(3)})`;
+  reticEl.style.opacity = p.cool > 0 ? .45 : 1;
 }
 
 // How fast the ground would have to move for this walk cycle to look planted, in the
@@ -6179,6 +6866,14 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
 const flyB = document.getElementById('flyB'), freeB = document.getElementById('freeB');
+const armB = document.getElementById('armB'), reticEl = document.getElementById('retic');
+function toggleArm() {
+  if (armB.hidden || player.aboard || player.free) return;
+  player.armWant = player.armWant ? 0 : 1;
+  armB.textContent = player.armWant ? 'holster' : 'draw';
+  logMsg(player.armWant ? 'He unclips the blaster. Hold the right stick to aim; let go to fire.' : 'The blaster goes away.');
+}
+armB.addEventListener('click', e => { e.stopPropagation(); toggleArm(); });
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
 const mapB = null;   // the minimap is the way in now
 document.getElementById('mini').addEventListener('click', e => { e.stopPropagation(); toggleMap(true); });
@@ -6238,7 +6933,7 @@ fold('hudHead', 'hudBody', false);
 fold('ctlT', 'btns', false);
 fold('logT', 'log', true);
 const hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
-addEventListener('keydown', e => { if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
+addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm(); if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
 startB.addEventListener('click', e => { e.stopPropagation(); startGame(); });
 const _prevP = new THREE.Vector3(), _shipR = new THREE.Vector3();
@@ -6254,7 +6949,8 @@ function updatePlayer(dt) {
   if (keys.a || keys.arrowleft) lx -= 1; if (keys.d || keys.arrowright) lx += 1;
   if (keys.w || keys.arrowup) ly -= 1; if (keys.s || keys.arrowdown) ly += 1;
   lx = clamp(lx, -1, 1); ly = clamp(ly, -1, 1);
-  if (rx || ry) { cam.az -= rx * dt * 2.2; cam.idle = 0; }   // ry is free for something else now
+  // While the blaster is out the right stick is the aim, not the orbit. stepWeapon says so.
+  if (!stepWeapon(dt, rx, ry) && (rx || ry)) { cam.az -= rx * dt * 2.2; cam.idle = 0; }
   const mag = Math.hypot(lx, ly);
   player.moving = lerp(player.moving, mag > .1 ? Math.min(1, mag) : 0, Math.min(1, dt * 9));
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
@@ -6282,6 +6978,9 @@ function updatePlayer(dt) {
       player.heading = Math.atan2(dx, dz);
     }
   }
+  // Standing still, he turns onto the aim. Walking, the legs win: the rifle clips are
+  // forward cycles, and facing one way while travelling another is a moonwalk.
+  if (player.aiming && mag <= .1) player.heading = player.aimH;
   if (!player.fly) {
     // Steer velocity toward what the stick asks for, at acc while pushing and drag while
     // letting go -- but speeding up and changing direction are different problems and must
@@ -6437,9 +7136,13 @@ const fairy = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), off: new THREE.Vector3(2.2, 2.4, -.5),   // replaced from the rig's own bounds once it loads
   t: rnd(100), dart: rnd(2, 5), want: new THREE.Vector3(), lit: 1,
 };
+// The drone's wash. This was the fairy's trail -- half-unit additive sprites at nearly full
+// opacity, which through a bloom pass are two-unit white holes, and there are a hundred and
+// seventy of them following him about. That, not the lamp, is what was rubbing him out at
+// night. Small, faint and cold now: a machine's exhaust rather than a comet.
 const fairyTrail = new PSys({
-  n: MOBILE ? 90 : 170, life: 1.5, rate: 26, gy: .18, drag: 1.6, additive: true, a0: .85,
-  c0: '#ffe6a8', c1: '#ffb45a', s0: .5, s1: .02,
+  n: MOBILE ? 70 : 130, life: 1.1, rate: 20, gy: .18, drag: 1.6, additive: true, a0: .3,
+  c0: '#cfe8ff', c1: '#5fa8d8', s0: .26, s1: .02,
   spawn: (p, v) => {
     p.copy(fairy.pos).add(new THREE.Vector3(rnd(-.13, .13), rnd(-.13, .13), rnd(-.13, .13)));
     v.set(rnd(-.25, .25), rnd(-.15, .35), rnd(-.25, .25)).addScaledVector(fairy.vel, -.09);
@@ -6535,9 +7238,22 @@ function updateFairy(dt) {
   const cy = clamp(f.pos.y, p.pos.y, p.pos.y + RIG.height);
   const near = Math.hypot(f.pos.x - p.pos.x, f.pos.y - cy, f.pos.z - p.pos.z);
   f.lit = FAIRY.dimTo0 + (1 - FAIRY.dimTo0) * smooth(FAIRY.dimAt, FAIRY.dimTo, near);
-  p.light.intensity = (1.1 + world.night * 3.2) * f.lit;
-  p.gl.scale.setScalar((4 + world.night * 6) * (.45 + .55 * f.lit));
-  p.gl.material.opacity = .75 * (.4 + .6 * f.lit);
+  // It swings onto the way it is drifting when it is actually going somewhere, and falls
+  // back to facing where he faces when it is only hovering.
+  if (p.drone) {
+    const sp2 = Math.hypot(f.vel.x, f.vel.z);
+    const yaw = sp2 > .8 ? Math.atan2(f.vel.x, f.vel.z) : p.faceH;
+    let d = yaw - p.lamp.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
+    p.lamp.rotation.y += d * Math.min(1, dt * DRONE.turn);
+    p.drone.rotation.z = Math.sin(f.t * 1.7) * .06 - clamp(sp2 * .035, 0, .22);   // banks into it
+    p.drone.rotation.x = clamp(-f.vel.y * .05, -.28, .28);
+  }
+  // The fill only has to keep the hull off black; the cone does the lighting, and because it
+  // points past him rather than at him, drifting close no longer washes him out.
+  p.light.intensity = lerp(DRONE.fill.day, DRONE.fill.night, world.night) * f.lit;
+  p.spot.intensity = lerp(DRONE.spot.day, DRONE.spot.night, world.night) * f.lit;
+  p.gl.scale.setScalar((.9 + world.night * 1.1) * (.45 + .55 * f.lit));
+  p.gl.material.opacity = .4 * (.4 + .6 * f.lit);
   fairyTrail.rate = p.free ? 0 : 18 + Math.min(34, f.vel.length() * 3.4);
 }
 
@@ -6551,6 +7267,7 @@ function updateRig(dt) {
     // The landing clip is planted, so at speed it slides. Fade it out as the ground speed
     // rises and let the run carry the landing instead. A proper roll clip would be better.
     start: p.leadT > 0, landK: p.landT > 0 ? smooth(0, .12, p.landT) * clamp(1 - p.speed / 7, 0, 1) : 0,
+    armed: p.armed, shoot: p.shootT > 0,
   });
 }
 
@@ -6776,6 +7493,7 @@ function mapMarks() {
   add(world.camp, 'camp', 'camp');
   add(world.cave, 'cave', 'cave');
   add(world.isle, 'isle', 'floating isle');
+  add(world.vault, 'vault', 'the vault');
   for (const st of world.structures) if (st.alive && st instanceof Cairn) out.push({ x: st.pos.x, z: st.pos.z, k: st.beacon ? 'beacon' : 'cairn', label: st.beacon ? 'beacon' : null });
   if (world.ship) out.push({ x: world.ship.pos.x, z: world.ship.pos.z, k: 'ship', label: 'ship', flying: world.ship.state !== 'landed', heading: world.ship.heading });
   // zoomed in, the map starts naming the things you would actually walk between
@@ -6790,7 +7508,7 @@ function mapMarks() {
 const MAP_KEY = {
   you: ['#ffe9b0', 'you'], way: ['#7fd8ff', 'waypoint'], ship: ['#ff8a3c', 'ship'], tree: ['#8fe6a8', 'Elderwillow'],
   camp: ['#ffb45a', 'camp'], cave: ['#9fd6ff', 'cave'], isle: ['#c9a6ff', 'floating isle'],
-  beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'],
+  beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'], vault: ['#c48cff', 'the vault'],
 };
 function drawMap() { drawMapTo(document.getElementById('mapc'), false); }
 // The minimap is the same picture at a tenth the size, so it is the same code with the
@@ -6854,7 +7572,7 @@ function drawMapTo(cv, mini) {
       g.globalAlpha = 1 - pu; g.beginPath(); g.arc(a, b, r0 * (1 + pu * .9), 0, 6.283); g.stroke(); g.globalAlpha = 1;
       g.beginPath(); g.arc(a, b, 1.5 * S * K, 0, 6.283); g.fillStyle = hex; g.fill(); g.shadowBlur = 0;
     }
-    else [a, b] = dot(m.x, m.z, hex, m.k === 'cairn' ? 2.4 : m.k === 'tree' ? 4.5 : 3.4, m.k === 'beacon' || m.k === 'isle');
+    else [a, b] = dot(m.x, m.z, hex, m.k === 'cairn' ? 2.4 : m.k === 'tree' || m.k === 'vault' ? 4.5 : 3.4, m.k === 'beacon' || m.k === 'isle' || m.k === 'vault');
     if (m.label && !mini) { g.fillStyle = 'rgba(246,238,222,.82)'; g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 4 * S;
       g.fillText(m.label, a, b + 7 * S); g.shadowBlur = 0; }
   }
@@ -6955,8 +7673,9 @@ function frame(now) {
     cam.az += d * Math.min(1, dt * PILOT.camLag);
     cam.r = lerp(cam.r, PILOT.camR + Math.min(15, Math.hypot(sh.vel.x, sh.vel.z) * .26), Math.min(1, dt * 1.2));
     cam.pol0 = lerp(cam.pol0, PILOT.camPol, Math.min(1, dt * 2)); cam.idle = 0;
+    cam.polBias = lerp(cam.polBias, 0, Math.min(1, dt * 3));
   } else {
-    if (!player.free) cam.tgt.lerp(_camWant.set(player.pos.x, player.pos.y + 3.4, player.pos.z), Math.min(1, dt * 7));
+    if (!player.free) followCam(dt);
     cam.pol0 = lerp(cam.pol0, CAM_POL, Math.min(1, dt * 2));
     if (cam.rWalk) {   // ease back to the zoom he had before he boarded, then leave it alone
       cam.r = lerp(cam.r, cam.rWalk, Math.min(1, dt * 2));
@@ -6964,6 +7683,7 @@ function frame(now) {
     }
     cam.idle += dt; if (cam.idle > 6 && player.moving < .05) cam.az += dt * .03;
   }
+  if (INTRO.on) cam.polBias = lerp(cam.polBias, 0, Math.min(1, dt * 3));
   if (INTRO.dive > 0) diveFrame(dt);
   solveCam(dt);
   // The boom is still swung in chart terms -- azimuth, pitch, and the ridge solver that
@@ -6999,6 +7719,7 @@ function frame(now) {
       holeUni.uHoleZ.value = -vz;
     } else holeUni.uHoleR.value = 0;
   }
+  drawReticle();
 
   updateWeather(dt);
   updateSky();

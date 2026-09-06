@@ -23,7 +23,7 @@ const html=fs.readFileSync(process.argv[2]||'index.html','utf8');
 const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('const BUILD'));
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__W=W;global.__waveY=waveY;global.__SEA=SEA;global.__p=player;global.__stick=stick;global.__h=height;global.__gY=groundY;global.__MOVE=MOVE;global.__OBP=OB_PLAYER;global.__OB=OB;global.__obRad=obRad;global.__obAdd=obAdd;global.__standOn=standOn;global.__slope=slope;global.__WAY=WAY;global.__obClear=obClear;global.__obNear=obNear;global.__setWay=setWaypoint;global.__cam=cam;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__W=W;global.__waveY=waveY;global.__SEA=SEA;global.__p=player;global.__stick=stick;global.__h=height;global.__gY=groundY;global.__MOVE=MOVE;global.__OBP=OB_PLAYER;global.__OB=OB;global.__obRad=obRad;global.__obAdd=obAdd;global.__standOn=standOn;global.__slope=slope;global.__WAY=WAY;global.__obClear=obClear;global.__obNear=obNear;global.__setWay=setWaypoint;global.__cam=cam;global.__camS=camS;global.__deckY=deckY;'+src.slice(cut);
 eval(src);
 // The title screen parks the camera out at the planet and flies the ship round it. That is
 // the first thing a player sees and the last thing a harness wants: every tool here measures
@@ -193,5 +193,116 @@ standTest('inland', () => { for (let i = 0; i < 60000; i++) { const x = (Math.ra
   const h = H(x, z); if (h > 6 && h < 12 && global.__slope(x, z) < .2) return { x, z }; } return null; });
 standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Math.random() - .5) * 320, z = (Math.random() - .5) * 320;
   if (H(x, z) < global.__SEA - 6) return { x, z }; } return null; });
+
+// ---------- 5b. the vault ----------
+// It is the only building you go inside, so it gets checked like one: did it get built, is
+// the deck reachable from the ground outside, and does the gateway actually let you in.
+(() => {
+  const V = W.vault;
+  if (!V) return console.log('the vault                  not built');
+  const R = 22, dz = [];
+  // Walk him at the gate from outside and see how far in he gets. The gateway faces local
+  // -z of the site, which is yaw-dependent, so try every heading and take the best.
+  let best = { got: 1e9, a: 0 };
+  for (let i = 0; i < 24; i++) {
+    const a = i / 24 * Math.PI * 2;
+    const sx = V.pos.x + Math.sin(a) * (R + 16), sz = V.pos.z + Math.cos(a) * (R + 16);
+    P.pos.set(sx, gY(sx, sz), sz); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y; P.swim = 0;
+    global.__cam.tgt.set(sx, P.pos.y + 3.4, sz);
+    hold(.3, () => { ST.L.x = ST.L.y = 0; });
+    const ux = -Math.sin(a), uz = -Math.cos(a);
+    hold(5, () => { P.wx = ux; P.wz = uz; P.wmag = 1; P.moving = 1; });
+    P.wmag = 0;
+    const d = Math.hypot(P.pos.x - V.pos.x, P.pos.z - V.pos.z);
+    if (d < best.got) best = { got: d, a: Math.round(a * 57.3), onDeck: P.pos.y - V.pos.y };
+  }
+  console.log('the vault                 ', JSON.stringify({ at: [V.pos.x | 0, V.pos.z | 0],
+    colliders: V.obs.length,
+    walkedInToWithin: +best.got.toFixed(1) + ' of the middle',
+    fromBearing: best.a + ' deg', endedThisFarAboveTheSiteBase: +best.onDeck.toFixed(2) }));
+})();
+
+// ---------- 6. the camera ----------
+// "It cuts through the mountain, it doesn't go up, it doesn't rotate." Three claims, three
+// numbers. Runs against any build -- it only reads cam, camS and the height field -- so the
+// old one can be measured the same way: node tools/gait.js /tmp/old-index.html
+const C = global.__cam, CS = global.__camS, dY = global.__deckY;
+function lens() {
+  const sx = Math.sin(C.az) * Math.sin(CS.pol) * CS.r, sz = Math.cos(C.az) * Math.sin(CS.pol) * CS.r;
+  return { x: C.tgt.x + sx, y: CS.y, z: C.tgt.z + sz };
+}
+// Walk him across real relief and watch the lens: how close it comes to being inside the
+// hill, and how violently it moves to stay out. A jolt is the frame-to-frame change in the
+// lens height, quoted per second, so it does not depend on the step size.
+function camRun(name, pick, secs = 5) {
+  const q = pick(); if (!q) return console.log('camera                    ', name, 'nowhere to try it');
+  P.pos.set(q.x, gY(q.x, q.z), q.z); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y;
+  C.tgt.set(q.x, P.pos.y + 3.4, q.z); C.az = q.a + Math.PI; C.r = 20;
+  hold(1, () => { ST.L.x = ST.L.y = 0; });
+  let minClear = 1e9, buried = 0, worst = 0, prev = lens().y, frames = 0, lastLag = 0;
+  hold(secs, () => {
+    ST.L.x = 0; ST.L.y = -1;
+    const L = lens(), c = L.y - dY(L.x, L.z, L.y);
+    minClear = Math.min(minClear, c); if (c < .6) buried++;
+    worst = Math.max(worst, Math.abs(L.y - prev) / .033); prev = L.y;
+    lastLag = Math.abs(C.tgt.y - (P.pos.y + 3.4));
+    frames++;
+  });
+  ST.L.y = 0;
+  console.log('camera                    ', JSON.stringify({ over: name,
+    closestTheLensCameToTheGround: +minClear.toFixed(2), framesInsideIt: buried, ofTotal: frames,
+    worstJolt: +worst.toFixed(1) + ' u/s', mountTrailingHimBy: +lastLag.toFixed(2) }));
+}
+// A slope steep enough that the old solver had to do something about it, approached straight
+// up the face and then straight down it.
+function faceSpot(sign) {
+  for (let i = 0; i < 40000; i++) {
+    const x = (Math.random() - .5) * 260, z = (Math.random() - .5) * 260;
+    const sl = global.__slope(x, z), h = H(x, z);
+    if (h < 4 || h > 30 || sl < .7) continue;
+    const e = 1.5, gx = (H(x + e, z) - H(x - e, z)) / (2 * e), gz = (H(x, z + e) - H(x, z - e)) / (2 * e);
+    const gl = Math.hypot(gx, gz) || 1;
+    return { x, z, a: Math.atan2(sign * gx / gl, sign * gz / gl) };
+  }
+  return null;
+}
+camRun('a steep face, climbing', () => faceSpot(1));
+camRun('the same face, descending', () => faceSpot(-1));
+
+// Rotation. The stick is read in camera space, so holding it sideways and swinging the boom
+// at the same time turns him as fast as the boom arrives and the pair chase each other round
+// a circle for ever -- which measures nothing. Pin a fixed WORLD heading instead, the way the
+// turn test pins a velocity, and time the boom coming round behind it.
+function recentreTest(deg) {
+  const q = flatSpot(), a = deg * Math.PI / 180;
+  P.pos.set(q.x, gY(q.x, q.z), q.z); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y;
+  C.tgt.set(q.x, P.pos.y + 3.4, q.z); C.az = 0; C.idle = 9;
+  let t = 0, got = null;
+  const off = () => { let d = (a + Math.PI) - C.az; return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))); };
+  hold(9, () => {
+    ST.L.x = ST.L.y = 0;
+    P.wx = Math.sin(a); P.wz = Math.cos(a); P.wmag = 1; P.moving = 1; P.heading = a;
+    t += .033;
+    if (got === null && t > .5 && off() < .17) got = t;      // within ten degrees
+  });
+  P.wmag = 0;
+  console.log('camera                    ', JSON.stringify({ recentring: 'walking off ' + deg + ' deg from the boom',
+    behindHimAfter: got === null ? 'never' : +got.toFixed(1) + ' s',
+    stillOffBy: +(off() * 57.3).toFixed(0) + ' deg' }));
+}
+recentreTest(90); recentreTest(170);
+
+// The zoom. The solver may pull the boom in to clear a hill, and it must not treat a wide
+// shot of the island as a hill to clear: the first cut of it saturated its climb over any
+// relief at all and handed back a third of the length that was asked for.
+function zoomTest(want) {
+  const q = flatSpot();
+  P.pos.set(q.x, gY(q.x, q.z), q.z); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y;
+  C.tgt.set(q.x, P.pos.y + 3.4, q.z); C.r = want;
+  hold(6, () => { ST.L.x = ST.L.y = 0; C.r = want; });
+  console.log('camera                    ', JSON.stringify({ askedForABoomOf: want,
+    got: +CS.r.toFixed(1), lensAboveTheTarget: +(CS.y - C.tgt.y).toFixed(1) }));
+}
+for (const r of [20, 45, 90, 200]) zoomTest(r);
 
 process.exit(0);

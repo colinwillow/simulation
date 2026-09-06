@@ -1410,6 +1410,124 @@ Two systems. `PSys` is point sprites — fire, smoke, embers, mist. `Streaks` is
 quads that stretch along their velocity in view space — the waterfall, splash. Use `Streaks`
 for anything fast and directional; the stretching is what sells motion.
 
+### The blaster
+
+One weapon, one shot at a time. The button by the right stick draws and holsters it; drawing
+swaps the whole locomotion set for the rifle one — `stepRig` does that off a single `armed`
+number, so nothing about the blend tree changed. While it is out the right stick stops
+orbiting the camera and becomes the aim: push, hold, let go to fire.
+
+Two things are worth knowing before touching it.
+
+**The shot is fired in chart space, off `player.aimH` — never off the weapon bone's world
+matrix.** `player.g` is added to `scene`, so it carries the planet projection: a bone's world
+position is a point on a sphere, while every collider, height query and creature position in
+this game is a point on the flat chart. `muzzleChart()` takes the tip joint's world position
+back into the body's own frame and out again through the body's *chart* rotation, which is
+what `g.quaternion` holds — `planetUpdateMatrix` composes the planet turn on top of it rather
+than into it. Get this wrong and the bolt leaves from somewhere on the far side of the world.
+
+**The aim's frame is latched when the aim starts.** The stick is read in camera space and the
+camera swings in behind the aim, so reading it off the live azimuth is a feedback loop: hold
+the stick anywhere but straight ahead and he spins on the spot for ever. `aimAz` is a snapshot
+of `cam.az` from the frame the aim began.
+
+The assist is a correction that *accumulates* while the aim is held (`aimAdj`), not a fraction
+reapplied to a fresh stick reading each frame. It was the latter first, which meant a second
+of holding still left the shot five degrees off the animal; now it settles at `lock.grab` of
+the way onto the bearing, which is forgiving without being a snap, and it unwinds as soon as
+the stick points somewhere else. Because the camera chases the aim, centring the shot centres
+the target in frame — that is the whole of the "ease lock", and there is no second knob for it.
+
+`npm run check:gait` does not test this; `node tools/shot.js --weapon` does, by driving the
+same `stick` object the touch handlers write to: draw, aim at the nearest animal, hold,
+release, and report the joint, the clips, the lock, the residual angle, the reticle, and
+whether a bolt actually left the barrel and hit something.
+
+### The camera is a drone
+
+Not a boom bolted to his back. Three separate jobs, all in `followCam` and `solveCam`:
+
+* **The mount** hangs ahead of him by however far he travels in the next third of a second,
+  chases him briskly across the ground and slowly up and down, and stiffens as the gap opens.
+  That last part is the whole of "it doesn't go up": a two-unit rock used to be a two-unit
+  jolt in the frame and a cliff used to leave it behind for a beat.
+* **The gimbal** tilts from the ground *ahead* of the frame rather than the slope underfoot —
+  which would pitch just as hard running along a contour as straight up a face. Cresting a
+  rise it tips down to hold what is beyond it.
+* **The climb** is `boomLift`: march the boom against the height field and return, as a
+  distance, how far the lens has to rise for the whole of it to clear. Raising the lens by L
+  raises the point a fraction *t* along the boom by *t·L*, so the lift the worst sample asks
+  for is its shortfall over its own *t*. Then fly it: the lens goes straight up while its
+  distance over the ground stays what the player asked for, which is what a drone lifting over
+  a ridge actually does, and falling out of that is a new pitch and a slightly longer boom
+  rather than a new mode. Only if climbing cannot clear it does the boom come in.
+
+  The old solver was a ladder of seven fixed pitch rungs and nine fixed length rungs, tried
+  in order until one said "clear". A yes-or-no answer can only pop between rungs, which is why
+  walking a ridge looked like the camera was being kicked. Measured on the same steep face:
+  **81.5 units a second of vertical jerk descending, down to under ten.**
+* **Recentring** works the boom back behind him — only while he is moving, only once the look
+  control has been quiet for a second, never while he is aiming, and at a rate that scales
+  with his speed. Ninety degrees takes about two seconds.
+
+`camClear` is now only asked the one question the height field cannot answer: is the lens
+inside a solid? A building you walk about inside is the one thing that test must *not* react
+to, hence `seeThru` on the vault's colliders.
+
+Measured by `npm run check:gait`, which walks him up and down a steep face and reports how
+close the lens came to the ground, how many frames it spent inside it, and the worst jolt;
+then pins a world heading and times the boom coming round. The recentring test has to pin the
+heading: the stick is read in camera space, so holding it sideways while the boom swings turns
+him as fast as the boom arrives and the two chase each other round a circle for ever.
+
+### The drone
+
+The thing that follows him used to be a bulb inside an additive glow card four to ten units
+across, which is why he disappeared whenever it drifted close at night. It is a model now, and
+three things changed with it:
+
+* Only the warm, bright texels glow — the eye and the flank jets. That is `worldTint`, the
+  same machinery every plant and rock goes through, keyed a little tighter because a drone has
+  two small hot spots rather than a canopy full of them. It is what makes a generated model
+  belong to the island instead of looking bolted on.
+* The light is a wide **spotlight** aimed past him at the ground, not a point light at his
+  shoulder. Its target is parented to the body, so it rides the same projected transform he
+  does and needs no chart-to-sphere conversion of its own.
+* **The trail was the blowout, not the lamp.** A hundred and seventy half-unit additive
+  sprites at 0.85 opacity, through a bloom pass, are a hundred and seventy two-unit white
+  holes following him about. Small, faint and cold now.
+
+One trap worth naming: `worldTint` installs an *instance* `onBeforeCompile`, which shadows the
+prototype's, so it has to chain the see-through hole on by hand — and skip it on the same
+terms the prototype skips it. The drone is marked `noHole` because it rides with him and
+hovers inside the hole's radius all day; without the check it would dissolve the one thing
+lighting him.
+
+### The vault
+
+The building you go inside. It is open to the sky, and that is architecture rather than a
+shortcut: a third-person camera on a twenty-unit boom cannot be inside a closed room, every
+way round that is a system (fade the roof, a separate interior scene, a top-down mode
+indoors), and a hall ringed by spires with nothing over it solves the same problem in the
+shape of the building. The curtain wall is tall enough to enclose you and low enough for the
+drone to look over. Its colliders stop the wanderer and carry `seeThru`, so the boom solver
+ignores them — the primitives are single-sided, so a lens that ends up past a wall just sees
+the room.
+
+**It has no plinth, and that is the part that cost a cycle.** The first build stood on a
+two-metre platform, which looked right and was a wall: on ground that falls away a unit over
+the twenty-five it covers, the step up exceeds what a body can climb, and the harness walked
+at it from all twenty-four bearings and never got in. The floor is the island now — the
+paving is laid on the height field with `site.ground()` the way the steading's tilled earth
+is, the wall panels are sunk four units so a dip never opens a gap under them, and the only
+thing you climb is the three half-unit steps of the dais.
+
+The shell is `siteAt` primitives merged by material: seven draw calls for a building
+forty-four units across. Only the splicer's rings, its core and the specimens in the tanks are
+live objects. `npm run check:gait` reports whether it got built, how many colliders it has,
+and how far in he gets walking at it from every bearing.
+
 ---
 
 ## Mobile
@@ -1475,8 +1593,12 @@ npm run check:model models/*.glb       # what is in a model, and can the game us
 npm run check:ship                     # fly the ship's sortie with no GPU, report every joint
 node tools/sortie.js index.html pilot  # ...or fly it by hand: board, lift, turn, strafe, land, get out
 npm run check:swirl                    # does the lamp's swirl of motes go where the lamp goes
-npm run check:gait                     # the acceleration ramp, what a hill costs, what he can climb onto
+npm run check:gait                     # the ramp, what a hill costs, what he climbs, the camera, the vault
 node tools/shot.js --out shots/x.png   # take a picture of it, in a real browser on a real GPU
+node tools/shot.js --weapon            # draw, aim, lock, fire -- and say what happened at each step
+node tools/shot.js --vault             # stand in the middle of the vault
+node tools/shot.js --drone --hour 22   # frame the drone itself, close, to see what is glowing on it
+node tools/shot.js --bright            # list what is actually hot in the frame
 ```
 
 Each also takes an explicit file and frame count, e.g. `node tools/headless.js index.html 2000`.

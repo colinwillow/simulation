@@ -15,6 +15,9 @@
 //   --vibe       report whether a rigged plant's procedural joints are actually turning
 //   --probe      also report what the sun's shadow pass costs, in calls and triangles
 //   --palette    report what the frame is made of: hue spread, saturation, value range
+//   --weapon     draw the blaster, aim at the nearest animal, and report the lock and the shot
+//   --drone      frame the drone itself, close, to see what is glowing on it
+//   --vault      stand in the middle of the vault
 //   --title      shoot the title screen instead, before the world is entered
 //   --intro-t    seconds along the title screen's crane to jump to (0 wide, 26 near)
 //
@@ -31,7 +34,7 @@ const WAIT = +arg('wait', 6);
 
 // The game's script is one IIFE, so nothing inside it is reachable from the page. Splice a
 // handle onto the window just before it closes -- the same trick the headless tools use.
-const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV};';
+const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV,stick,weap,WEAPON,toggleArm,Bolt,isle,DRONE,camS,GIMBAL};';
 function indexHTML() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const cut = html.lastIndexOf('})();');
@@ -86,7 +89,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
   // The loading card is held until the models are in, so a shot taken before it lifts is a
   // shot of the card. Wait it out.
   await page.waitForFunction('!document.getElementById("boot")', null, { timeout: 240000 }).catch(() => {});
-  await page.evaluate(([at, hour, r, az, title, site, introT, tree, near]) => {
+  await page.evaluate(([at, hour, r, az, title, site, introT, tree, near, vault]) => {
     const g = window.__g;
     if (near) {
       const c = g.world.plants.filter(p => p.alive && p.constructor.name === near && p.model);
@@ -119,6 +122,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       const s = (g.world.sites || [])[+site];
       if (s) at = s.x + ',' + s.z; else console.warn('no site ' + site);
     }
+    if (vault && g.world.vault) { const v = g.world.vault; at = (v.pos.x + 2) + ',' + (v.pos.z + 2); }
     if (at) { const [x, z] = at.split(',').map(Number);
       g.player.pos.set(x, g.groundY(x, z) + 1, z); g.player.vx = g.player.vz = g.player.vy = 0;
       g.cam.tgt.set(x, g.player.pos.y + 3.4, z); }
@@ -131,12 +135,27 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     // The title crane takes the better part of a minute to travel; under swiftshader that is
     // ten real ones. Jump to a point on it instead of waiting for it.
     else if (introT !== null) g.INTRO.t = +introT;
-  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null), has('tree'), arg('near', null)]);
+  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null), has('tree'), arg('near', null), has('vault')]);
 
   // Wall clock is meaningless here -- swiftshader runs this at a couple of frames a second,
   // so the settle is counted in world seconds like every other harness in this folder.
   const t0 = await page.evaluate(() => window.__g.world.clock);
   await page.waitForFunction(`window.__g.world.clock > ${t0 + WAIT}`, null, { timeout: 600000 });
+
+  // The landing flies the camera down to the walking view, boom and all, so a --r set before
+  // startGame() is overwritten a few seconds later by the dive. Every wide shot taken with
+  // this tool since the title screen went in was secretly at the default twenty units, which
+  // is how a picture of the whole building came back as a picture of the inside of one wall.
+  // Ask again once the descent is over, and let it settle.
+  if (r !== null || az !== null) {
+    await page.evaluate(([r, az]) => { const g = window.__g;
+      if (r !== null) g.cam.r = +r;
+      if (az !== null) g.cam.az = +az * Math.PI / 180;
+      g.cam.idle = 0;
+    }, [r, az]);
+    const t1 = await page.evaluate(() => window.__g.world.clock);
+    await page.waitForFunction(`window.__g.world.clock > ${t1 + 4}`, null, { timeout: 600000 });
+  }
 
   // What the shadow pass actually costs, measured at this exact frame rather than guessed:
   // render once with the sun casting and once without, and diff the draw calls and triangles.
@@ -248,6 +267,103 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     }
   }
 
+  // Draw, aim at the nearest animal, hold, then let go -- the exact sequence a thumb does,
+  // driven through the same stick object the touch handlers write to. What comes back is
+  // whether the model hung on the joint, whether the assist found anything, and whether a
+  // bolt actually left the barrel and hit something.
+  if (has('weapon')) {
+    const step = async (secs) => { const t = await page.evaluate(() => window.__g.world.clock);
+      await page.waitForFunction(`window.__g.world.clock > ${t + secs}`, null, { timeout: 600000 }); };
+    const pre = await page.evaluate(() => {
+      const g = window.__g, p = g.player;
+      // stand him near an animal, facing it, so the cone has something in it
+      const c = g.world.creatures.filter(o => o.alive && !o.aquatic && !o.flying)
+        .sort((a, b) => a.pos.distanceTo(p.pos) - b.pos.distanceTo(p.pos))[0];
+      if (c) { const a = Math.atan2(c.pos.x - p.pos.x, c.pos.z - p.pos.z);
+        const d = 26, x = c.pos.x - Math.sin(a) * d, z = c.pos.z - Math.cos(a) * d;
+        p.pos.set(x, g.groundY(x, z) + 1, z); p.vx = p.vz = p.vy = 0;
+        g.cam.tgt.set(x, p.pos.y + 3.4, z); g.cam.az = a + Math.PI; }
+      g.toggleArm();
+      return { bone: !!g.weap.bone, tip: !!g.weap.tip, model: !!g.weap.model,
+        rifleClips: Object.keys(p.rigH ? p.rigH.acts : {}).filter(k => /rifle/.test(k)),
+        aimingAt: c ? c.constructor.name + ' at ' + (c.pos.distanceTo(p.pos) | 0) : 'nothing' };
+    });
+    await step(1.2);
+    const held = await page.evaluate(() => {                 // push the stick straight ahead
+      const g = window.__g; g.stick.R.x = 0; g.stick.R.y = -1;
+      return { armed: +g.player.armed.toFixed(2), visible: !!(g.weap.model && g.weap.model.visible) };
+    });
+    await step(1.4);
+    const aim = await page.evaluate(() => {
+      const g = window.__g, p = g.player;
+      return { aiming: p.aiming, lock: p.lock ? p.lock.constructor.name : 'none',
+        offBy: p.lock ? Math.abs(Math.atan2(Math.sin(Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z) - p.aimH),
+                                            Math.cos(Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z) - p.aimH))) * 180 / Math.PI : null,
+        retic: !document.getElementById('retic').hidden,
+        camBehind: Math.abs(Math.atan2(Math.sin(p.aimH + Math.PI - g.cam.az), Math.cos(p.aimH + Math.PI - g.cam.az))) * 180 / Math.PI };
+    });
+    await page.evaluate(() => { window.__g.stick.R.x = window.__g.stick.R.y = 0; });   // let go: fire
+    const shot = await page.evaluate(() => {
+      const g = window.__g;
+      return { bolts: g.world.effects.filter(e => e instanceof g.Bolt).length, shootT: +g.player.shootT.toFixed(2) };
+    });
+    await step(2.5);
+    const after = await page.evaluate(() => {
+      const g = window.__g;
+      return { bolts: g.world.effects.filter(e => e instanceof g.Bolt).length,
+        alarmed: g.world.creatures.filter(o => o.alive && o.alarm > 0).length };
+    });
+    console.log('weapon: joint ' + (pre.bone ? 'found' : 'MISSING') + ', muzzle ' + (pre.tip ? 'found' : 'MISSING')
+      + ', model ' + (pre.model ? 'hung' : 'NOT LOADED') + ' | clips ' + (pre.rifleClips.join(' ') || 'NONE'));
+    console.log('  drawn to ' + held.armed + ', blaster ' + (held.visible ? 'visible' : 'HIDDEN') + ' | pointed at ' + pre.aimingAt);
+    console.log('  aiming ' + aim.aiming + ' | locked ' + aim.lock
+      + (aim.offBy === null ? '' : ', shot is ' + aim.offBy.toFixed(1) + ' deg off the bearing')
+      + ' | reticle ' + (aim.retic ? 'up' : 'down') + ' | camera ' + aim.camBehind.toFixed(0) + ' deg off the aim');
+    console.log('  released: ' + shot.bolts + ' bolt in flight, recoil ' + shot.shootT + 's'
+      + ' | after 2.5s ' + after.bolts + ' left, ' + after.alarmed + ' animals alarmed');
+    // put the gun back up for the picture
+    await page.evaluate(() => { window.__g.stick.R.y = -1; });
+    await step(.8);
+  }
+
+  // What is actually glowing around him. "There are eight white blobs in the frame" is a
+  // real note; this says which objects they are.
+  if (has('bright')) {
+    const b = await page.evaluate(() => {
+      const g = window.__g, p = g.player, out = [];
+      g.scene.traverse(o => {
+        if (!o.visible) return;
+        const w = o.getWorldPosition(new THREE.Vector3());
+        const pw = g.planetPos ? null : null;
+        const hot = (o.isSprite) || (o.material && !Array.isArray(o.material) && o.material.emissiveIntensity > .8);
+        if (!hot) return;
+        for (let n = o; n; n = n.parent) if (!n.visible) return;
+        out.push({ n: o.name || o.type, sp: !!o.isSprite, s: +o.scale.x.toFixed(2),
+          c: o.material && o.material.color ? '#' + o.material.color.getHexString() : '', y: +w.y.toFixed(1) });
+      });
+      const near = [];
+      for (const ps of g.world.psys) near.push({ psys: ps.pts ? ps.pts.geometry.attributes.position.count : 0, rate: +(ps.rate || 0).toFixed(0) });
+      return { drone: !!p.drone, spot: p.spot ? +p.spot.intensity.toFixed(2) : null,
+        fill: p.light ? +p.light.intensity.toFixed(2) : null, gl: p.gl ? +p.gl.scale.x.toFixed(2) : null,
+        sprites: out.filter(o => o.sp).length, lit: out.length, psys: near.length,
+        sample: out.slice(0, 14) };
+    });
+    console.log('bright: drone ' + (b.drone ? 'hung' : 'MISSING') + ' | spot ' + b.spot + ' fill ' + b.fill + ' flare ' + b.gl);
+    console.log('  ' + b.lit + ' hot objects, ' + b.sprites + ' of them sprites, ' + b.psys + ' particle systems');
+    console.log('  ' + JSON.stringify(b.sample));
+  }
+
+  if (has('drone')) {
+    await page.evaluate(() => {
+      const g = window.__g, f = g.isle.fairy, p = g.player;
+      g.cam.tgt.copy(f.pos);
+      g.cam.az = Math.atan2(p.pos.x - f.pos.x, p.pos.z - f.pos.z) + Math.PI;
+      g.cam.r = 4.5;
+    });
+    const t = await page.evaluate(() => window.__g.world.clock);
+    await page.waitForFunction(`window.__g.world.clock > ${t + 1.5}`, null, { timeout: 600000 });
+  }
+
   fs.mkdirSync(path.dirname(path.resolve(OUT)), { recursive: true });
   await page.screenshot({ path: OUT });
   const info = await page.evaluate(() => {
@@ -258,7 +374,12 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       ship: g.world.ship ? g.world.ship.state + '@' + (g.world.ship.pos.y | 0) : 'none',
       title: g.world.title ? [g.world.title.position.x|0, g.world.title.position.z|0] : 'NOT PLACED',
       env: (g.ENV.map ? 'loaded on ' + g.ENV.mats.length + ' materials' : 'NOT LOADED'),
-      sites: (g.world.sites || []).map(s => [s.x | 0, s.z | 0]), clock: g.world.clock | 0 };
+      sites: (g.world.sites || []).map(s => [s.x | 0, s.z | 0]), clock: g.world.clock | 0,
+      cam: { askedR: +g.cam.r.toFixed(0), gotR: +g.camS.r.toFixed(1), pol: +g.camS.pol.toFixed(2),
+        lift: +g.cam.lift.toFixed(1), az: Math.round(g.cam.az * 57.3),
+        lensY: +g.camS.y.toFixed(1), groundUnderTheLens: (() => {
+          const sx = Math.sin(g.cam.az) * Math.sin(g.camS.pol) * g.camS.r, sz = Math.cos(g.cam.az) * Math.sin(g.camS.pol) * g.camS.r;
+          return +g.groundY(g.cam.tgt.x + sx, g.cam.tgt.z + sz).toFixed(1); })() } };
   });
   console.log(OUT, JSON.stringify(info));
   // What the frame is actually made of, in colour. "It looks like a mess" is a real note but
