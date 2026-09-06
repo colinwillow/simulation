@@ -12,7 +12,17 @@ change — a wrong guess costs him one look; a verification pass costs him an ho
 
 The only thing that runs by default is the ~1s syntax check, because a file that
 won't parse is a blank page and wastes the round trip he was going to spend testing.
-That's it.
+That's it. **Nothing else runs unless he asks for it by name.**
+
+If a probe would genuinely settle a question that reading the code has not — the
+problem is real, it is not going away, and guessing has already failed once — then
+say so in one sentence, name the tool and roughly what it costs, and let him decide.
+Do not run it and report afterwards. A task that took Opus 4.8 minutes and now takes
+hours is not the model; it is this, and he pays for it out of a fixed window.
+
+Prefer, in this order: read the code; read the asset directly (`@gltf-transform/core`
+on a GLB answers rig questions in seconds); ship it and let him look. He has the game
+open on a phone. He is faster than every tool in this directory.
 
 **Do not run, unless he explicitly asks:**
 - `tools/shot.js` screenshots — ~10 minutes each under swiftshader.
