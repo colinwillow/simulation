@@ -855,7 +855,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b71';
+const BUILD = 'b72';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2896,8 +2896,8 @@ class Stump {
 // not on how long the island has been running. Trees and the great tree are the skyline and
 // are never touched.
 const FAR = MOBILE
-  ? { MossTuft: 100, Bloom: 135, Litter: 115, Stump: 135, Mound: 115, Hopper: 115, Skimmer: 135, Burrower: 145, Weaver: 155, Drifter: 165, Grazer: 195, Walker: 300, Leviathan: 320 }
-  : { MossTuft: 165, Bloom: 215, Litter: 185, Stump: 215, Mound: 185, Hopper: 185, Skimmer: 215, Burrower: 230, Weaver: 245, Drifter: 260, Grazer: 300, Walker: 420, Leviathan: 440 };
+  ? { MossTuft: 100, Bloom: 135, Litter: 115, Stump: 135, Mound: 115, Hopper: 145, Skimmer: 135, Burrower: 145, Weaver: 155, Drifter: 165, Grazer: 195, Walker: 300, Leviathan: 320 }
+  : { MossTuft: 165, Bloom: 215, Litter: 185, Stump: 215, Mound: 185, Hopper: 225, Skimmer: 215, Burrower: 230, Weaver: 245, Drifter: 260, Grazer: 300, Walker: 420, Leviathan: 440 };
 // Sub-pixel from orbit. On the title screen the whole island is in frame at once and every
 // moss tuft on it is still being drawn: 2,600 calls and five million triangles for a picture
 // in which none of them covers a pixel. Past this boom length they simply do not exist.
@@ -3852,16 +3852,23 @@ const CREATURE_RIGS = {
   // bob the primitive hopper used gets switched off the moment the rig lands.
   Hopper: {
     url: 'models/tucann.glb',
-    height: 1.3,          // about what the primitive hopper stood, ears and all
+    // Was 1.3, which is what the primitive body it replaced stood -- and at that size the
+    // best-looking model on the island was the one you could barely see. 1.9 puts it between
+    // the mudlark (1.6) and the mossback (2.4), which is where a ground bird of this build
+    // belongs, and it is still the small one. The collider, the reach and the pace below move
+    // with it: a body that grows and keeps a half-unit footprint walks through things.
+    height: 1.9,
     idle: 'idle', walk: 'walk_fwd',
     yaw: 0,               // npm run check:model says +Z, measured off the bind pose
-    // Its stride measures 0.29 against a species that was doing 4.4, which is a foot planted
-    // once for every six units covered -- a skate of 5.7x, against 3.3 for the wanderer and
-    // 1 for the other two. Half of that is the clip: a Mixamo walk on short bird legs swings
-    // the foot only a fifth of its own height, where a person's carries most of it. So the
-    // legs are allowed to whir, which is what a small bird's actually do, and the species
-    // slowed to something a toucan on the ground would plausibly manage. 2.6x after, which
-    // is what the wanderer already runs at.
+    // Its stride measures 0.29 in model units against a species that was doing 4.4, which is
+    // a foot planted once for every six units covered -- a skate of 5.7x, against 3.3 for the
+    // wanderer and 1 for the other two. Half of that is the clip: a Mixamo walk on short bird
+    // legs swings the foot only a fifth of its own height, where a person's carries most of
+    // it. So the legs are allowed to whir, which is what a small bird's actually do, and the
+    // species was slowed to something a toucan on the ground would plausibly manage.
+    // Growing it helps by itself: walkSpeed is the stride times the instance scale, so a body
+    // half again as big plants its foot half again as far and the clip runs that much slower
+    // for the same ground speed. This is a ceiling, so it simply stops being reached.
     rateMax: 4.2,
   },
   Grazer: {
@@ -5011,8 +5018,12 @@ class Walker extends Creature {
 class Hopper extends Creature {
   // Nervous, and it does not keep that to itself: one hopper bolting takes the whole flock
   // with it, which is the most alive the meadow ever looks.
-  constructor(x, z) { super(x, z, { speed: 3.0, turn: 4.5, rad: .5, look: 4, minObR: 1.0,
-    wary: 7, flock: 10, notice: 11, social: 1 }); this.gait = 9; this.bob = .62; }
+  // rad, look and speed all scale with the body: it stood 1.3 and now stands 1.9, and a
+  // creature that grows without its footprint growing walks through the things it used to go
+  // round. minObR is the size of obstacle it bothers to notice, and a bigger bird can push
+  // past more, so that one goes up rather than across.
+  constructor(x, z) { super(x, z, { speed: 3.6, turn: 4.2, rad: .74, look: 5.4, minObR: 1.15,
+    wary: 8, flock: 12, notice: 13, social: 1 }); this.gait = 9; this.bob = .62; }
   build() {
     const b = this.body, coat = pick(M.hopper);
     b.add(mesh(G.blob[2], coat, .42, .4, .58, 0, .5, 0));
