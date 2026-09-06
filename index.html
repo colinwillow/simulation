@@ -115,11 +115,55 @@
   #stkR .chg.full{filter:drop-shadow(0 0 16px rgba(190,252,255,1));animation:chgfull .5s ease-in-out infinite}
   @keyframes chgfull{0%,100%{opacity:.82}50%{opacity:1}}
   #stkL{left:calc(20px + env(safe-area-inset-left))} #stkR{right:calc(20px + env(safe-area-inset-right))}
-  /* The blaster button sits just inboard of the right stick, where the thumb already is. */
-  #armB{position:fixed;z-index:6;right:calc(150px + env(safe-area-inset-right));
-    bottom:calc(58px + env(safe-area-inset-bottom));min-width:62px}
-  #armB.on{color:#bff4ff;border-color:rgba(150,246,255,.7);
-    box-shadow:0 0 16px rgba(120,238,255,.45),inset 0 0 14px rgba(90,220,255,.2)}
+  /* ── the weapon dock ───────────────────────────────────────────────────────────────────
+     A chip floating loose between the two sticks read as a leftover, so this is a proper
+     dock instead: a round key the size of a thumb, planted just inboard of the right stick
+     and level with its centre, with the rack it opens stacked directly above it. Round,
+     because everything else the thumbs touch down here is round. */
+  /* bottom 61 + half of 62 puts the key's centre on 92px, which is the right stick's centre;
+     right 166 leaves a 14px gap outside the stick's 132px ring, which starts at right 152. */
+  #wdock{position:fixed;z-index:6;right:calc(166px + env(safe-area-inset-right));
+    bottom:calc(61px + env(safe-area-inset-bottom));
+    display:flex;flex-direction:column-reverse;align-items:center;gap:11px}
+  /* An inline SVG with only a viewBox lays out at 300x150 unless something says otherwise. */
+  .wico svg{width:100%;height:100%;display:block}
+  .wbtn{position:relative;width:62px;height:62px;border-radius:50%;padding:0;
+    font-family:inherit;color:#f2e4c8;cursor:pointer;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    background:radial-gradient(circle at 40% 32%,rgba(255,236,206,.16),rgba(255,196,124,.07) 60%,rgba(240,235,220,.03));
+    border:1px solid rgba(240,228,200,.3);
+    box-shadow:0 3px 14px rgba(0,0,0,.42),inset 0 0 20px rgba(255,196,128,.07);
+    -webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);
+    transition:border-color .18s,box-shadow .18s,background .18s,transform .1s}
+  .wbtn:active{transform:scale(.94)}
+  .wbtn .wico{width:30px;height:30px;display:block;opacity:.72;transition:opacity .18s,filter .18s}
+  .wbtn .wlbl{font-size:9.5px;letter-spacing:.13em;opacity:.5;font-variant:small-caps;line-height:1}
+  /* Drawn. Cyan, like everything else in here that is live. */
+  #armB.on{border-color:rgba(150,246,255,.9);
+    background:radial-gradient(circle at 40% 32%,rgba(150,246,255,.22),rgba(90,220,255,.08) 60%,rgba(90,220,255,.03));
+    box-shadow:0 0 22px rgba(120,238,255,.5),inset 0 0 20px rgba(90,220,255,.24)}
+  #armB.on .wico{opacity:1;filter:drop-shadow(0 0 6px rgba(140,240,255,.9))}
+  #armB.on .wlbl{opacity:.92;color:#bff4ff}
+  /* Held down: the ring winds round the key while the rack is coming. */
+  #armB.hold::after{content:'';position:absolute;inset:-5px;border-radius:50%;pointer-events:none;
+    background:conic-gradient(from -90deg,rgba(160,248,255,.95) calc(var(--h,0) * 360deg),rgba(150,246,255,0) 0);
+    -webkit-mask:radial-gradient(circle,transparent 62%,#000 65%);
+    mask:radial-gradient(circle,transparent 62%,#000 65%)}
+  /* The rack. Opens upward out of the key, one slot per weapon he has. */
+  #wrack{display:flex;flex-direction:column-reverse;gap:8px;align-items:center;
+    animation:rackin .16s ease-out}
+  @keyframes rackin{from{opacity:0;transform:translateY(9px) scale(.9)}to{opacity:1;transform:none}}
+  .wslot{width:54px;height:54px;border-radius:16px;padding:0;font-family:inherit;color:#f2e4c8;
+    cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    background:rgba(10,18,28,.55);border:1px solid rgba(240,228,200,.24);
+    -webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);
+    box-shadow:0 3px 14px rgba(0,0,0,.5);transition:border-color .15s,background .15s}
+  .wslot .wico{width:26px;height:26px;display:block;opacity:.66}
+  .wslot span:last-child{font-size:9px;letter-spacing:.1em;opacity:.5;font-variant:small-caps;line-height:1}
+  .wslot.sel{border-color:rgba(150,246,255,.85);background:rgba(24,58,74,.6);
+    box-shadow:0 0 16px rgba(120,238,255,.35)}
+  .wslot.sel .wico{opacity:1;filter:drop-shadow(0 0 5px rgba(140,240,255,.85))}
+  .wslot.sel span:last-child{opacity:.9;color:#bff4ff}
   /* The lock. Positioned in px by the frame loop, so it needs no layout of its own. */
   #retic{position:fixed;z-index:5;left:0;top:0;width:52px;height:52px;margin:-26px 0 0 -26px;
     pointer-events:none;will-change:transform,opacity;transition:opacity .16s}
@@ -152,14 +196,13 @@
     box-shadow:0 5px 20px rgba(0,0,0,.5),inset 0 0 24px rgba(0,0,0,.4);background:rgba(8,14,24,.5)}
   #btns{display:flex;flex-direction:column;align-items:flex-end;gap:7px}
   #hudHead{pointer-events:auto;cursor:pointer;display:inline-block}
-  #logT{position:fixed;left:calc(16px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));z-index:3;opacity:.7}
   #log{bottom:46px}
-  @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:206px}#logT{bottom:176px}#mini{width:92px;height:92px}}
+  @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:206px}#mini{width:92px;height:92px}}
   /* The title screen is the game, seen from a long way off, so the interface has to get
      out of the way of it -- and come back on its own once you are in. */
-  body.intro #sticks,body.intro #ui,body.intro #logT,body.intro #log,body.intro #hint,body.intro #hud{
+  body.intro #sticks,body.intro #ui,body.intro #wdock,body.intro #log,body.intro #hint,body.intro #hud{
     opacity:0;pointer-events:none}
-  #sticks,#ui,#logT,#log,#hint,#hud{transition:opacity 1.1s ease-out}
+  #sticks,#ui,#wdock,#log,#hint,#hud{transition:opacity 1.1s ease-out}
   #intro{position:fixed;inset:0;z-index:4;pointer-events:none;transition:opacity .7s ease-out;
     display:flex;flex-direction:column;align-items:center;justify-content:flex-end}
   #intro.go{opacity:0}
@@ -799,7 +842,6 @@
 <div id="scrim"></div><div id="scrimB"></div>
 <div id="hud"><div id="hudHead"><h1>Plutopia</h1><div class="era" id="era">The Quiet</div></div>
   <div id="hudBody" hidden><div id="stats"></div><div id="perf"></div></div></div>
-<button id="logT" class="tog icon" title="the island's notes">notes</button>
 <div id="log"></div>
 <div id="hint">left stick walks · right stick looks · scroll or pinch to zoom<br>WASD / arrows also work · tap the ground to drop a spark</div>
 <div id="sticks">
@@ -810,10 +852,18 @@
     <ellipse cx="20" cy="24" rx="16" ry="6.2" stroke="#7a4a18" stroke-opacity=".5"/>
   </svg></div><div class="lbl">LOOK</div></div>
 </div>
-<button id="armB" class="tog" hidden>draw</button>
+<!-- The weapon dock: the button sits just inboard of the right stick, level with it, where
+     the thumb that works the stick already is. Hold it and the rack opens straight above. -->
+<div id="wdock" hidden>
+  <div id="wrack" hidden></div>
+  <button id="armB" class="wbtn" title="tap to draw, hold to change weapon">
+    <span class="wico" id="armIco"></span><span class="wlbl" id="armLbl">blaster</span>
+  </button>
+</div>
 <div id="retic" hidden><span></span></div>
 <div id="ui">
   <canvas id="mini" title="open the map"></canvas>
+  <button id="logT" class="tog icon" title="the island's notes">notes</button>
   <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
   <div id="btns" hidden><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
 </div>
@@ -868,7 +918,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b78';
+const BUILD = 'b79';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4462,9 +4512,43 @@ class Creature {
     this.body.rotation.z = -this.lean * .12;
     if (this.legs.length) this.animLegs(this.gait);
   }
+  // Caught. It owns its own position while it is in there, the same way a thrown one does:
+  // the brain, the steering and the obstacle resolve are all off, and what is left is an
+  // animal thrashing in a bag and covering no ground. Returns true for as long as that holds.
+  inNet(dt) {
+    const N = this.net;
+    if (!N || !N.alive) { this.net = null; return false; }
+    N.held -= dt;
+    if (player.drag === this) N.held = Math.max(N.held, NET.dragHold);   // it cannot work free while held
+    if (N.held <= 0) { N.cut(); return false; }
+    if (player.drag === this) {
+      // A rope of a given length does nothing at all until it comes tight, and then it does
+      // everything. It can be hauled over ground it would never choose to walk onto, but not
+      // into the sea and not off a cliff -- the same test its own legs use.
+      const D = NET.drag;
+      const dx = player.pos.x - this.pos.x, dz = player.pos.z - this.pos.z, d = Math.hypot(dx, dz);
+      if (d > D.rope) {
+        const st = Math.min(d - D.rope, D.pull * dt);
+        const nx = this.pos.x + dx / d * st, nz = this.pos.z + dz / d * st;
+        if (this.terrainOK(nx, nz)) { this.pos.x = nx; this.pos.z = nz; this.lastGood.set(nx, 0, nz); }
+        this.heading = Math.atan2(-dx, -dz);        // dragged backwards, facing away from him
+      }
+    }
+    this.moving = 0; this.moveK = lerp(this.moveK, 0, Math.min(1, dt * 5));
+    // Plenty of animation, no ground covered, which is exactly the read.
+    this.animK = lerp(this.animK, .26 + Math.abs(Math.sin(world.clock * 7 + this.phase)) * .3, Math.min(1, dt * 7));
+    this.heading += Math.sin(world.clock * 5.5 + this.phase) * dt * 1.2;
+    const kR = Math.min(1, dt * 12);
+    this.rx = lerp(this.rx, this.pos.x, kR); this.rz = lerp(this.rz, this.pos.z, kR);
+    this.px0 = this.pos.x; this.pz0 = this.pos.z; this.stall = 0; this.pinned = 0;
+    this.pose(dt); this.trackHead(dt);
+    if (this.rig) stepRig(this.rig, dt, 0, true, { top: this.speed * 1.45, runAt: .78, runFull: .98 });
+    return true;
+  }
   update(dt) {
     if (this.carried) return;          // somebody has hold of it; carryStep places it
     if (this.fling && this.tumble(dt)) return;
+    if (this.net && this.inNet(dt)) return;
     if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); }
     else if (!this.senses(dt)) this.think(dt);
     this.locomote(dt);
@@ -7269,7 +7353,7 @@ function introFrame(dt) {
 function startGame() {
   if (!INTRO.on) return;
   INTRO.on = false; INTRO.r0 = cam.r; INTRO.dive = INTRO.diveT;
-  if (weap.ready) armB.hidden = false;
+  if (weap.ready) wdock.hidden = false;
   introEl.classList.add('go');
   setTimeout(() => introEl.remove(), 1000);
   document.body.classList.remove('intro');
@@ -7787,6 +7871,44 @@ const WEAPON = {
   // shots go exactly where the stick pointed and one you were already nearly on gets helped.
   lock: { cone: .30, range: 70, pull: 3.0, grab: .34, keep: .55 },
 };
+
+// ---------- the net gun ----------
+// A real net rather than a picture of one: a hub, three hoops of ten and the cords between
+// them, run as verlet particles with distance constraints. Same integrator a rope or a cloth
+// would use -- position, previous position, and a handful of relaxation passes that pull each
+// pair of nodes back to the length its cord was cut to.
+//
+// It has three lives. In flight it is kinematic: the nodes are placed on a spinning disc that
+// blooms from furled to open, because a net that is being simulated while travelling at forty
+// units a second spends its whole flight inside out. It only starts integrating when it lands
+// on something -- draped over an animal, where every node is also shoved out of that animal's
+// body and pulled gently down its flanks, which is what makes it cinch -- or on the ground,
+// where it settles and lies there.
+const NET = {
+  cool: 1.15,          // slower than the blaster: it is a capture, not a rate of fire
+  speed: 46, life: 3.0, grace: 1.8,
+  ride: 2.4, climb: 40, fall: 14,     // the same terrain-hugging flight the bolt has
+  rings: 3, spokes: 10,               // 31 nodes, 60 cords. Small enough to relax four times a frame.
+  R0: .5, R1: 3.6,                    // furled at the muzzle, open by the time it arrives
+  bloom: .16,                         // seconds from one to the other
+  spin: 5.2,
+  iters: 4, grav: 17, damp: .972, gnd: .34,
+  catch: 1.5,                         // how much wider than the animal it has to pass to take it
+  hold: 16,                           // seconds an animal stays in it before it works free
+  dragHold: 6,                        // and the floor that keeps while you are dragging it
+  fade: 7,                            // an empty net on the ground lasts this long
+  cling: .55,                         // how hard the cords are drawn down onto whatever is inside
+  cord: '#cfe8d8', lit: '#8ff0d8',
+  drag: { reach: 5.2, rope: 3.4, pull: 30, slow: .42 },
+};
+// What he can carry. The rack is built from this, in this order, so adding a third weapon is
+// one more entry and one more icon.
+const WEAPONS = {
+  blaster: { label: 'blaster', charge: 1, cool: () => WEAPON.cool,
+    icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13h15l6 3-6 3H4z"/><path d="M9 19l-2 7h5l1-7"/><path d="M25 16h4"/><circle cx="7.5" cy="16" r="1.3" fill="currentColor" stroke="none"/></svg>' },
+  net: { label: 'net', charge: 0, cool: () => NET.cool,
+    icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="16" r="11"/><path d="M5 16h22M16 5v22"/><path d="M8.2 8.2l15.6 15.6M23.8 8.2L8.2 23.8"/></svg>' },
+};
 // The dodge. A flick of the left stick throws him that way: the clip owns the body outright
 // while it runs and the travel is driven from here rather than from the animation, because a
 // root-motion clip fitted to one speed reads wrong at every other one. `speed` is what he
@@ -7860,7 +7982,8 @@ function stepChargeFx(c, dt) {
 Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0, charge: 0,
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null,
-  throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0 });
+  throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
+  wpn: 'blaster', drag: null });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -7901,7 +8024,7 @@ function attachWeapon(r) {
     weap.model = inst; inst.visible = false;
     weap.ready = true;
     if (!weap.fx) buildChargeFx();
-    if (!INTRO.on) armB.hidden = false;
+    if (!INTRO.on) wdock.hidden = false;
     console.info('[weapon] muzzle marker ' + tipD.toFixed(1) + ' joint units out; barrel reaches '
       + reach.toFixed(3) + ' in the file, so the blaster is scaled ' + k.toFixed(1) + '\u00d7.');
   });
@@ -7960,7 +8083,7 @@ function carryOffer() {
   if (p.armWant || p.carryCool > 0) return;          // both hands are on the blaster
   let best = null, bd = CARRY.reach;
   for (const o of world.creatures) {
-    if (!o.alive || o.carried || o.aquatic || o.flying || (o.rad || 1) > CARRY.size) continue;
+    if (!o.alive || o.carried || o.net || o.aquatic || o.flying || (o.rad || 1) > CARRY.size) continue;
     const d = Math.hypot(o.pos.x - p.pos.x, o.pos.z - p.pos.z);
     if (d < bd) { bd = d; best = o; }
   }
@@ -8042,6 +8165,46 @@ function finishPlace() {
   c.rx = a.x; c.rz = a.z; c.px0 = a.x; c.pz0 = a.z; c.lastGood.set(a.x, 0, a.z);
   c.ghost = 1.2; c.stall = 0; c.stuck = 0; c.pinned = 0; c.roamT = 3;   // it wanders off rather than bolting
   world.effects.push(new Burst(a.x, c.pos.y + .5, a.z, '#cdbf9c', 7, .7));
+}
+
+// Taking hold of a net, and letting go of one. Written after carryOffer so that letting go
+// wins over anything else in reach: a hand already full of net has one thing it can do.
+function netOffer() {
+  const p = player;
+  if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5) { p.drag = null; return; }
+  if (p.drag && (!p.drag.alive || !p.drag.net)) p.drag = null;
+  if (p.drag) { offerAct({ icon: 'net', label: 'LET GO', run: () => { p.drag = null; logMsg('He lets the net go slack.'); } }); return; }
+  if (p.carry || p.liftT > 0 || p.placeT > 0) return;
+  let best = null, bd = NET.drag.reach;
+  for (const o of world.creatures) {
+    if (!o.alive || !o.net) continue;
+    const d = Math.hypot(o.pos.x - p.pos.x, o.pos.z - p.pos.z);
+    if (d < bd) { bd = d; best = o; }
+  }
+  if (best) offerAct({ icon: 'net', label: 'TAKE NET', run: () => { p.drag = best; logMsg('He takes a fistful of net and leans into it.'); } });
+}
+
+// The cord in his fist: two vertices in a group sitting at their own midpoint, the same trick
+// the net uses, so the planet projection curves it with the ground for nothing.
+let dragRope = null;
+function stepDrag() {
+  const p = player, o = p.drag;
+  if (!dragRope) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    dragRope = new THREE.Line(g, new THREE.LineBasicMaterial({ color: new THREE.Color(NET.lit), transparent: true, opacity: .8 }));
+    dragRope.frustumCulled = false; dragRope.visible = false; scene.add(dragRope);
+  }
+  if (!o || !o.alive || !o.net || INTRO.on) { dragRope.visible = false; return; }
+  const ax = p.pos.x, ay = p.pos.y + RIG.height * .52, az = p.pos.z;
+  const bx = o.pos.x, by = o.pos.y + o.pivotY(), bz = o.pos.z;
+  const mx = (ax + bx) * .5, my = (ay + by) * .5, mz = (az + bz) * .5;
+  const a = dragRope.geometry.attributes.position.array;
+  a[0] = ax - mx; a[1] = ay - my; a[2] = az - mz;
+  a[3] = bx - mx; a[4] = by - my; a[5] = bz - mz;
+  dragRope.geometry.attributes.position.needsUpdate = true;
+  dragRope.position.set(mx, my, mz);
+  dragRope.visible = true;
 }
 
 // The wind-up ring on the right stick. Cheap enough to poke every frame -- it is two style
@@ -8202,10 +8365,12 @@ function stepWeapon(dt, rx, ry) {
   // The charge fills while he is holding the aim and drains when he is not, so a tap fires a
   // small one and a hold fires a big one. It cannot start filling until the cooldown is up,
   // or a mash would show a full ball a frame after the last shot.
-  const CH = WEAPON.charge;
-  const filling = p.aiming && p.cool <= 0;
+  // Only the blaster charges. The net gun is a single throw of a single net: holding the
+  // stick aims it and letting go casts it, and there is nothing to spin up at the muzzle.
+  const CH = WEAPON.charge, spins = !!WEAPONS[p.wpn].charge;
+  const filling = p.aiming && p.cool <= 0 && spins;
   p.charge = clamp(p.charge + (filling ? dt / CH.chargeT : -dt / .18), 0, 1);
-  stepChargeFx(p.aiming ? p.charge : 0, dt);
+  stepChargeFx(p.aiming && spins ? p.charge : 0, dt);
 
   if (Math.hypot(rx, ry) > WEAPON.aimAt) {
     // Latch the frame the stick is measured in when the aim starts. Reading it off the live
@@ -8228,7 +8393,9 @@ function stepWeapon(dt, rx, ry) {
     let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
     cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
   } else if (p.aiming) {
-    p.aiming = 0; fireBolt(p.charge); p.charge = 0; p.lock = null;
+    p.aiming = 0;
+    if (p.wpn === 'net') fireNet(); else fireBolt(p.charge);
+    p.charge = 0; p.lock = null;
   }
   return true;
 }
@@ -8381,6 +8548,231 @@ class Bolt {
   }
 }
 
+function fireNet() {
+  const p = player;
+  if (p.cool > 0) return;
+  p.cool = NET.cool; p.shootT = WEAPON.hold;
+  muzzleChart(_wmz);
+  // Same three corrections the bolt needs, for the same three reasons: swing it onto the
+  // shot line, lift it to chest height, and buy it a couple of units of grace.
+  const reach = Math.max(WEAPON.out, Math.hypot(_wmz.x - p.pos.x, _wmz.z - p.pos.z));
+  _wmz.x = p.pos.x + Math.sin(p.aimH) * reach;
+  _wmz.z = p.pos.z + Math.cos(p.aimH) * reach;
+  _wmz.y = Math.max(_wmz.y, p.pos.y + RIG.height * WEAPON.high);
+  weap.lastMuzzle.copy(_wmz);
+  world.effects.push(new NetShot(_wmz.x, _wmz.y, _wmz.z, Math.sin(p.aimH), Math.cos(p.aimH)));
+  world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#dff6ea', 2.2, .18));
+}
+
+// The net. Read NET above for the shape of it. Three lives: kinematic in flight, then either
+// draped over an animal or settling on the ground, both simulated.
+const _nsA = new THREE.Vector3(), _nsB = new THREE.Vector3(), _nsC = new THREE.Vector3();
+class NetShot {
+  constructor(x, y, z, dx, dz) {
+    this.alive = true; this.t = 0; this.state = 'fly'; this.spin = rnd(Math.PI * 2);
+    this.x = x; this.y = y; this.z = z;
+    this.vx = dx * NET.speed; this.vz = dz * NET.speed;
+    this.prey = null; this.held = NET.hold; this.fade = NET.fade; this.op = 1;
+    const R = NET.rings, S = NET.spokes, n = this.n = 1 + R * S;
+    this.p = new Float32Array(n * 3); this.v = new Float32Array(n * 3); this.p0 = new Float32Array(n * 3);
+    // The flat pattern at unit radius: a hub and `rings` hoops of `spokes`.
+    this.lay = new Float32Array(n * 2);
+    for (let r = 0; r < R; r++) for (let s = 0; s < S; s++) {
+      const i = 1 + r * S + s, a = s / S * Math.PI * 2, rr = (r + 1) / R;
+      this.lay[i * 2] = Math.cos(a) * rr; this.lay[i * 2 + 1] = Math.sin(a) * rr;
+    }
+    // The cords: hub out to the inner hoop, hoop to hoop along each spoke, and round each
+    // hoop. The hoops are what stop it collapsing to a bundle; the spokes are what stop it
+    // stretching into a ribbon.
+    const la = [], lb = [];
+    for (let s = 0; s < S; s++) { la.push(0); lb.push(1 + s); }
+    for (let r = 0; r < R - 1; r++) for (let s = 0; s < S; s++) { la.push(1 + r * S + s); lb.push(1 + (r + 1) * S + s); }
+    for (let r = 0; r < R; r++) for (let s = 0; s < S; s++) { la.push(1 + r * S + s); lb.push(1 + r * S + (s + 1) % S); }
+    this.la = la; this.lb = lb;
+    // Each cord is cut to the length it has when the net is OPEN, so the moment the flight
+    // stops the thing is already its proper size and the relaxation has nothing to undo.
+    this.rest = new Float32Array(la.length);
+    for (let k = 0; k < la.length; k++) {
+      const i = la[k] * 2, j = lb[k] * 2;
+      this.rest[k] = Math.hypot(this.lay[i] - this.lay[j], this.lay[i + 1] - this.lay[j + 1]) * NET.R1;
+    }
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(la.length * 6), 3));
+    this.mat = new THREE.LineBasicMaterial({ color: new THREE.Color(NET.cord), transparent: true, opacity: .95 });
+    this.mesh = new THREE.LineSegments(this.geo, this.mat);
+    this.mesh.frustumCulled = false;                 // the geometry is rebuilt every frame; its bounds are a lie
+    this.g = new THREE.Group(); this.g.add(this.mesh);
+    this.hub = glow(NET.lit, 1.5, .8); this.g.add(this.hub);
+    scene.add(this.g);
+    this.place(0); this.draw();
+  }
+  // In flight the nodes are PLACED, not simulated: a disc facing the way it is going,
+  // spinning, blooming from furled to open. A net actually integrated at forty-six units a
+  // second turns itself inside out before it has gone ten.
+  place(k) {
+    const rad = lerp(NET.R0, NET.R1, k);
+    const f = _nsA.set(this.vx, 0, this.vz); f.normalize();
+    const rgt = _nsB.crossVectors(f, _plY).normalize();
+    const up = _nsC.crossVectors(rgt, f);
+    const cs = Math.cos(this.spin), sn = Math.sin(this.spin);
+    for (let i = 0; i < this.n; i++) {
+      const a = this.lay[i * 2], b = this.lay[i * 2 + 1];
+      const u = (a * cs - b * sn) * rad, w = (a * sn + b * cs) * rad, i3 = i * 3;
+      this.p[i3] = this.x + rgt.x * u + up.x * w;
+      this.p[i3 + 1] = this.y + rgt.y * u + up.y * w;
+      this.p[i3 + 2] = this.z + rgt.z * u + up.z * w;
+      this.v[i3] = this.vx; this.v[i3 + 1] = 0; this.v[i3 + 2] = this.vz;
+    }
+  }
+  update(dt) {
+    this.t += dt;
+    if (this.state === 'fly') {
+      if (this.t > NET.life) this.land();
+      else {
+        this.spin += dt * NET.spin;
+        for (let i = 0; i < 2; i++) {            // two half-steps: a whole frame is a metre of gap
+          const h = dt * .5;
+          this.x += this.vx * h; this.z += this.vz * h;
+          const floor = groundY(this.x, this.z) + NET.ride;
+          this.y = this.y < floor ? Math.min(floor, this.y + NET.climb * h) : Math.max(floor, this.y - NET.fall * h);
+          if (this.strike()) break;
+        }
+        if (!this.alive) return;
+        if (this.state === 'fly') this.place(clamp(this.t / NET.bloom, 0, 1));
+      }
+    }
+    if (this.prey && (!this.prey.alive || this.prey.net !== this)) this.cut();
+    if (this.state !== 'fly') this.sim(dt);
+    if (this.state === 'ground' && (this.fade -= dt) <= 0) { this.alive = false; return; }
+    this.op = this.state === 'ground' ? clamp(this.fade / 1.6, 0, 1) : 1;
+    this.draw();
+  }
+  strike() {
+    if (Math.abs(this.x) > W || Math.abs(this.z) > W) { this.alive = false; return true; }
+    if (this.t * NET.speed < NET.grace) return false;
+    const rad = lerp(NET.R0, NET.R1, clamp(this.t / NET.bloom, 0, 1));
+    for (const o of world.creatures) {
+      if (!o.alive || o.net || o.carried || o.aquatic || o.flying) continue;
+      const dx = o.pos.x - this.x, dy = o.pos.y + (o.rad || 1) * .6 - this.y, dz = o.pos.z - this.z;
+      const r = rad * NET.catch + (o.rad || 1);
+      if (dx * dx + dy * dy + dz * dz < r * r) { this.take(o); return true; }
+    }
+    let solid = false;
+    obNear(this.x, this.z, rad, o => {
+      if (solid || this.y > o.top) return;
+      const r = obRad(o) + rad * .5, dx = this.x - o.x, dz = this.z - o.z;
+      if (dx * dx + dz * dz < r * r) solid = true;
+    });
+    if (solid) { this.land(); return true; }
+    const g = groundY(this.x, this.z);
+    if (this.y < g - .1) { this.y = g + .4; this.land(); return true; }
+    return false;
+  }
+  take(o) {
+    this.state = 'wrap'; this.prey = o; o.net = this; this.held = NET.hold;
+    o.abandon(); o.wp = null; o.target = null; o.fling = null; o.alarm = 0; o.stall = 0;
+    this.px = o.pos.x; this.py = o.pos.y; this.pz = o.pos.z;
+    this.place(1);                                   // open the instant it arrives
+    this.mat.color.set(NET.lit);
+    world.effects.push(new Burst(o.pos.x, o.pos.y + (o.rad || 1), o.pos.z, '#9ff0d8', 11, .9));
+    logMsg('The net comes down over it. Walk up and take hold to drag it.');
+  }
+  land() { if (this.state !== 'fly') return; this.state = 'ground'; this.place(1); }
+  // Let whatever is in it out, and start the net itself fading.
+  cut() {
+    const o = this.prey;
+    if (o) { o.net = null; if (player.drag === o) player.drag = null; o.spook(player.pos, 8); }
+    this.prey = null; this.state = 'ground'; this.fade = Math.min(this.fade, 1.6);
+  }
+  // Position-based dynamics rather than plain verlet, because the frame time here is not
+  // fixed and verlet's implicit velocity turns a long frame into an explosion.
+  sim(dt) {
+    const n = this.n, p = this.p, v = this.v, p0 = this.p0;
+    const h = Math.min(dt, 1 / 45);
+    const o = this.prey;
+    if (o) {                                         // it goes where the animal goes; the drape is local
+      const dx = o.pos.x - this.px, dy = o.pos.y - this.py, dz = o.pos.z - this.pz;
+      this.px = o.pos.x; this.py = o.pos.y; this.pz = o.pos.z;
+      if (dx || dy || dz) for (let i = 0; i < n; i++) { const i3 = i * 3; p[i3] += dx; p[i3 + 1] += dy; p[i3 + 2] += dz; }
+    }
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3;
+      p0[i3] = p[i3]; p0[i3 + 1] = p[i3 + 1]; p0[i3 + 2] = p[i3 + 2];
+      v[i3 + 1] -= NET.grav * h;
+      p[i3] += v[i3] * h; p[i3 + 1] += v[i3 + 1] * h; p[i3 + 2] += v[i3 + 2] * h;
+    }
+    for (let it = 0; it < NET.iters; it++) this.relax();
+    this.collide(h);
+    const inv = h > 0 ? 1 / h : 0;
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3;
+      v[i3] = (p[i3] - p0[i3]) * inv * NET.damp;
+      v[i3 + 1] = (p[i3 + 1] - p0[i3 + 1]) * inv * NET.damp;
+      v[i3 + 2] = (p[i3 + 2] - p0[i3 + 2]) * inv * NET.damp;
+    }
+  }
+  // One relaxation pass: every cord pulls its two ends back to the length it was cut to,
+  // half the error each. Four passes a frame is enough for sixty cords to read as rope.
+  relax() {
+    const p = this.p, la = this.la, lb = this.lb, rest = this.rest;
+    for (let k = 0; k < la.length; k++) {
+      const i = la[k] * 3, j = lb[k] * 3;
+      const dx = p[j] - p[i], dy = p[j + 1] - p[i + 1], dz = p[j + 2] - p[i + 2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
+      const f = (d - rest[k]) / d * .5, ox = dx * f, oy = dy * f, oz = dz * f;
+      p[i] += ox; p[i + 1] += oy; p[i + 2] += oz;
+      p[j] -= ox; p[j + 1] -= oy; p[j + 2] -= oz;
+    }
+  }
+  collide(h) {
+    const p = this.p, n = this.n, o = this.prey;
+    const cx = o ? o.pos.x : 0, cy = o ? o.pos.y + o.pivotY() : 0, cz = o ? o.pos.z : 0;
+    const R = o ? (o.rad || 1) * 1.06 : 0;
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3;
+      if (o) {
+        const dx = p[i3] - cx, dy = p[i3 + 1] - cy, dz = p[i3 + 2] - cz;
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
+        // Out of the body first, then drawn back down onto it. The push keeps the cords off
+        // the skin and the pull keeps them against it, and between the two the net cinches
+        // rather than sitting on the animal like a hat.
+        if (d < R) { const k = R / d; p[i3] = cx + dx * k; p[i3 + 1] = cy + dy * k; p[i3 + 2] = cz + dz * k; }
+        else { const k = Math.min(NET.cling * h / d, .5); p[i3] -= dx * k; p[i3 + 1] -= dy * k; p[i3 + 2] -= dz * k; }
+      }
+      const gy = groundY(p[i3], p[i3 + 2]) + .05;
+      if (p[i3 + 1] < gy) {                          // on the ground it scuffs rather than skating
+        p[i3 + 1] = gy;
+        p[i3] = lerp(p[i3], this.p0[i3], NET.gnd);
+        p[i3 + 2] = lerp(p[i3 + 2], this.p0[i3 + 2], NET.gnd);
+      }
+    }
+  }
+  // The cords live in chart space; the group is one point in it and the vertices are offsets
+  // from that point, which is how everything else here gets onto the sphere.
+  draw() {
+    const p = this.p, n = this.n, la = this.la, lb = this.lb;
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < n; i++) { const i3 = i * 3; cx += p[i3]; cy += p[i3 + 1]; cz += p[i3 + 2]; }
+    cx /= n; cy /= n; cz /= n;
+    const a = this.geo.attributes.position.array;
+    for (let k = 0; k < la.length; k++) {
+      const i = la[k] * 3, j = lb[k] * 3, o = k * 6;
+      a[o] = p[i] - cx; a[o + 1] = p[i + 1] - cy; a[o + 2] = p[i + 2] - cz;
+      a[o + 3] = p[j] - cx; a[o + 4] = p[j + 1] - cy; a[o + 5] = p[j + 2] - cz;
+    }
+    this.geo.attributes.position.needsUpdate = true;
+    this.g.position.set(cx, cy, cz);
+    this.mat.opacity = .95 * this.op;
+    this.hub.visible = this.state === 'fly';
+    if (this.hub.visible) this.hub.scale.setScalar(1.4 + Math.sin(this.t * 24) * .3);
+  }
+  dispose() {
+    if (this.prey) { this.prey.net = null; if (player.drag === this.prey) player.drag = null; }
+    scene.remove(this.g); this.geo.dispose(); this.mat.dispose();
+    if (this.hub.material) this.hub.material.dispose();
+  }
+}
+
 // The lock indicator, in the page rather than the scene: it wants to be crisp and the same
 // size however far away the animal is, which a sprite in a bloomed, gamma-corrected render
 // target is not. Runs after the camera has been placed, so the projection is this frame's.
@@ -8476,14 +8868,71 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
 const flyB = document.getElementById('flyB'), freeB = document.getElementById('freeB');
 const armB = document.getElementById('armB'), reticEl = document.getElementById('retic');
+const wdock = document.getElementById('wdock'), wrack = document.getElementById('wrack');
+const armIco = document.getElementById('armIco'), armLbl = document.getElementById('armLbl');
+// The rack is built from WEAPONS, in its order, so a third weapon is one more entry there
+// and nothing here.
+for (const k in WEAPONS) {
+  const b = document.createElement('button');
+  b.className = 'wslot'; b.dataset.w = k; b.title = WEAPONS[k].label;
+  b.innerHTML = '<span class="wico">' + WEAPONS[k].icon + '</span><span>' + WEAPONS[k].label + '</span>';
+  b.addEventListener('click', e => { e.stopPropagation(); pickWeapon(k); closeRack(); });
+  wrack.appendChild(b);
+}
+function paintWeapon() {
+  const w = WEAPONS[player.wpn];
+  armIco.innerHTML = w.icon; armLbl.textContent = w.label;
+  for (const b of wrack.children) b.classList.toggle('sel', b.dataset.w === player.wpn);
+  armB.classList.toggle('on', !!player.armWant);
+}
+function pickWeapon(k) {
+  if (!WEAPONS[k] || player.aboard || player.free) return;
+  if (player.carry || player.liftT > 0) { logMsg('Not with his arms full.'); return; }
+  if (player.wpn !== k) { player.wpn = k; player.charge = 0; player.cool = Math.max(player.cool, .3); }
+  player.armWant = 1;                       // choosing one is also drawing it
+  paintWeapon();
+  logMsg('He racks the ' + WEAPONS[k].label + '.');
+}
+function openRack() { if (wrack.hidden) { wrack.hidden = false; paintWeapon(); } }
+function closeRack() { if (!wrack.hidden) wrack.hidden = true; }
 function toggleArm() {
-  if (armB.hidden || player.aboard || player.free) return;
+  if (wdock.hidden || player.aboard || player.free) return;
   if (player.carry || player.liftT > 0) { logMsg('Not with his arms full.'); return; }
   player.armWant = player.armWant ? 0 : 1;
-  armB.textContent = player.armWant ? 'holster' : 'draw';
-  logMsg(player.armWant ? 'He unclips the blaster. Hold the right stick to aim; let go to fire.' : 'The blaster goes away.');
+  paintWeapon();
+  logMsg(player.armWant
+    ? 'He unclips the ' + WEAPONS[player.wpn].label + '. Hold the right stick to aim; let go to fire.'
+    : 'It goes away.');
 }
-armB.addEventListener('click', e => { e.stopPropagation(); toggleArm(); });
+// Tap draws or puts away; hold opens the rack. The ring winds round the key while the hold is
+// counting, so a press that is about to open something says so before it does -- otherwise a
+// long press and a slow tap are indistinguishable until one of them surprises you.
+{
+  const HOLD = 380;
+  let t0 = 0, timer = 0, raf = 0, down = false, opened = false;
+  const tick = () => {
+    if (!down) return;
+    armB.style.setProperty('--h', Math.min(1, (performance.now() - t0) / HOLD).toFixed(3));
+    raf = requestAnimationFrame(tick);
+  };
+  const clear = () => {
+    down = false; clearTimeout(timer); cancelAnimationFrame(raf);
+    armB.classList.remove('hold'); armB.style.setProperty('--h', '0');
+  };
+  armB.addEventListener('pointerdown', e => {
+    e.stopPropagation(); e.preventDefault();
+    down = true; opened = false; t0 = performance.now();
+    armB.classList.add('hold'); raf = requestAnimationFrame(tick);
+    timer = setTimeout(() => { if (down) { opened = true; openRack(); clear(); } }, HOLD);
+  });
+  const end = e => { e.stopPropagation(); const was = down; clear(); if (was && !opened) { closeRack(); toggleArm(); } };
+  armB.addEventListener('pointerup', end);
+  armB.addEventListener('pointercancel', e => { e.stopPropagation(); clear(); });
+  // Anywhere outside the dock closes it. The dock's own handlers stop the event, so pressing
+  // the key or a slot never closes the thing being pressed.
+  addEventListener('pointerdown', e => { if (!wrack.hidden && !wdock.contains(e.target)) closeRack(); });
+  paintWeapon();
+}
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
 const mapB = null;   // the minimap is the way in now
 document.getElementById('mini').addEventListener('click', e => { e.stopPropagation(); toggleMap(true); });
@@ -8559,6 +9008,8 @@ function updatePlayer(dt) {
   if (keys.a || keys.arrowleft) lx -= 1; if (keys.d || keys.arrowright) lx += 1;
   if (keys.w || keys.arrowup) ly -= 1; if (keys.s || keys.arrowdown) ly += 1;
   lx = clamp(lx, -1, 1); ly = clamp(ly, -1, 1);
+  // Hauling an animal in a net is work: the stick is worth less while he is doing it.
+  if (player.drag) { lx *= NET.drag.slow; ly *= NET.drag.slow; }
   // While the blaster is out the right stick is the aim, and while his arms are full it is
   // the throw. Neither can be true at once -- he cannot draw with something in his hands --
   // but both are asked every frame so each gets to clear its own state on the way out.
@@ -9352,6 +9803,7 @@ function frame(now) {
   updatePlayer(dt);
   updateFairy(dt);
   carryStep(dt);                           // after the body has moved: it hangs off his hands
+  stepDrag();                              // and the cord to whatever he is hauling
   if (INTRO.on) introFrame(dt);
   else if (player.aboard && world.ship && !player.free) {
     // The chase view: behind and above, flatter than the walking camera, and lagging the
@@ -9413,7 +9865,7 @@ function frame(now) {
   updateWeather(dt);
   updateSky();
   ACT.now = null;                          // whatever is in reach re-offers itself below
-  carryOffer();                            // first, so the ship's own offer wins where they overlap
+  carryOffer(); netOffer();                // first, so the ship's own offer wins where they overlap
   for (const e of world.plants) if (e.alive) e.update(dt);
   for (const e of world.structures) if (e.alive) e.update(dt);
   for (const e of world.creatures) if (e.alive) e.update(dt);
