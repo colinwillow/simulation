@@ -1564,6 +1564,13 @@ the apron is laid on the height field with `site.ground()` the way the steading'
 is, the leg pads are low things you step over, and the only thing you climb is the three
 half-unit steps of the dais under the lift.
 
+**And unlike every other site here, it is not allowed to fail to place.** A steading that never
+got built is a steading you never knew about; a lander that never got set down is the player's
+base missing from the world. So its placement ladder goes all the way down — it starts asking
+for flat open ground in one of three regions and ends up taking anything on the main island
+above water, and only the "not on the sister isle across the sea" test is held all the way
+through. The first version gave up at clearance 16 and left one seed in five with no base.
+
 The shell is `siteAt` primitives merged by material: six draw calls for a ship forty-two units
 across. `site.strut()` is new and exists for the legs — `put` takes Euler angles, which is
 fine for a box lying flat and miserable for anything that has to reach between two points.

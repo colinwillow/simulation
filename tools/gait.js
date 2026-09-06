@@ -233,8 +233,12 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
     hold(1.6, () => { ST.L.x = ST.L.y = 0; P.pos.set(V.pos.x, gY(V.pos.x, V.pos.z) + 2, V.pos.z); P.grounded = 1; });
     const L = lens(), out = Math.hypot(L.x - V.pos.x, L.z - V.pos.z);
     worstOut = Math.max(worstOut, out);
-    // buried = the lens is under the hull's footprint AND above its belly
-    if (out < 17) worstLow = Math.max(worstLow, L.y - (V.pos.y + 12.6));
+    // Buried = the lens is inside the solid hull. The belly is a funnel, not a flat plate:
+    // its apex is at 12.6 in the middle and it rises to the rim, so the headroom under it
+    // depends on how far out you are. Comparing against the apex alone called the edge of
+    // the pad a burial.
+    const under = 12.6 + 3.6 * Math.min(1, out / (17 * .92));
+    if (out < 17) worstLow = Math.max(worstLow, L.y - (V.pos.y + under));
   }
   console.log('the lander                ', JSON.stringify({ standingUnderIt: 'boom 20, all round',
     hullRimIsAt: 17, bellyIsAt: 12.6, lensReachedOutTo: +worstOut.toFixed(1),

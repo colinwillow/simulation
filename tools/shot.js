@@ -7,6 +7,7 @@
 //   --at x,z     stand the wanderer here (default: wherever he spawns)
 //   --r          camera boom length, 14..420
 //   --az         camera azimuth in degrees
+//   --pol        camera pitch, in degrees off straight down (the walking camera is 73)
 //   --hour       time of day, 0..24
 //   --wait       seconds of world time to let settle before the shutter (default 6)
 //   --w --h      canvas size (default 1280x800)
@@ -148,12 +149,20 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
   // this tool since the title screen went in was secretly at the default twenty units, which
   // is how a picture of the whole building came back as a picture of the inside of one wall.
   // Ask again once the descent is over, and let it settle.
-  if (r !== null || az !== null) {
+  if (r !== null || az !== null || arg('pol', null) !== null) {
     await page.evaluate(([r, az]) => { const g = window.__g;
       if (r !== null) g.cam.r = +r;
       if (az !== null) g.cam.az = +az * Math.PI / 180;
       g.cam.idle = 0;
     }, [r, az]);
+    if (arg('pol', null) !== null) {
+      // The walking pitch is a constant the weather leans, so holding a different one means
+      // holding it every frame rather than setting it once.
+      await page.evaluate(p => { const g = window.__g;
+        g.__holdPol = +p * Math.PI / 180;
+        if (!g.__polHeld) { g.__polHeld = 1; setInterval(() => { g.cam.pol0 = g.cam.pol = g.__holdPol; g.cam.polBias = 0; }, 8); }
+      }, arg('pol', null));
+    }
     const t1 = await page.evaluate(() => window.__g.world.clock);
     await page.waitForFunction(`window.__g.world.clock > ${t1 + 4}`, null, { timeout: 600000 });
   }

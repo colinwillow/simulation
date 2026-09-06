@@ -243,7 +243,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b64';
+const BUILD = 'b65';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -5636,12 +5636,31 @@ class Lander {
     // ---- the hull ----
     // A lens: a shallow cone turned over for the belly, a rim band with lit ports round it,
     // and a taller cone on top. G.cone stands on its base with the point up, so the belly is
-    // the same cone rolled a half turn about X.
+    // the same cone rolled a half turn about X -- widest at the rim, funnelling down to the
+    // lift in the middle.
     S.put(G.cone, M.hullMid, R * .92, 3.6, R * .92, 0, B + 1.8, 0, Math.PI, 0, 0);
+    // Standing underneath, the belly is the only part of the ship you can see, and a cone lit
+    // from nowhere is a black hole in the sky. These are what make it read as a machine from
+    // below: a lit ring where the funnel meets the rim, and eight strips running in toward
+    // the lift like the ribs of a hatch.
+    S.put(G.cyl, M.hullLit, R * .84, .22, R * .84, 0, B + 3.5, 0);
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * Math.PI * 2 + .2;
+      S.strut(G.box, M.hullLit, .34, Math.sin(a) * 4.0, B + .35, Math.cos(a) * 4.0,
+                                     Math.sin(a) * (R * .82), B + 3.3, Math.cos(a) * (R * .82), .34);
+      S.strut(G.box, M.hullDark, .8, Math.sin(a) * 4.2, B + .1, Math.cos(a) * 4.2,
+                                     Math.sin(a) * (R * .84), B + 3.1, Math.cos(a) * (R * .84), .9);
+    }
     S.put(G.cyl, M.hullPale, R, 2.4, R, 0, B + 4.8, 0);
     S.put(G.cyl, M.hullDark, R * 1.02, .5, R * 1.02, 0, B + 3.7, 0);
     S.put(G.cyl, M.hullDark, R * 1.02, .5, R * 1.02, 0, B + 5.9, 0);
     S.put(G.cone, M.hullMid, R * .97, 6.4, R * .97, 0, B + 9.2, 0);
+    for (let i = 0; i < 12; i++) {   // seams up the crown
+      const a = i / 12 * Math.PI * 2 + .13;
+      S.strut(G.box, i % 3 ? M.hullDark : M.hullLit, i % 3 ? .5 : .28,
+        Math.sin(a) * (R * .95), B + 6.1, Math.cos(a) * (R * .95),
+        Math.sin(a) * 2.2, B + 12.0, Math.cos(a) * 2.2, i % 3 ? .5 : .28);
+    }
     S.put(G.cyl, M.hullPale, 3.2, 1.6, 3.2, 0, B + 12.2, 0);
     S.put(G.sph, M.hullCore, 1.5, 1.9, 1.5, 0, B + 13.6, 0);
     // ports round the rim, and the ribs between them
@@ -5653,9 +5672,12 @@ class Lander {
     // engine bells under the belly, ringed round the lift
     for (let i = 0; i < 5; i++) {
       const a = i / 5 * Math.PI * 2 + .4, px = Math.sin(a) * (R * .52), pz = Math.cos(a) * (R * .52);
+      // The bell hangs off the funnel, and the funnel at this radius is a good way above the
+      // apex -- so the mount is drawn to where the surface actually is, not to B.
+      const surf = B + 3.6 * (R * .52) / (R * .92);
       S.put(G.cone, M.hullDark, 2.1, 2.6, 2.1, px, B - 1.3, pz, Math.PI, 0, 0);
       S.put(G.cyl, M.hullCore, 1.5, .3, 1.5, px, B - 2.4, pz);
-      S.put(G.cyl, M.hullMid, 1.0, 1.2, 1.0, px, B + .5, pz);
+      S.put(G.cyl, M.hullMid, 1.0, surf - (B - .5), 1.0, px, (B - .5 + surf) / 2, pz);
     }
     // three masts on the crown, which is all that is left of the spires -- they were the one
     // part of the keep that read as alien rather than medieval
@@ -5719,7 +5741,9 @@ class Lander {
     this.core = mesh(G.sph, M.hullCore, 1.2, 1.2, 1.2, 0, CY, 0); g.add(this.core);
     this.coreGl = glow('#c48cff', 7, .8); this.coreGl.position.set(0, CY, 0); g.add(this.coreGl);
     this.light = new THREE.PointLight(0xa85cff, 2.2, 54, 2); this.light.position.set(0, CY + .5, 0); g.add(this.light);
-    this.belly = new THREE.PointLight(0x7fd8ff, 1.6, 46, 2); this.belly.position.set(0, B - 2.2, 0); g.add(this.belly);
+    // Up inside the funnel, so it washes the underside rather than the apron. Standing under
+    // the ship you are lit by its own belly, which is the whole point of standing there.
+    this.belly = new THREE.PointLight(0x7fd8ff, 2.2, 52, 2); this.belly.position.set(0, B + 1.4, 0); g.add(this.belly);
     // Three rings about the core, each turning on its own axis. G.ring has a thin tube, so
     // the scale is the hoop's radius and it stays a hoop however big it gets.
     this.rings = [];
@@ -5753,7 +5777,7 @@ class Lander {
     this.core.scale.setScalar(1.2 * pulse); this.core.rotation.y += dt * .3;
     this.coreGl.scale.setScalar((6 + world.night * 5) * pulse);
     this.light.intensity = (1.4 + world.night * 2.2) * pulse;
-    this.belly.intensity = 1.0 + world.night * 2.6;
+    this.belly.intensity = 1.8 + world.night * 3.2;
     // the lift's column breathes and drifts upward; the texture is a scroll, not a motion
     this.beam.material.opacity = (.10 + world.night * .12) * (.75 + Math.sin(t * .9) * .25);
     this.beam.rotation.y += dt * .25;
@@ -5797,18 +5821,24 @@ function buildSites() {
   // across on six legs -- and it is the one place you come back to, so unlike every other
   // site it is not allowed to come down on the sister isle across the water. It gets first
   // refusal on the map for both reasons.
+  // Unlike every other site here, this one is not allowed to fail. A steading that does not
+  // get built is a steading you never knew about; a lander that does not get set down is the
+  // player's base missing from the world. So the ladder goes all the way down: it starts
+  // asking for flat open ground in one of three regions and ends up taking anything on the
+  // main island that is above water, and only the "reachable" test -- not the sister isle
+  // across the sea -- is held all the way through.
   const iso = { x: CENTERS[1][0] * W, z: CENTERS[1][1] * W };
   const reachable = q => q && Math.hypot(q.x - iso.x, q.z - iso.z) > W * .34;
+  const RUNGS = [[.12, 32], [.12, 26], [.12, 22], [.16, 18], [.20, 14], [.28, 10], [.40, 5], [.60, 0]];
   let pad = null;
-  for (const c of [32, 26, 22, 18]) {
+  for (const [sl, c] of RUNGS) {
     for (const nm of ['pasture', 'scrub', 'highland'])
-      for (let i = 0; i < 8 && !pad; i++) { const q = randomBiome(nm, 3, 26, .12, 500, c); if (reachable(q)) pad = q; }
-    if (pad) break;
+      for (let i = 0; i < 6 && !pad; i++) { const q = randomBiome(nm, 3, 26, sl, 400, c); if (reachable(q)) pad = q; }
+    for (let i = 0; i < 60 && !pad; i++) { const q = randomLand(3, 26, sl, 400, c); if (reachable(q)) pad = q; }
+    if (pad) { if (c < 22) console.info('[site] the lander had to settle for slope ' + sl + ', clearance ' + c); break; }
   }
-  if (!pad) for (const c of [26, 20, 16])
-    for (let i = 0; i < 60 && !pad; i++) { const q = randomLand(3, 26, .12, 400, c); if (reachable(q)) pad = q; }
   if (pad) { world.structures.push(new Lander(pad.x, pad.z, rnd(Math.PI * 2))); out.push({ x: pad.x, z: pad.z }); }
-  else console.warn('[site] nowhere to set the lander down');
+  else console.warn('[site] nowhere at all to set the lander down');
   const ruin = siteSpot('ruin', ['jungle', 'wetland'], 3, 14, .3, [13, 10, 8, 6, 4], out);
   if (ruin) {
     out.push(buildRuin(ruin.x, ruin.z, rnd(Math.PI * 2)));
