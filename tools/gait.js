@@ -250,6 +250,21 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
     fromBearing: best.a + ' deg', endedThisFarAboveTheSiteBase: +best.onDeck.toFixed(2) }));
 })();
 
+// ---------- 5b2. the title's island ----------
+// It is built at boot and nothing in the game touches it again, so the only way a mistake in
+// it shows up is on the title screen -- which is exactly where a mistake is most expensive.
+// A ReferenceError in its constructor took the whole of populate() with it and the only
+// symptom was a screenshot that had not changed.
+(() => {
+  const I = W.titleIsle, T = W.titleAt;
+  if (!I || !T) return console.log('the title isle             NOT BUILT');
+  console.log('the title isle            ', JSON.stringify({
+    at: [I.pos.x | 0, I.pos.z | 0], floatingAt: I.alt, across: I.R * 2,
+    plaqueSits: T.y - I.alt + ' above its deck',
+    theFallLandsOn: +global.__gY(I.pos.x, I.pos.z).toFixed(1),
+    plaqueLoaded: !!W.title }));
+})();
+
 // ---------- 5c. getting hit ----------
 // Nothing here kills an animal; a hit throws it and it gets up. Three things to prove: it
 // travelled, it came down somewhere it can actually stand, and it got back on its feet.

@@ -35,7 +35,7 @@ const WAIT = +arg('wait', 6);
 
 // The game's script is one IIFE, so nothing inside it is reachable from the page. Splice a
 // handle onto the window just before it closes -- the same trick the headless tools use.
-const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV,stick,weap,WEAPON,toggleArm,Bolt,isle,DRONE,camS,GIMBAL,muzzleChart,RIG};';
+const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV,stick,weap,WEAPON,toggleArm,Bolt,isle,DRONE,camS,GIMBAL,muzzleChart,RIG,skyUni};';
 function indexHTML() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const cut = html.lastIndexOf('})();');
@@ -415,7 +415,8 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       creatures: g.world.creatures.length, at: [g.player.pos.x | 0, g.player.pos.z | 0],
       biome: g.biomeAt(g.player.pos.x, g.player.pos.z).name,
       ship: g.world.ship ? g.world.ship.state + '@' + (g.world.ship.pos.y | 0) : 'none',
-      title: g.world.title ? [g.world.title.position.x|0, g.world.title.position.z|0] : 'NOT PLACED',
+      title: g.world.titleAt ? [g.world.titleAt.x|0, g.world.titleAt.y|0, g.world.titleAt.z|0] : 'NOT PLACED',
+      titleIsle: g.world.titleIsle ? 'up at ' + (g.world.titleIsle.alt|0) : 'none',
       env: (g.ENV.map ? 'loaded on ' + g.ENV.mats.length + ' materials' : 'NOT LOADED'),
       sites: (g.world.sites || []).map(s => [s.x | 0, s.z | 0]), clock: g.world.clock | 0,
       cam: { askedR: +g.cam.r.toFixed(0), gotR: +g.camS.r.toFixed(1), pol: +g.camS.pol.toFixed(2),

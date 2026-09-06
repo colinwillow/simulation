@@ -1588,6 +1588,23 @@ hovers inside the hole's radius all day; without the check it would dissolve the
 lighting him. `shot.js --bright` reports the opt-out for the drone, the blaster and the body,
 because "it goes see-through sometimes" is not a thing to take on trust.
 
+### The sky image
+
+The dome gets a **blurred** copy of the HDRI and the lighting gets the sharp one. A
+recognisable photograph behind an alien island is the wrong kind of detail — you start reading
+it as a place, and it is not this place. Softened past the point of identifying anything it is
+a cool sky with the right colours in the right parts of it, which is all it was ever for.
+
+96 pixels across is the whole trick: the browser's own bilinear downscale is a box filter, so
+dropping to 96×48 and letting the sampler blow it back up is a real blur, done once at load,
+with no shader and no mip games that WebGL 1 would make awkward. Two draws, not one — straight
+to the target size loses the high frequencies but leaves the result crisp, and crisp is exactly
+what has to go.
+
+The fog came down by a third at the same time. It never touched the sky image itself (the dome
+is `fog: false`) — what it was doing was filling the bottom two-thirds of the frame with grey,
+so there was nothing left to look at the horizon *through*.
+
 ### The lander
 
 His station. Not a building: a ship that came down, put its legs out and stayed. The hull is
@@ -1634,14 +1651,32 @@ how far in he gets from every bearing, and whether the lens ever ends up buried 
 
 ### The title screen, and the studio splash
 
-The painted title card is gone. The title screen is the world itself, seen from a **640-unit
+The painted title card is gone. The title screen is the world itself, seen from a **660-unit
 boom** — far enough out that it is a ball with space around it rather than a hillside filling
-the frame — with the name standing on it and the ship going round the outside. The plaque
-grows with the boom so it holds its size on screen the whole way in, and eases back to its
-real size during the descent, so the thing you were reading from orbit turns out to be a
-monument standing in a meadow. Without that it is four pixels tall.
+the frame — with the ship going round the outside. The plaque grows with the boom so it holds
+its size on screen the whole way in, and eases back to its real size during the descent, so
+the thing you were reading from orbit turns out to be a monument you can walk up to. Without
+that it is four pixels tall.
 
-Two things had to change for it to work at that range.
+**The monument stands on a second floating island**, 205 units up, with that island's
+waterfall coming down out of it onto the hill below. Letters lying on the ground are letters
+lying in the noise of the ground; they need daylight round them, and a rock hanging in the sky
+with water pouring off it gives them that *and* says something about the place. It stays after
+you land — somewhere to fly the ship. `FloatingIsle` grew an options argument for it: `R`
+sizes it, `landY` is where the water lands (the first isle hangs over the sea, this one over a
+hill, and without it the sheet drove fifteen units into the ground and splashed at sea level
+underneath), and `clear` is a patch of the top the grove and the loose rock leave alone so
+nothing grows through the letters.
+
+Everything about the isle's shape scales with `K = R / 34`, its **vertical profile included** —
+the first pass scaled only the footprint, and a 3.4-unit dome on a 144-unit disc is a dinner
+plate. And pitch matters as much as distance out there: at a polar angle of 1.02 the lens ends
+up nearly over the island looking down, and what fills the frame is the half of the world the
+sun is not on. 1.26 puts it side-on. The crane aims half way down the waterfall rather than at
+the letters — aimed at the letters, the world sits at the bottom of the frame and the rest is
+empty sky.
+
+Two more things had to change for any of it to work at that range.
 
 **The dome becomes space when you leave the air.** It already had a `uHigh` blend toward
 near-black — but it sat at the very *end* of the fragment shader and mixed eighty per cent of
@@ -1654,6 +1689,15 @@ fades out with it (a horizon is a thing you have from the ground).
 **Sub-pixel things stop being drawn.** From orbit the whole island is in frame and every moss
 tuft on it was still being submitted: 2,600 draw calls and five million triangles for a picture
 in which none of them covers a pixel. Past a 240-unit boom the classes in `TINY` do not exist.
+
+`check:gait` reports the title isle — where it is, how high, how wide, what the fall lands on.
+It is built once at boot and nothing touches it again, so the only place a mistake in it shows
+is the title screen, which is the most expensive place to have one. A `const` declared beside
+the waterfall and read by the spire loop above it threw a ReferenceError out of the
+constructor, took the whole of `populate()` with it, and the only symptom was a screenshot
+that had not changed since the last one. That is the **fifth** temporal-dead-zone bug in this
+file; when you add a scale factor, declare it at the top of the block, not next to its first
+interesting use.
 
 The **studio splash** is lifted verbatim out of `colinwillow/robits` at `430ef4f` — same
 studio, same mark, and re-implementing it would only produce a worse copy. It is entirely
