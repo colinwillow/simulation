@@ -855,7 +855,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b74';
+const BUILD = 'b75';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3464,6 +3464,23 @@ function attachRig(parent, cfg, done) {
     }
     const walk = clips.walk, run = clips.run;
 
+    // Where the body actually turns. A rig is normalised with its feet at y=0, so rotating
+    // its group swings it about the point between its soles -- fine for standing on the
+    // ground, wrong for anything airborne or carried, which turns about its centre of mass.
+    // That is the hips. Take the named joint out of the bind pose; failing that, the middle
+    // of the silhouette, which is close enough on a body with no joint called anything.
+    let pivotY = null;
+    inst.updateMatrixWorld(true);
+    const _pvI = new THREE.Matrix4().copy(inst.matrixWorld).invert(), _pvV = new THREE.Vector3();
+    for (const re of [/^(mixamorig)?[:_]?hips?$/i, /pelvis/i, /hip/i, /spine/i, /(^|[_.:])root($|[_.:])/i]) {
+      let b = null;
+      inst.traverse(o => { if (!b && o.isBone && re.test(o.name)) b = o; });
+      if (!b) continue;
+      const y = b.getWorldPosition(_pvV).applyMatrix4(_pvI).y * s + inst.position.y;
+      if (y > cfg.height * .06) { pivotY = y; break; }     // a joint sitting on the floor is the armature, not the hips
+    }
+    if (pivotY == null) pivotY = cfg.height * .5;
+
     const morphs = [];
     inst.traverse(o => {
       const d = o.morphTargetDictionary;
@@ -3471,7 +3488,7 @@ function attachRig(parent, cfg, done) {
         morphs.push({ inf: o.morphTargetInfluences, l: d[cfg.blinkL], r: d[cfg.blinkR] });
     });
     done({
-      root: inst, mixer, acts, box: e.box, scale: s, lift, span, baseY: inst.position.y,
+      root: inst, mixer, acts, box: e.box, scale: s, lift, span, baseY: inst.position.y, pivotY,
       rateMax: cfg.rateMax,      // a short-strided clip may need to run faster than the default ceiling
       walkSpeed: walk ? e.strides[walk.name] * s : 0,
       runSpeed: run ? e.strides[run.name] * s : 0,
@@ -3906,6 +3923,7 @@ const CREATURE_RIGS = {
 // frightened. That is the interaction that was asked for and it is also the honest one --
 // there are no death clips and no ragdoll, and a tumbling rigid body reads better than a
 // walk cycle playing while something slides backwards.
+const _kbA = new THREE.Vector3(), _kbB = new THREE.Vector3();
 const KNOCK = {
   // Range goes as speed times airtime, and both used to divide by the animal's size -- so a
   // tinker went thirty-four units and a mossback went one, off numbers only 1.8x apart. The
@@ -3974,6 +3992,9 @@ class Creature {
     });
   }
   build() {}
+  // Its centre of mass, above its own feet, in world units. Everything that turns the whole
+  // body -- the tumble, the carry -- turns about this and not about the group origin.
+  pivotY() { return this.rig ? this.rig.pivotY : (this.rad || 1) * .8; }
   addLeg(x, z, len, mat, r = .17) {
     const hip = new THREE.Group(); hip.position.set(x, len, z);
     const upper = mesh(G.cylT, mat, r, len * .55, r, 0, -len * .27, 0); hip.add(upper);
@@ -4154,7 +4175,16 @@ class Creature {
     this.rx = k.x; this.rz = k.z; this.px0 = k.x; this.pz0 = k.z; this.animK = 0; this.moving = 0;
     this.g.position.set(k.x, Math.max(k.y, gy), k.z);
     alignTo(this.g, k.x, k.z, .35); this.g.rotateY(this.heading);
+    // Tumble about the hips. Rotating the group alone turns the body about the point between
+    // its feet, which reads as a model on a stick: the head swings a body-length while the
+    // toes stay put. Hold the hips where the upright body had them and let the rest swing
+    // round that instead.
+    const hy = this.pivotY();
+    _kbA.set(0, hy, 0).applyQuaternion(this.g.quaternion);
     this.g.rotateX(k.rx); this.g.rotateZ(k.rz);
+    _kbB.set(0, hy, 0).applyQuaternion(this.g.quaternion);
+    this.g.position.add(_kbA).sub(_kbB);
+    if (this.g.position.y < gy) this.g.position.y = gy;    // and never let the shift bury it
     if (this.rig) this.rig.mixer.update(dt);      // keep the skin ticking so it is not a statue
     return true;
   }
@@ -7819,6 +7849,7 @@ const CARRY = {
   upper: /spine|chest|neck|head|shoulder|arm|hand|fore|clavicle/i,
 };
 const _cyA = new THREE.Vector3(), _cyB = new THREE.Vector3(), _cyU = new THREE.Vector3(), _cyQ = new THREE.Quaternion();
+const _cyF = new THREE.Vector3(), _cyR = new THREE.Vector3(), _cyM = new THREE.Matrix4();
 // A joint's place in chart coordinates. Same conversion muzzleChart does, factored out
 // because the carry needs two of them (the socket and the tip that gives it an up vector).
 function jointChart(b, out) {
@@ -7883,8 +7914,19 @@ function carryStep(dt) {
   }
   c.pos.copy(_cyA); c.rx = _cyA.x; c.rz = _cyA.z; c.px0 = _cyA.x; c.pz0 = _cyA.z;
   c.animK = 0; c.moving = 0; c.stall = 0;
-  c.g.position.copy(_cyA);
-  c.g.quaternion.setFromUnitVectors(_plY, _cyU).multiply(_cyQ.setFromAxisAngle(_plY, p.faceH + Math.PI));
+  // It is carried the right way up. Taking the socket-to-tip vector as the creature's OWN up
+  // laid it flat across his hands, because that vector runs out along his forearms: it is the
+  // direction the thing FACES, not the direction its head points. So: its up is the world's
+  // up, and it faces out along the socket -- a quarter turn from where it was.
+  _cyF.copy(_cyU).addScaledVector(_plY, -_cyU.dot(_plY));
+  if (_cyF.lengthSq() < 1e-6) _cyF.set(Math.sin(p.faceH), 0, Math.cos(p.faceH));
+  _cyF.normalize();
+  _cyR.crossVectors(_plY, _cyF);                       // right = up x forward, for a +Z-forward model
+  c.g.quaternion.setFromRotationMatrix(_cyM.makeBasis(_cyR, _plY, _cyF));
+  // And it hangs by its hips, not by the point between its feet -- the socket is where his
+  // arms are, so that is where the animal's middle belongs, otherwise it floats a body-height
+  // above his hands.
+  c.g.position.copy(_cyA).addScaledVector(_plY, -c.pivotY());
   if (c.rig) c.rig.mixer.update(dt);              // it keeps breathing while it is held
 }
 function finishPlace() {
