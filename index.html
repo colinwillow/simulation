@@ -938,7 +938,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b81';
+const BUILD = 'b82';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3500,12 +3500,27 @@ function attachRig(parent, cfg, done) {
     // belong to the cached file and every future instance of this model would inherit the
     // edit -- and the clone keeps the ORIGINAL NAME, because the stride and floor caches
     // below are keyed on it and the mixer keys actions on the object, not the name.
-    if (cfg.stillFingers) for (const k of ['idle', 'walk', 'run', 'jumpStart', 'jumpAir', 'jumpLand', 'swim', 'swimIdle', 'roll']) {
-      const cl = clips[k];
-      if (!cl || !cl.tracks.some(t => cfg.stillFingers.test(t.name))) continue;
-      const c2 = cl.clone(); c2.name = cl.name;
-      c2.tracks = c2.tracks.filter(t => !cfg.stillFingers.test(t.name));
-      clips[k] = c2;
+    if (cfg.stillFingers || cfg.calmWrists) {
+      const bind = {};
+      if (cfg.calmWrists) inst.traverse(o => { if (o.isBone && cfg.calmWrists.bones.test(o.name)) bind[o.name] = o.quaternion.clone(); });
+      const qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
+      for (const k of ['idle', 'walk', 'run', 'jumpStart', 'jumpAir', 'jumpLand', 'swim', 'swimIdle', 'roll']) {
+        const cl = clips[k];
+        if (!cl) continue;
+        const c2 = cl.clone(); c2.name = cl.name;
+        if (cfg.stillFingers) c2.tracks = c2.tracks.filter(t => !cfg.stillFingers.test(t.name));
+        if (cfg.calmWrists) for (const t of c2.tracks) {
+          const m = /^(.*)\.quaternion$/.exec(t.name), b = m && bind[m[1]];
+          if (!b) continue;
+          // Slerp every key back toward the bind rotation. Doing it to the KEYS rather than
+          // to the result means it costs nothing per frame and it survives every blend.
+          for (let i = 0; i < t.values.length; i += 4) {
+            qa.copy(b); qb.fromArray(t.values, i); qa.slerp(qb, cfg.calmWrists.k);
+            t.values[i] = qa.x; t.values[i + 1] = qa.y; t.values[i + 2] = qa.z; t.values[i + 3] = qa.w;
+          }
+        }
+        clips[k] = c2;
+      }
     }
     // Retreating: the forward walk, cloned so it can have an action of its own, run backwards.
     if (clips.rifleWalk) { clips.rifleBack = clips.rifleWalk.clone(); clips.rifleBack.name = clips.rifleWalk.name + '__back'; }
@@ -7749,6 +7764,16 @@ const RIG = {
   // do the two poses, which were authored on this rig rather than borrowed -- `holding_item`
   // already leaves every finger at rest, which is the tell.
   stillFingers: /Hand(Index|Middle|Ring|Pinky|Thumb)/i,
+  // And the wrist itself. Measured the same way: no bone in the arm chain is SCALED by the
+  // idle -- every scale key is exactly 1,1,1, so nothing is being wrung out -- but the clip
+  // does turn the wrists, and it turns them unevenly. Local to the forearm, over the idle's
+  // 5.4 seconds, the right hand reaches 20 degrees of bend and 15 of twist and the LEFT hand
+  // reaches 30 and 28. That asymmetry is why one hand always looks worse than the other.
+  // Thirty degrees of twist is a relaxed wrist on a human forearm and a wrung one on a thin
+  // alien arm with a wide hand on the end. `k` is how much of the authored turn survives:
+  // 1 plays the clip untouched, 0 pins the wrists to the bind pose. Dial it, do not delete it
+  // -- a wrist that never moves at all reads as a mannequin.
+  calmWrists: { bones: /Hand$/, k: .45 },
   // Two poses rather than two animations, and they are used differently. `pickUp` is played
   // as a one-shot whose BLEND is the movement -- fading a standing body into a bent-over pose
   // over a third of a second IS bending over, and needs no keys. `hold` is shoulders and arms
