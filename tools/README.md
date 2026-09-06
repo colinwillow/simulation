@@ -1250,9 +1250,15 @@ standing in the air you breathe, and the sky should not go black on a walk up a 
 
 ### The sky
 
-Thin atmosphere on a world a long way from anything. The zenith is nearly space even at
-noon — deep indigo going almost black — and only the last few degrees above the horizon hold
-any haze. `SKY.day.top` is the knob that sets how far that goes.
+Thin atmosphere on a world a long way from anything: deep indigo overhead going almost black,
+and only the last few degrees above the horizon holding any haze.
+
+**Tune `low` and `mid`, not `top`.** The dome blends `low → mid` and then `mid → top`, and
+from the walking camera — whose pitch is fixed at `CAM_POL` — the frame reaches about twenty
+degrees above the horizon. The first attempt at an alien sky darkened `top` alone, and `top`
+did not begin to appear until eighteen degrees: on a phone the change was invisible, and the
+grey the player was complaining about was `low` the whole time. The blend points have been
+pulled down to −0.04..0.16 and 0.08..0.46 so all three colours are actually on screen.
 
 The stars **never go all the way out**: a third of their brightness survives noon, which is
 the single cheapest thing that says this is not Earth. Behind them is a galaxy — `uNeb`, a
@@ -1272,6 +1278,24 @@ hole cut in the sky.
 
 `uOrbA` / `uOrbB` are the directions, the `orb()` call sites carry the angular radius and
 tint, and the second argument to the banded one turns the stripes on.
+
+### Showing the HDRI
+
+`SKY.envK` puts the panorama on the dome itself — 0 is the procedural sky alone, 1 is the
+photograph with only the sun, the clouds and the bodies drawn over it. It is sampled as an
+equirectangular map from the fragment direction, **decoded from sRGB on the way in** (the
+composite pass does the gamma at the very end, so everything in the sky shader is linear),
+tinted by the hour so the day-night cycle still runs across it, and faded out below the
+horizon — the bottom half of a panorama is the ground it was shot standing on, and this world
+has its own.
+
+The equirectangular original is kept alongside the prefiltered cubemap for this. They are not
+interchangeable: the cubemap is blurred per roughness level and is for reflections, the flat
+one is for drawing.
+
+Worth saying plainly: a bright daytime panorama and a dark alien sky are opposite requests,
+and `envK` is the dial between them. At 0.55 the HDRI's horizon and its silhouettes read
+clearly and the sky is no longer black.
 
 ### The environment map
 

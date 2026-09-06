@@ -23,7 +23,7 @@ const html=fs.readFileSync(process.argv[2]||'index.html','utf8');
 const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('const BUILD'));
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__waveY=waveY;global.__SEA=SEA;global.__p=player;global.__stick=stick;global.__h=height;global.__gY=groundY;global.__MOVE=MOVE;global.__OBP=OB_PLAYER;global.__OB=OB;global.__obRad=obRad;global.__obAdd=obAdd;global.__standOn=standOn;global.__slope=slope;global.__WAY=WAY;global.__obClear=obClear;global.__obNear=obNear;global.__setWay=setWaypoint;global.__cam=cam;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__W=W;global.__waveY=waveY;global.__SEA=SEA;global.__p=player;global.__stick=stick;global.__h=height;global.__gY=groundY;global.__MOVE=MOVE;global.__OBP=OB_PLAYER;global.__OB=OB;global.__obRad=obRad;global.__obAdd=obAdd;global.__standOn=standOn;global.__slope=slope;global.__WAY=WAY;global.__obClear=obClear;global.__obNear=obNear;global.__setWay=setWaypoint;global.__cam=cam;'+src.slice(cut);
 eval(src);
 // The title screen parks the camera out at the planet and flies the ship round it. That is
 // the first thing a player sees and the last thing a harness wants: every tool here measures
@@ -37,8 +37,20 @@ for(let i=0;i<40;i++) step();           // let the world settle and the ground f
 
 // ---------- 1. the ramp ----------
 // Find flat ground, point him along it, hold the stick and time the milestones.
-function flatSpot(){ for(let i=0;i<4000;i++){ const x=(Math.random()-.5)*260, z=(Math.random()-.5)*260;
-  if(H(x,z)>2 && H(x,z)<11 && global.__slope(x,z)<.06) return {x,z}; } return {x:0,z:0}; }
+// Flat where he is standing *and* flat everywhere he might be pushed to. Sampling the one
+// point was enough on a small island; on a bigger one with more relief it started handing
+// back spots on a gentle slope, and the turn test read "never" because his top speed was
+// being cut by the hill factor rather than by anything to do with turning.
+function flatSpot(){
+  const R = 260 * (global.__W / 240);
+  for(let i=0;i<20000;i++){ const x=(Math.random()-.5)*R, z=(Math.random()-.5)*R;
+    const h=H(x,z); if(h<=2 || h>=11 || global.__slope(x,z)>=.035) continue;
+    let ok=true;
+    for(let a=0;a<6 && ok;a++){ const t=a/6*Math.PI*2;
+      if(global.__slope(x+Math.cos(t)*9, z+Math.sin(t)*9) > .07) ok=false; }
+    if(ok) return {x,z};
+  }
+  return {x:0,z:0}; }
 function ramp(dirName, place){
   const q=place(); P.pos.set(q.x, gY(q.x,q.z), q.z); P.vx=P.vz=0; P.vy=0; P.grounded=1; P.gy=P.pos.y;
   global.__cam.tgt.set(q.x,P.pos.y,q.z); hold(.4,()=>{ST.L.x=0;ST.L.y=0;});

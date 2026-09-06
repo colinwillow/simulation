@@ -225,7 +225,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b49';
+const BUILD = 'b58';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -674,7 +674,13 @@ function envUse(root, k = 1) {
     t.mapping = THREE.EquirectangularReflectionMapping;
     const p = new THREE.PMREMGenerator(renderer);
     ENV.map = p.fromEquirectangular(t).texture;
-    t.dispose(); p.dispose();
+    p.dispose();
+    // Kept, not disposed: the prefiltered cubemap above is for reflections, and the dome
+    // wants the flat equirectangular original to draw as the sky itself.
+    ENV.tex = t; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    // Safe to reach the sky's uniforms from here: this callback only runs once the image has
+    // decoded, which is long after the module has finished evaluating.
+    skyUni.uEnv.value = t; skyUni.uEnvK.value = SKY.envK;
     for (const m of ENV.mats) { m.envMap = ENV.map; m.needsUpdate = true; }
   }, undefined, () => console.warn('no environment map; hulls stay matte'));
 })();
@@ -1145,15 +1151,19 @@ const skyUni = {
   // where you cannot miss them, which is the better picture anyway.
   uOrbA: { value: new THREE.Vector3(.46, .135, -.88).normalize() },
   uOrbB: { value: new THREE.Vector3(-.72, .075, .69).normalize() },
-  uNeb: { value: 0 }
+  uNeb: { value: 0 },
+  // A one-pixel stand-in until the real one arrives, because a null sampler is a compile
+  // error waiting to happen and the load is asynchronous.
+  uEnv: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([90, 110, 140, 255]), 1, 1); t.needsUpdate = true; return t; })() },
+  uEnvK: { value: 0 }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
   vertexShader: `varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
   fragmentShader: `
     uniform vec3 uTop,uMid,uLow,uSunCol; uniform vec3 uSun; uniform float uSunI;
-    uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh,uNeb; uniform vec2 uWind; varying vec3 vD;
-    uniform vec3 uOrbA,uOrbB;
+    uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh,uNeb,uEnvK; uniform vec2 uWind; varying vec3 vD;
+    uniform vec3 uOrbA,uOrbB; uniform sampler2D uEnv;
     // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -1179,8 +1189,10 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
     void main(){
       vec3 d = normalize(vD);
       float h = d.y;
-      vec3 c = mix(uLow, uMid, smoothstep(-0.06, 0.28, h));
-      c = mix(c, uTop, smoothstep(0.18, 0.85, h));
+      // pulled down hard: at -0.06..0.28 and 0.18..0.85 a player on the ground saw almost
+      // nothing but uLow, and every hour spent tuning the zenith was wasted
+      vec3 c = mix(uLow, uMid, smoothstep(-0.04, 0.16, h));
+      c = mix(c, uTop, smoothstep(0.08, 0.46, h));
       vec3 sn = normalize(uSun);
       float sd = max(dot(d, sn), 0.0);
       // clouds: project the dome onto a plane overhead so they sit flat and recede
@@ -1189,6 +1201,18 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
       float n = fbm(cuv * 1.25);
       float cl = smoothstep(0.64 - uCloud*0.44, 0.80 - uCloud*0.22, n) * smoothstep(0.02, 0.25, uCloud) * hm;
       float dayL = clamp(sn.y * 1.6 + 0.32, 0.14, 1.0);
+      // The HDRI, on the dome, under everything else. Sampled as an equirectangular map --
+      // the same projection three uses for one -- and tinted by the hour so the day still
+      // runs across it. Above the horizon only: the bottom half of that image is the ground
+      // it was shot standing on, and this world has its own.
+      if (uEnvK > 0.002) {
+        vec2 euv = vec2(atan(d.z, d.x) * 0.15915494 + 0.5, asin(clamp(d.y, -1.0, 1.0)) * 0.31830988 + 0.5);
+        // The jpeg is sRGB and everything in this shader is linear -- the composite pass
+        // does the gamma at the very end -- so it has to be decoded on the way in.
+        vec3 e = pow(texture2D(uEnv, euv).rgb, vec3(2.2));
+        e *= mix(vec3(0.30, 0.34, 0.52), vec3(1.06, 1.02, 0.96), dayL);
+        c = mix(c, e, uEnvK * smoothstep(-0.02, 0.12, h));
+      }
       float sh = fbm(cuv * 2.7 + 3.1);
       vec3 cLit = mix(vec3(1.0), uMid, 0.3) * dayL;
       vec3 cDk  = uMid * 0.5 * dayL;
@@ -1272,9 +1296,18 @@ function fitShadow(r) {
   shadowSpan = want;
   const c = sun.shadow.camera;
   c.left = -want; c.right = want; c.top = want; c.bottom = -want;
+  // The light sits 300 units out, so 60..700 spent most of the depth buffer's precision on
+  // empty space either side of everything that casts. Wrapping it tightly round the receivers
+  // is most of the cure for the striping on flat ground.
+  c.near = 300 - want * 1.6; c.far = 300 + want * 2.2;
   c.updateProjectionMatrix();
+  sun.shadow.normalBias = want * 2 / Q.shadow * 2.5;     // about two and a half texels
 }
-sun.shadow.bias = -0.0005; sun.shadow.normalBias = .5;
+// Shadow bias. The normal offset has to be a couple of shadow-map texels, and a texel is the
+// box divided by the map -- so it cannot be a constant, and half a world unit was ten of them
+// on a tight box, which lets light in under everything and streaks flat ground at a low sun.
+// fitShadow sets it whenever the box changes.
+sun.shadow.bias = -0.0004;
 sun.target.userData.flat = true; scene.add(sun, sun.target);
 const moon = new THREE.DirectionalLight(0x9db0ff, 0); moon.target = sun.target; scene.add(moon);
 const hemi = new THREE.HemisphereLight(0x9bc5ee, 0x3f3a2a, .6); scene.add(hemi);
@@ -5674,8 +5707,16 @@ const SKY = {
 // the horizon hold any haze. That is where the "outer spacey" read comes from, and it is why
 // the stars never go all the way out. `hs` and `hg` stay brighter than the dome on purpose:
 // they light the island, and a dark sky is not an excuse for a dark world.
-SKY.dusk = { top: new THREE.Color(0x1a1f52), mid: new THREE.Color(0x8e4f74), low: new THREE.Color(0xd88f5e), fog: new THREE.Color(0xa8734f), hs: new THREE.Color(0xe09a70), hg: new THREE.Color(0x342630), sun: new THREE.Color(0xff9c4a) };
-SKY.day  = { top: new THREE.Color(0x0a1030), mid: new THREE.Color(0x24406e), low: new THREE.Color(0x7d93a8), fog: new THREE.Color(0x5f7893), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x3d4436), sun: new THREE.Color(0xfff2d8) };
+// The band you actually see is `low` and `mid`. From the walking camera the frame reaches
+// about twenty degrees above the horizon, and the dome only starts blending toward `top` at
+// eighteen -- so darkening `top`, which is what the first attempt at an alien sky did, changed
+// nothing whatsoever on a phone. All three have to carry it, and `low` most of all.
+SKY.dusk = { top: new THREE.Color(0x160f3e), mid: new THREE.Color(0x6d3a6b), low: new THREE.Color(0xc07a5c), fog: new THREE.Color(0x8e5f52), hs: new THREE.Color(0xe09a70), hg: new THREE.Color(0x342630), sun: new THREE.Color(0xff9c4a) };
+SKY.day  = { top: new THREE.Color(0x070a24), mid: new THREE.Color(0x14224e), low: new THREE.Color(0x486a86), fog: new THREE.Color(0x44607e), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x3d4436), sun: new THREE.Color(0xfff2d8) };
+// How much of the HDRI shows on the dome. 0 is the procedural sky alone; 1 is the photograph
+// with only the sun, the clouds and the bodies drawn over it. It is tinted by the time of day
+// either way, so the cycle survives.
+SKY.envK = .55;
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
 const tmpG = new THREE.Color();
 const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new THREE.Vector3(), _skyV2 = new THREE.Vector3();
