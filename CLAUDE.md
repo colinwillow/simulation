@@ -6,32 +6,26 @@ live and does not want branches.
 
 ## Verification budget
 
-Time spent verifying is time and credits taken from the owner. Default to the cheap
-checks and ship. Specifically:
+**The owner tests the game. You do not.** He asks for a change, you make it, bump
+`BUILD`, push. He previews it live and is the judge. Fast turnaround beats a proven
+change — a wrong guess costs him one look; a verification pass costs him an hour.
 
-**Run these — they are sub-second and have each caught real, shipped-breaking bugs:**
-- `node --check index.html`-equivalent syntax check
-- `npm run check:shader` (raw GLSL compile)
-- `npm run check:sim` (headless sim: penetration, stuck timers, weather)
-- `npm run check:gait` (rig/camera/placement probes)
+The only thing that runs by default is the ~1s syntax check, because a file that
+won't parse is a blank page and wastes the round trip he was going to spend testing.
+That's it.
 
-Run them **once**, at the end, in a single foreground command. Not per-edit.
+**Do not run, unless he explicitly asks:**
+- `tools/shot.js` screenshots — ~10 minutes each under swiftshader.
+- `npm run check:shader` / `check:sim` / `check:gait` — only when he asks, or when
+  chasing a bug he has already reported and reading the code isn't settling it.
 
-**Do NOT run these unless the owner asks for a picture, or correctness genuinely
-cannot be established any other way:**
-- `tools/shot.js` screenshots. Chromium under swiftshader takes ~10 minutes per
-  render here. Eight of them is an afternoon of the owner's budget spent confirming
-  things already known from reading the code. If one is truly needed: **one**, never
-  a sweep.
-
-**Never do this:**
+**Never:**
 - Background waiter loops (`until ! pgrep ...; do sleep N; done`). They time out, get
-  re-wrapped, and pile up as orphaned pollers. If something must run long, run it in
-  the foreground with a real timeout and accept the result.
-- Re-running a failed probe hoping it passes. Probe flakiness is a bug in the probe.
+  re-wrapped, and pile up as orphaned pollers.
+- Re-running a probe hoping it passes.
 
-**Reporting:** say what was checked and what was not. "Shipped without a render" is a
-fine thing to say. Guessing that it looks right is not.
+**Reporting:** one or two lines — what changed, what to look at. Say "shipped
+unverified" plainly; don't claim it looks right.
 
 ## Landmines (each cost a cycle)
 
