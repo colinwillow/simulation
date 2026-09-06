@@ -243,7 +243,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b62';
+const BUILD = 'b63';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -858,6 +858,7 @@ const G = {
   box: new THREE.BoxGeometry(1, 1, 1, 2, 2, 2),
   plane: new THREE.PlaneGeometry(1, 1, 6, 4),
   torus: new THREE.TorusGeometry(1, .28, 8, 18),
+  ring: new THREE.TorusGeometry(1, .045, 6, 30),
   blob: [], rock: [], trunk: [], leaf: null
 };
 for (let i = 0; i < 5; i++) G.blob.push(displace(new THREE.SphereGeometry(1, 16, 12), .34, 1.5 + i * .4));
@@ -1787,7 +1788,7 @@ function clearGrass(x, z, r) {
 // Mid-morning, sun well up. It started at .28 -- eleven degrees above the horizon -- which
 // meant the title screen and the first minutes of play were both spent in long raking shadow
 // with most of the frame in the dark half of the value range. .35 puts it at thirty-seven.
-const world = { t: DAY * .35, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '' };
+const world = { t: DAY * .35, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], pits: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '' };
 const logEl = document.getElementById('log');
 function logMsg(s) { const d = document.createElement('div'); d.textContent = s; logEl.appendChild(d); while (logEl.children.length > 5) logEl.removeChild(logEl.firstChild); setTimeout(() => d.remove(), 11500); }
 
@@ -5556,7 +5557,7 @@ const VAULT = {
 // not float off the far side of a rise.
 const M_PAVE = new THREE.MeshStandardMaterial({ color: col('#8b86a2'), roughness: .84,
   emissive: col('#2b2842'), emissiveIntensity: .5,
-  transparent: true, opacity: .92, alphaMap: wornTex, depthWrite: false,
+  transparent: true, opacity: .78, alphaMap: wornTex, depthWrite: false,
   polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
 // A drum-stacked spire: each drum narrower than the last and turned a little against it, with
 // a lit seam at every joint. Nothing here is a castle shape -- no battlements, no square
@@ -5720,8 +5721,8 @@ class Vault {
     // radius of one, so the scale IS the ring's radius.
     this.rings = [];
     for (let i = 0; i < 3; i++) {
-      const rr = 2.7 + i * .95;
-      const r = mesh(G.torus, M.vaultLit, rr, rr, rr, 0, CY, 0);
+      const rr = 2.3 + i * .6;
+      const r = mesh(G.ring, M.vaultLit, rr, rr, rr, 0, CY, 0);
       r.rotation.set(i * .7, 0, i * .5);
       r.userData.sp = (i % 2 ? 1 : -1) * (.35 + i * .18);
       g.add(r); this.rings.push(r);
@@ -5732,6 +5733,9 @@ class Vault {
       const b = mesh(pick(G.blob), M.vaultCore, .68, .82, .68, px, py, pz);
       b.userData.p = i / this.tankAt.length * 6.3; g.add(b); this.blobs.push(b);
     }
+    // What the camera does about this building. The court is a room with no roof, so the
+    // drone flies inside it and above the wall rather than being shoved through masonry.
+    world.pits.push({ x, z, r: R - 3, top: S.base + V.wallH + 2 });
     world.vault = this;
     logMsg('A vault stands in the ' + biomeAt(x, z).name + ', lit and empty.');
   }
@@ -5759,7 +5763,11 @@ class Vault {
         logMsg('The splicer turns over and finds the tanks empty. Nothing has been brought back yet.');
       } });
   }
-  dispose() { for (const o of this.obs) obRemove(o); scene.remove(this.g); scene.remove(this.shell); }
+  dispose() {
+    for (const o of this.obs) obRemove(o);
+    const i = world.pits.findIndex(p => p.x === this.pos.x && p.z === this.pos.z); if (i >= 0) world.pits.splice(i, 1);
+    scene.remove(this.g); scene.remove(this.shell);
+  }
 }
 
 function buildSites() {
@@ -6250,6 +6258,21 @@ function camInside(x, y, z) {
 }
 // The ground is boomLift's job now, and it answers in units rather than yes-or-no. What is
 // left for this is the thing a height field cannot see: the lens parked inside a solid.
+// A roofless room the camera has to work from above. The vault is open to the sky exactly so
+// that it can, and this is the half that puts it there -- without it a twenty-unit boom with
+// the wanderer standing in the middle of the court lands the lens flat against the outside of
+// the curtain wall, and the whole frame is masonry with a porthole cut in it.
+function pitAt(x, z) {
+  for (const p of world.pits) { const dx = x - p.x, dz = z - p.z; if (dx * dx + dz * dz < p.r * p.r) return p; }
+  return null;
+}
+// How far a ray from inside a circle travels before it leaves. Used to keep the lens in the
+// room rather than in the wall.
+function rayInCircle(px, pz, dx, dz, cx, cz, r) {
+  const ex = px - cx, ez = pz - cz;
+  const b = ex * dx + ez * dz, c = ex * ex + ez * ez - r * r, disc = b * b - c;
+  return disc <= 0 ? 0 : Math.max(0, -b + Math.sqrt(disc));
+}
 function camClear(pol, r) {
   const sx = Math.sin(cam.az) * Math.sin(pol) * r, sy = Math.cos(pol) * r, sz = Math.cos(cam.az) * Math.sin(pol) * r;
   return !camInside(cam.tgt.x + sx, cam.tgt.y + sy, cam.tgt.z + sz);
@@ -6291,6 +6314,14 @@ function solveCam(dt) {
   // Only if climbing could not clear it does it come in -- and it comes in on the horizontal,
   // so he stays the same size on screen instead of the shot going flat.
   if (fade > .5 && cam.lift > cap - .5) hx *= L.pull;
+  // Inside a room with no roof, the drone goes up over the parapet and stays between the
+  // walls: the boom is cut where it would leave the court, and the lens is held above the
+  // wall top. Coming out through the gate, the two eases below carry it back down.
+  const pit = pitAt(cam.tgt.x, cam.tgt.z);
+  if (pit) {
+    hx = Math.min(hx, Math.max(6, rayInCircle(cam.tgt.x, cam.tgt.z, Math.sin(cam.az), Math.cos(cam.az), pit.x, pit.z, pit.r)));
+    hy = Math.max(hy, pit.top - cam.tgt.y);
+  }
   let r = Math.max(5, Math.hypot(hx, hy)), pol = clamp(Math.atan2(hx, hy), .16, 1.5);
   // The last resort, and the only discrete step left: the lens is inside something the height
   // field knows nothing about -- a mushroom the size of a shed -- so pull in until it is not.

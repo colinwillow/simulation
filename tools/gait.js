@@ -200,6 +200,13 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
 (() => {
   const V = W.vault;
   if (!V) return console.log('the vault                  not built');
+  // `C`, `CS` and `lens()` belong to the camera section below this one, and a const declared
+  // below is not a const you can read from above.
+  const C = global.__cam, CS = global.__camS;
+  const lens = () => {
+    const sx = Math.sin(C.az) * Math.sin(CS.pol) * CS.r, sz = Math.cos(C.az) * Math.sin(CS.pol) * CS.r;
+    return { x: C.tgt.x + sx, y: CS.y, z: C.tgt.z + sz };
+  };
   const R = 22, dz = [];
   // Walk him at the gate from outside and see how far in he gets. The gateway faces local
   // -z of the site, which is yaw-dependent, so try every heading and take the best.
@@ -208,7 +215,7 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
     const a = i / 24 * Math.PI * 2;
     const sx = V.pos.x + Math.sin(a) * (R + 16), sz = V.pos.z + Math.cos(a) * (R + 16);
     P.pos.set(sx, gY(sx, sz), sz); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y; P.swim = 0;
-    global.__cam.tgt.set(sx, P.pos.y + 3.4, sz);
+    C.tgt.set(sx, P.pos.y + 3.4, sz);
     hold(.3, () => { ST.L.x = ST.L.y = 0; });
     const ux = -Math.sin(a), uz = -Math.cos(a);
     hold(5, () => { P.wx = ux; P.wz = uz; P.wmag = 1; P.moving = 1; });
@@ -216,6 +223,22 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
     const d = Math.hypot(P.pos.x - V.pos.x, P.pos.z - V.pos.z);
     if (d < best.got) best = { got: d, a: Math.round(a * 57.3), onDeck: P.pos.y - V.pos.y };
   }
+  // And the shot from inside it. The court is roofless so the camera can work from above the
+  // wall; if the lens ends up outside the wall radius or below its top, the frame is masonry.
+  P.pos.set(V.pos.x, gY(V.pos.x, V.pos.z) + 2, V.pos.z); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y;
+  C.tgt.set(V.pos.x, P.pos.y + 3.4, V.pos.z); C.r = 20;
+  let worstOut = 0, worstLow = 0;
+  for (let i = 0; i < 12; i++) {
+    C.az = i / 12 * Math.PI * 2;
+    hold(1.6, () => { ST.L.x = ST.L.y = 0; P.pos.set(V.pos.x, gY(V.pos.x, V.pos.z) + 2, V.pos.z); P.grounded = 1; });
+    const L = lens(), out = Math.hypot(L.x - V.pos.x, L.z - V.pos.z);
+    worstOut = Math.max(worstOut, out);
+    worstLow = Math.max(worstLow, (V.pos.y + 8.6) - L.y);
+  }
+  console.log('the vault                 ', JSON.stringify({ standingInTheMiddle: 'boom 20, all round',
+    wallIsAt: 22, lensNeverGotFurtherOutThan: +worstOut.toFixed(1),
+    lensLowestBelowTheWallTop: +Math.max(0, worstLow).toFixed(1) }));
+
   console.log('the vault                 ', JSON.stringify({ at: [V.pos.x | 0, V.pos.z | 0],
     colliders: V.obs.length,
     walkedInToWithin: +best.got.toFixed(1) + ' of the middle',
