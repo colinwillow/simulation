@@ -17,7 +17,7 @@
 //   --palette    report what the frame is made of: hue spread, saturation, value range
 //   --weapon     draw the blaster, aim at the nearest animal, and report the lock and the shot
 //   --drone      frame the drone itself, close, to see what is glowing on it
-//   --vault      stand in the middle of the vault
+//   --base       stand under the lander
 //   --title      shoot the title screen instead, before the world is entered
 //   --intro-t    seconds along the title screen's crane to jump to (0 wide, 26 near)
 //
@@ -34,7 +34,7 @@ const WAIT = +arg('wait', 6);
 
 // The game's script is one IIFE, so nothing inside it is reachable from the page. Splice a
 // handle onto the window just before it closes -- the same trick the headless tools use.
-const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV,stick,weap,WEAPON,toggleArm,Bolt,isle,DRONE,camS,GIMBAL};';
+const HOOK = 'window.__g={world,player,cam,camera,scene,renderer,MODELS,PLANET,height,groundY,biomeAt,DAY,INTRO,startGame,sun,renderPost,Q,vibeStep,VIBE,ENV,stick,weap,WEAPON,toggleArm,Bolt,isle,DRONE,camS,GIMBAL,muzzleChart,RIG};';
 function indexHTML() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const cut = html.lastIndexOf('})();');
@@ -122,7 +122,8 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       const s = (g.world.sites || [])[+site];
       if (s) at = s.x + ',' + s.z; else console.warn('no site ' + site);
     }
-    if (vault && g.world.vault) { const v = g.world.vault; at = (v.pos.x + 2) + ',' + (v.pos.z + 2); }
+    if (vault && g.world.lander) { const v = g.world.lander; at = (v.pos.x + 2) + ',' + (v.pos.z + 2); }
+    else if (vault) console.warn('no lander in this world');
     if (at) { const [x, z] = at.split(',').map(Number);
       g.player.pos.set(x, g.groundY(x, z) + 1, z); g.player.vx = g.player.vz = g.player.vy = 0;
       g.cam.tgt.set(x, g.player.pos.y + 3.4, z); }
@@ -135,7 +136,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     // The title crane takes the better part of a minute to travel; under swiftshader that is
     // ten real ones. Jump to a point on it instead of waiting for it.
     else if (introT !== null) g.INTRO.t = +introT;
-  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null), has('tree'), arg('near', null), has('vault')]);
+  }, [at, hour, r, az, has('title'), arg('site', null), arg('intro-t', null), has('tree'), arg('near', null), has('vault') || has('base')]);
 
   // Wall clock is meaningless here -- swiftshader runs this at a couple of frames a second,
   // so the settle is counted in world seconds like every other harness in this folder.
@@ -288,6 +289,15 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
         rifleClips: Object.keys(p.rigH ? p.rigH.acts : {}).filter(k => /rifle/.test(k)),
         aimingAt: c ? c.constructor.name + ' at ' + (c.pos.distanceTo(p.pos) | 0) : 'nothing' };
     });
+    // The blaster is asked for only once the rig has attached, so it can still be in flight
+    // when the harness reaches for it -- keep asking until the button exists.
+    for (let i = 0; i < 20; i++) {
+      const on = await page.evaluate(() => { const g = window.__g;
+        if (!g.player.armWant) g.toggleArm();
+        return !!g.player.armWant; });
+      if (on) break;
+      await step(1);
+    }
     await step(1.2);
     const held = await page.evaluate(() => {                 // push the stick straight ahead
       const g = window.__g; g.stick.R.x = 0; g.stick.R.y = -1;
@@ -304,8 +314,19 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     });
     await page.evaluate(() => { window.__g.stick.R.x = window.__g.stick.R.y = 0; });   // let go: fire
     const shot = await page.evaluate(() => {
-      const g = window.__g;
-      return { bolts: g.world.effects.filter(e => e instanceof g.Bolt).length, shootT: +g.player.shootT.toFixed(2) };
+      const g = window.__g, p = g.player;
+      // Where the shot actually leaves him, in his own frame: how far in front, how far to
+      // the side, how far up. "It comes out off to the left" is a real note and this is the
+      // number behind it -- a blaster held in the right hand should read a little to the
+      // right and about chest high, not out past his shoulder.
+      const m = g.weap.lastMuzzle;          // where the bolt actually left, not where the bone is
+      const dx = m.x - p.pos.x, dz = m.z - p.pos.z;
+      const c = Math.cos(p.faceH), sn = Math.sin(p.faceH);
+      const b = g.world.effects.filter(e => e instanceof g.Bolt);
+      return { bolts: b.length, shootT: +p.shootT.toFixed(2),
+        muzzle: { ahead: +(dx * sn + dz * c).toFixed(2), toTheRight: +(dx * c - dz * sn).toFixed(2),
+          up: +(m.y - p.pos.y).toFixed(2), ofAHeightOf: g.RIG.height },
+        bodyVsAim: Math.round(Math.atan2(Math.sin(p.faceH - p.aimH), Math.cos(p.faceH - p.aimH)) * 57.3) };
     });
     await step(2.5);
     const after = await page.evaluate(() => {
@@ -319,11 +340,14 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
     console.log('  aiming ' + aim.aiming + ' | locked ' + aim.lock
       + (aim.offBy === null ? '' : ', shot is ' + aim.offBy.toFixed(1) + ' deg off the bearing')
       + ' | reticle ' + (aim.retic ? 'up' : 'down') + ' | camera ' + aim.camBehind.toFixed(0) + ' deg off the aim');
+    console.log('  muzzle sits ' + shot.muzzle.ahead + ' ahead, ' + shot.muzzle.toTheRight
+      + ' to the right, ' + shot.muzzle.up + ' up (he is ' + shot.muzzle.ofAHeightOf + ' tall)'
+      + ' | body is ' + shot.bodyVsAim + ' deg off the aim');
     console.log('  released: ' + shot.bolts + ' bolt in flight, recoil ' + shot.shootT + 's'
       + ' | after 2.5s ' + after.bolts + ' left, ' + after.alarmed + ' animals alarmed');
-    // put the gun back up for the picture
-    await page.evaluate(() => { window.__g.stick.R.y = -1; });
-    await step(.8);
+    // put the gun back up for the picture, and come in close enough to see it
+    await page.evaluate(() => { const g = window.__g; g.stick.R.y = -1; g.cam.r = 7; });
+    await step(2);
   }
 
   // What is actually glowing around him. "There are eight white blobs in the frame" is a

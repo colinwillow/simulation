@@ -1444,6 +1444,38 @@ same `stick` object the touch handlers write to: draw, aim at the nearest animal
 release, and report the joint, the clips, the lock, the residual angle, the reticle, and
 whether a bolt actually left the barrel and hit something.
 
+**Nothing about the blaster drops on at identity, however it was authored** — the exporter saw
+to that, and all three facts came out of the file rather than out of a guess:
+
+* the node carries a `0.01` scale, so at identity the model arrived a hundredth of the size
+  the skeleton is in. Fifteen millimetres long. That is why it looked like it had never
+  loaded, and why the first report back was "did I forget to upload it".
+* the node also carries a `+90°` turn about X, and the mesh's long axis is X — so in the
+  file's own root space the barrel runs along X while the joint's barrel is `+Z`.
+* which end is the muzzle is not a guess either. Slicing the mesh along X: the `-X` end is
+  thin and sparse (18 units tall, 591 vertices) and the `+X` end is tall, narrow and dense
+  with its centre dropping away — a grip. Muzzle is `-X`.
+
+`WEAPON.fwd`/`up` name those axes, the loader builds the rotation that carries them onto the
+joint's, and `fit` sizes the model so its barrel *ends where `weapon_direction` is* — measured
+off the rig, so a re-export at a different scale needs no edit here. `roll` is the one thing a
+measurement cannot settle.
+
+**Where the bolt starts** is its own small problem, and three things went wrong at once, all
+of which read as "the shot comes out of his side":
+
+* the gun is on his body and the body eases onto the aim over about a tenth of a second, so on
+  a flick-and-release the barrel still points where he *was* facing while the bolt already
+  flies where the stick pointed. The muzzle is swung onto the shot line before the bolt is
+  made, and the body turns nearly twice as fast while aiming.
+* `rifle_idle` holds the blaster low and out — measured at 1.40 to the right and 0.79 up on a
+  body 2.8 tall, which is hip height. A bolt starting there is inside whatever he is standing
+  next to and bursts on it in the first frame.
+* and even lifted, its first stride is through his own shoulder, so `bolt.grace` buys it two
+  and a half units before anything can stop it.
+
+After: 1.6 ahead, 0.0 to the side, 1.74 up.
+
 ### The camera is a drone
 
 Not a boom bolted to his back. Three separate jobs, all in `followCam` and `solveCam`:
@@ -1504,29 +1536,40 @@ terms the prototype skips it. The drone is marked `noHole` because it rides with
 hovers inside the hole's radius all day; without the check it would dissolve the one thing
 lighting him.
 
-### The vault
+### The lander
 
-The building you go inside. It is open to the sky, and that is architecture rather than a
-shortcut: a third-person camera on a twenty-unit boom cannot be inside a closed room, every
-way round that is a system (fade the roof, a separate interior scene, a top-down mode
-indoors), and a hall ringed by spires with nothing over it solves the same problem in the
-shape of the building. The curtain wall is tall enough to enclose you and low enough for the
-drone to look over. Its colliders stop the wanderer and carry `seeThru`, so the boom solver
-ignores them — the primitives are single-sided, so a lens that ends up past a wall just sees
-the room.
+His station. Not a building: a ship that came down, put its legs out and stayed. The hull is
+held twelve units clear of the ground on six splayed legs, the belly carries engine bells, and
+it sits on a scorched apron. Everything about the shape says it could leave again, which is
+the thing being built toward.
 
-**It has no plinth, and that is the part that cost a cycle.** The first build stood on a
-two-metre platform, which looked right and was a wall: on ground that falls away a unit over
-the twenty-five it covers, the step up exceeds what a body can climb, and the harness walked
-at it from all twenty-four bearings and never got in. The floor is the island now — the
-paving is laid on the height field with `site.ground()` the way the steading's tilled earth
-is, the wall panels are sunk four units so a dip never opens a gap under them, and the only
-thing you climb is the three half-unit steps of the dais.
+This was a walled keep with spires first, and it is worth writing down why the shape changed
+rather than just the shape. A castle says "somebody has always lived here". A lander says
+"this arrived, and it can arrive somewhere else."
 
-The shell is `siteAt` primitives merged by material: seven draw calls for a building
-forty-four units across. Only the splicer's rings, its core and the specimens in the tanks are
-live objects. `npm run check:gait` reports whether it got built, how many colliders it has,
-and how far in he gets walking at it from every bearing.
+It also solves the camera for free, and that is not nothing. A roofless walled court needed a
+special rule to stop a twenty-unit boom parking against the *outside* of the wall — with the
+wanderer in the middle of the court the whole frame was masonry with a porthole cut in it by
+the see-through hole. That rule is `world.pits`: while the camera's target is inside a
+roofless room, the boom is cut where it would leave and the lens is held above the parapet.
+It still exists and is still the general answer for any walled place, but nothing uses it now,
+because a hull on legs is open on every side. The camera flies in underneath and the hole
+handles the belly when the boom rises past it.
+
+**It has no plinth, and that is the part that cost a cycle.** The keep stood on a two-metre
+platform, which looked right and was a wall: on ground that falls away a unit over the
+twenty-five it covers, the step up exceeds what a body can climb, and the harness walked at it
+from all twenty-four bearings and never got in. The ground under the lander is the island —
+the apron is laid on the height field with `site.ground()` the way the steading's tilled earth
+is, the leg pads are low things you step over, and the only thing you climb is the three
+half-unit steps of the dais under the lift.
+
+The shell is `siteAt` primitives merged by material: six draw calls for a ship forty-two units
+across. `site.strut()` is new and exists for the legs — `put` takes Euler angles, which is
+fine for a box lying flat and miserable for anything that has to reach between two points.
+Only the lift's column, the splicer's rings, the cores in the tanks and the landing lights are
+live objects. `npm run check:gait` reports whether it got set down, how many colliders it has,
+how far in he gets from every bearing, and whether the lens ever ends up buried in the belly.
 
 ---
 

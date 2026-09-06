@@ -243,7 +243,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b63';
+const BUILD = 'b64';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -808,19 +808,24 @@ const M = {
   walkerShell: std(col('#7d8a6a'), { roughness: .9 }),
   hopper: [std(col('#d9c58f'), { roughness: .85 }), std(col('#c2a874'), { roughness: .85 }), std(col('#e6d7ad'), { roughness: .85 })],
   hopper2: std(col('#8a7550'), { roughness: .85 }),
-  // The vault. Pale shell, dark ribs, and two lights: cold blue for the building's own
-  // lamps and violet for anything to do with the splicer, so at a glance you can tell the
-  // architecture from the machine inside it.
-  // All three carry a little emissive of their own. A dark stone at roughness .9 crushes to
-  // black in any shade, and the vault is lit from inside by its own machine at night -- an
-  // unlit rib next to a lit one read as a hole cut in the building.
-  vaultA: std(col('#a09bb2'), { roughness: .84, emissive: col('#2e2c40'), emissiveIntensity: .5 }),
-  vaultB: std(col('#575270'), { roughness: .88, emissive: col('#211f30'), emissiveIntensity: .55 }),
-  vaultC: std(col('#7b7594'), { roughness: .86, emissive: col('#2a2840'), emissiveIntensity: .5 }),
-  vaultLit: std(col('#cfe9ff'), { emissive: col('#5ec8ff'), emissiveIntensity: 1.5, roughness: .3 }),
-  vaultCore: std(col('#ecd6ff'), { emissive: col('#a85cff'), emissiveIntensity: 1.7, roughness: .26 }),
-  vaultGlass: new THREE.MeshStandardMaterial({ color: col('#bfe8ff'), transparent: true, opacity: .34,
-    roughness: .16, metalness: .1, emissive: col('#3fa8d8'), emissiveIntensity: .4, side: THREE.DoubleSide, depthWrite: false })
+  // The lander. Pale hull, dark structure, and two lights: cold blue for the ship's own
+  // lamps and ports, violet for anything to do with the splicer -- so at a glance you can
+  // tell the vehicle from the machine it is carrying.
+  // All three carry a little emissive of their own. A dark surface at roughness .9 crushes to
+  // black in any shade, and the hull is lit from underneath by its own machine at night -- an
+  // unlit rib beside a lit port read as a hole cut in the ship. A touch of metalness, because
+  // this is the one thing on the island that is manufactured.
+  hullPale: std(col('#a8a3ba'), { roughness: .62, metalness: .22, emissive: col('#2e2c40'), emissiveIntensity: .45 }),
+  hullDark: std(col('#4c4762'), { roughness: .7, metalness: .3, emissive: col('#211f30'), emissiveIntensity: .5 }),
+  hullMid: std(col('#7b7594'), { roughness: .66, metalness: .26, emissive: col('#2a2840'), emissiveIntensity: .45 }),
+  hullLit: std(col('#cfe9ff'), { emissive: col('#5ec8ff'), emissiveIntensity: 1.5, roughness: .3 }),
+  hullCore: std(col('#ecd6ff'), { emissive: col('#a85cff'), emissiveIntensity: 1.7, roughness: .26 }),
+  hullGlass: new THREE.MeshStandardMaterial({ color: col('#bfe8ff'), transparent: true, opacity: .3,
+    roughness: .16, metalness: .1, emissive: col('#3fa8d8'), emissiveIntensity: .4, side: THREE.DoubleSide, depthWrite: false }),
+  // The lift's column of light. Additive so it reads as light rather than as a tube of
+  // plastic, and it never writes depth -- you walk through it.
+  hullBeam: new THREE.MeshBasicMaterial({ color: col('#9fe0ff'), transparent: true, opacity: .16,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
 };
 
 // ---------- geometry helpers ----------
@@ -5347,6 +5352,20 @@ function siteAt(x, z, yaw) {
       return m;
     },
     block(px, pz, r, top) { const w = site.world(px, pz); obAdd(w.x, w.z, r, null, top === undefined ? Infinity : base + top); return w; },
+    // A member running from one local point to another -- a landing leg, a strut, a mast.
+    // `put` takes Euler angles, which is fine for a box lying flat and miserable for anything
+    // that has to reach between two places, so this takes the two places instead.
+    strut(geo, mat, thick, x0, y0, z0, x1, y1, z1, thick2) {
+      const a = new THREE.Vector3(x0, y0, z0), d = new THREE.Vector3(x1 - x0, y1 - y0, z1 - z0);
+      const len = d.length() || 1e-4;
+      const m = new THREE.Mesh(geo, mat);
+      m.scale.set(thick, len, thick2 === undefined ? thick : thick2);
+      m.position.copy(a).addScaledVector(d, .5);
+      m.quaternion.setFromUnitVectors(_plY, d.divideScalar(len));
+      m.updateMatrix();
+      bin.push({ geo, mat, matrix: root.clone().multiply(m.matrix) });
+      return m;
+    },
     done() {
       const g = new THREE.Group(); g.userData.flat = true;
       for (const m of mergeBin(bin)) { warpGeo(m.geometry); g.add(m); }
@@ -5522,187 +5541,168 @@ function siteSpot(what, names, minH, maxH, maxSl, clears, placed) {
   return null;
 }
 
-// ---------- the vault ----------
-// His station: the thing a specimen gets carried back to. It is one building rather than a
-// scatter of props, so it is worth saying how it is put together.
+// ---------- the lander ----------
+// His station. Not a building: a ship that came down, put its legs out and stayed. Everything
+// about the shape says it could leave again -- the hull is held clear of the ground on six
+// splayed legs, the belly carries engine bells, and the whole thing is a machine sitting on a
+// scorched apron rather than masonry growing out of the hill.
 //
-// It is open to the sky, and that is architecture rather than a shortcut. A third-person
-// camera on a twenty-unit boom cannot be inside a closed room; every way round that is a
-// system (fade the roof out, a separate interior scene, a top-down mode indoors), and a hall
-// ringed by spires with nothing over it solves the same problem in the shape of the building.
-// The curtain wall is tall enough to enclose you and low enough for the drone to look over.
-// Inside, the walls stop the wanderer and are invisible to the boom solver -- `seeThru` --
-// because the primitives are single-sided, so a lens that ends up past one just sees the room.
+// The first version of this was a walled keep with spires, which was the wrong read entirely,
+// and it is worth writing down why the shape changed rather than just the shape. A castle
+// says "somebody has always lived here". A lander says "this arrived, and it can arrive
+// somewhere else" -- which is the thing being built toward.
 //
-// It has no plinth, and that is the second thing worth saying. The first build stood on a
-// two-metre platform, which looked right and was a wall: on ground that falls away a unit
-// over the twenty-five it covers, the step up is over the height a body can climb, and the
-// harness walked at it from all twenty-four bearings and never got in. The floor is the
-// island now. The paving follows the height field, the wall panels are sunk deep enough that
-// a dip never opens a gap under them, and the only thing you climb is the three shallow steps
-// of the dais in the middle.
+// It also solves the camera for free, and that is not a small thing. A roofless walled court
+// needed a special rule to stop a twenty-unit boom parking against the outside of the wall
+// (`world.pits`, still there and still used). A hull on legs has no walls at all: the deck
+// under it is open on every side, the camera flies in beneath the belly, and the see-through
+// hole handles the hull when the boom rises past it. Nothing special is needed.
 //
-// The whole shell is siteAt primitives merged by material -- seven draw calls for a building
-// forty-four units across. Only what actually moves is a live object.
-const VAULT = {
-  R: 22,            // the curtain wall
-  wallH: 8.6,
-  sink: 4,          // how far the wall's foot is buried, so uneven ground never shows under it
-  gate: .40,        // half the gateway, in radians of wall
-  reach: 7,         // how near the splicer you have to be for it to offer itself
+// The shell is siteAt primitives merged by material -- six draw calls for a ship forty-two
+// units across. Only the lift's column, the splicer's rings, the cores in the tanks and the
+// landing lights are live objects.
+const LANDER = {
+  R: 17,            // the hull
+  legR: 21,         // where the feet come down
+  belly: 12.6,      // and how far the hull is held off the ground
+  legs: 6,
+  gate: 0,          // there is no gate: you walk in under it from any side
+  reach: 8,         // how near the splicer you have to be for it to offer itself
   tanks: 6,
 };
-// The court's floor is the island, so the paving is laid on the height field rather than on
-// the site's plane -- the same trick the steading's tilled earth uses, and the reason it does
-// not float off the far side of a rise.
-const M_PAVE = new THREE.MeshStandardMaterial({ color: col('#8b86a2'), roughness: .84,
-  emissive: col('#2b2842'), emissiveIntensity: .5,
+// The apron is scorched ground, and it is laid on the height field rather than on the site's
+// plane -- the same trick the steading's tilled earth uses, and the reason it does not float
+// off the far side of a rise. The lander has no plinth for exactly the reason the keep should
+// not have had one: a step up taller than a body can climb is a wall, however good it looks.
+const M_APRON = new THREE.MeshStandardMaterial({ color: col('#6e6a7c'), roughness: .9,
+  emissive: col('#232135'), emissiveIntensity: .5,
   transparent: true, opacity: .78, alphaMap: wornTex, depthWrite: false,
   polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-// A drum-stacked spire: each drum narrower than the last and turned a little against it, with
-// a lit seam at every joint. Nothing here is a castle shape -- no battlements, no square
-// keep -- but the proportions are a keep's, which is what makes it read as somewhere lived in
-// rather than a rock formation.
-function vaultSpire(S, px, pz, h, r0, spin) {
-  const N = 7;
-  let y = -VAULT.sink, r = r0 * 1.15;
-  for (let i = 0; i < N; i++) {
-    const sh = (h + VAULT.sink) / N * (1 + (i - 3) * .05);
-    S.put(G.cylT, i % 2 ? M.vaultA : M.vaultC, r, sh, r, px, y + sh / 2, pz, 0, spin + i * .5, 0);
-    if (i) S.put(G.cyl, M.vaultLit, r * 1.08, .17, r * 1.08, px, y, pz);
-    y += sh; r *= .82;
-  }
-  S.put(G.cone, M.vaultB, r * 1.5, h * .16, r * 1.5, px, y + h * .08, pz);
-  S.put(G.sph, M.vaultCore, r * .7, r * 1.1, r * .7, px, y + h * .17, pz);
-}
-// A tower: fatter, shorter, with a balcony you can count the railings on from the ground and
-// four lit slits at head height, which is what tells you it is a building and not a rock.
-function vaultTower(S, px, pz, h, r0, spin) {
-  S.put(G.cyl, M.vaultC, r0, h + VAULT.sink, r0, px, (h - VAULT.sink) / 2, pz);
-  S.put(G.cyl, M.vaultB, r0 * 1.28, .65, r0 * 1.28, px, h * .72, pz);
-  for (let i = 0; i < 11; i++) { const a = i / 11 * Math.PI * 2;
-    S.put(G.box, M.vaultA, .28, .95, .28, px + Math.sin(a) * r0 * 1.16, h * .72 + .78, pz + Math.cos(a) * r0 * 1.16); }
-  for (let i = 0; i < 4; i++) { const a = i / 4 * Math.PI * 2 + spin;
-    S.put(G.box, M.vaultLit, .36, 2.3, .36, px + Math.sin(a) * r0 * .99, h * .44, pz + Math.cos(a) * r0 * .99); }
-  S.put(G.cyl, M.vaultA, r0 * .88, h * .2, r0 * .88, px, h * 1.1, pz);
-  S.put(G.cone, M.vaultB, r0 * 1.05, h * .3, r0 * 1.05, px, h * 1.35, pz);
-  S.put(G.sph, M.vaultLit, r0 * .35, r0 * .5, r0 * .35, px, h * 1.5, pz);
+// One landing leg: a footpad on the ground, a raked lower member up to a knee, a shorter
+// upper member into the hull, and a hydraulic sleeve over the joint. Built between points
+// rather than out of angles, because a leg is a thing that reaches.
+function landerLeg(S, a, V) {
+  const fx = Math.sin(a) * V.legR, fz = Math.cos(a) * V.legR;
+  const kx = Math.sin(a) * (V.legR - 5.0), kz = Math.cos(a) * (V.legR - 5.0), ky = V.belly * .58;
+  const hx = Math.sin(a) * (V.R - 3.4), hz = Math.cos(a) * (V.R - 3.4), hy = V.belly - .6;
+  S.put(G.cyl, M.hullDark, 2.5, .5, 2.5, fx, .25, fz);                     // the pad
+  S.put(G.cyl, M.hullMid, 1.7, .55, 1.7, fx, .7, fz);
+  S.put(G.sph, M.hullDark, .95, .8, .95, fx, 1.1, fz);                     // the ankle
+  S.strut(G.cyl, M.hullPale, .62, fx, 1.1, fz, kx, ky, kz);
+  S.strut(G.cyl, M.hullMid, .82, fx + (kx - fx) * .12, 1.1 + (ky - 1.1) * .12, fz + (kz - fz) * .12,
+                            fx + (kx - fx) * .55, 1.1 + (ky - 1.1) * .55, fz + (kz - fz) * .55);   // the sleeve
+  S.put(G.sph, M.hullDark, 1.0, 1.0, 1.0, kx, ky, kz);                     // the knee
+  S.strut(G.cyl, M.hullPale, .74, kx, ky, kz, hx, hy, hz);
+  S.put(G.box, M.hullLit, .3, .3, .34, fx, 1.9, fz);                       // a landing light on the ankle
+  return { fx, fz, kx, ky, kz };
 }
 // A culture tank: a glass cylinder on a sunk plinth, with a cap and three ribs. What floats
-// inside it is not built here -- it moves, so it belongs to the Vault object.
-function vaultTank(S, px, pz, a) {
-  S.put(G.cyl, M.vaultB, 1.55, 4.0, 1.55, px, -1.0, pz);
-  S.put(G.cyl, M.vaultC, 1.25, .55, 1.25, px, 1.25, pz);
-  S.put(G.cyl, M.vaultLit, .95, .14, .95, px, 1.6, pz);
-  S.put(G.cyl, M.vaultGlass, 1.1, 4.4, 1.1, px, 3.7, pz);
-  S.put(G.cyl, M.vaultA, 1.4, .6, 1.4, px, 6.2, pz);
-  S.put(G.cyl, M.vaultB, .5, 1.5, .5, px, 7.2, pz);
+// inside it moves, so it belongs to the Lander object.
+function landerTank(S, px, pz, a) {
+  S.put(G.cyl, M.hullDark, 1.55, 4.0, 1.55, px, -1.0, pz);
+  S.put(G.cyl, M.hullMid, 1.25, .55, 1.25, px, 1.25, pz);
+  S.put(G.cyl, M.hullLit, .95, .14, .95, px, 1.6, pz);
+  S.put(G.cyl, M.hullGlass, 1.1, 4.4, 1.1, px, 3.7, pz);
+  S.put(G.cyl, M.hullPale, 1.4, .6, 1.4, px, 6.2, pz);
+  S.put(G.cyl, M.hullDark, .5, 1.5, .5, px, 7.2, pz);
   for (let i = 0; i < 3; i++) { const b = a + i / 3 * Math.PI * 2;
-    S.put(G.box, M.vaultC, .22, 4.9, .22, px + Math.sin(b) * 1.22, 3.75, pz + Math.cos(b) * 1.22); }
+    S.put(G.box, M.hullMid, .22, 4.9, .22, px + Math.sin(b) * 1.22, 3.75, pz + Math.cos(b) * 1.22); }
 }
-class Vault {
+class Lander {
   constructor(x, z, yaw) {
-    const V = VAULT, R = V.R;
+    const V = LANDER, R = V.R, B = V.belly;
     this.alive = true;
     const S = siteAt(x, z, yaw);
     this.site = S;
     this.pos = new THREE.Vector3(x, S.base, z);
-    clearGrass(x, z, R + 8);
-    // Nothing grows where the court is, or through the wall. The sites are built after the
-    // world is populated, so anything already standing in the footprint has to go rather than
-    // be built around -- and the radius has to reach past the wall itself, or a mushroom the
-    // size of a shed comes up through a spire.
-    for (const pl of world.plants) if (pl.alive && Math.hypot(pl.pos.x - x, pl.pos.z - z) < R + 5) pl.alive = false;
+    clearGrass(x, z, V.legR + 8);
+    // Nothing grows under it. The sites are built after the world is populated, so anything
+    // already standing in the footprint has to go rather than be built around.
+    for (const pl of world.plants) if (pl.alive && Math.hypot(pl.pos.x - x, pl.pos.z - z) < V.legR + 3) pl.alive = false;
 
-    // the floor: paving laid on the height field, thinning out toward the wall
+    // the apron: scorched ground under the hull, thinning out past the feet
     for (let i = 0; i < 90; i++) {
-      const a = rnd(Math.PI * 2), rr = Math.sqrt(Math.random()) * (R - 1.5), sz2 = rnd(4, 9);
-      S.ground(G.plane, M_PAVE, sz2, sz2, Math.sin(a) * rr, Math.cos(a) * rr, rnd(Math.PI * 2));
+      const a = rnd(Math.PI * 2), rr = Math.sqrt(Math.random()) * (V.legR + 2), sz2 = rnd(4, 9);
+      S.ground(G.plane, M_APRON, sz2, sz2, Math.sin(a) * rr, Math.cos(a) * rr, rnd(Math.PI * 2));
     }
-    // and the lit inlay running out from the dais, laid the same way so it follows the ground
-    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 + .39;
-      for (let j = 0; j < 7; j++) { const rr = 9 + j * 1.7;
-        S.ground(G.plane, M.vaultLit, .5, 1.5, Math.sin(a) * rr, Math.cos(a) * rr, a, .18); } }
+    // and the guide lights that mark the pad out, laid the same way so they follow the ground
+    for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2;
+      S.ground(G.plane, M.hullLit, .55, 2.2, Math.sin(a) * (V.legR + 3.4), Math.cos(a) * (V.legR + 3.4), a, .18); }
 
-    const inGate = a => Math.abs(Math.atan2(Math.sin(a - Math.PI), Math.cos(a - Math.PI))) < V.gate;
-    const SEG = 44, panel = R * 2 * Math.PI / SEG * 1.16;
-    for (let i = 0; i < SEG; i++) {
-      const a = (i + .5) / SEG * Math.PI * 2;
-      if (inGate(a)) continue;
-      const px = Math.sin(a) * R, pz = Math.cos(a) * R;
-      const h = V.wallH * (.9 + Math.sin(a * 3.7) * .1);
-      S.put(G.box, i % 3 ? M.vaultA : M.vaultC, panel, h + V.sink, 1.9, px, (h - V.sink) / 2, pz, 0, a, 0);
-      if (i % 4 === 0) {                    // a rib, and the lit seam on its inner face
-        S.put(G.box, M.vaultB, 1.05, h + 2.3 + V.sink, 2.7, px, (h + 2.3 - V.sink) / 2, pz, 0, a, 0);
-        S.put(G.box, M.vaultLit, .34, h * .7, .34, Math.sin(a) * (R - 1.15), h * .5, Math.cos(a) * (R - 1.15), 0, a, 0);
-      }
+    // ---- the legs ----
+    const feet = [];
+    for (let i = 0; i < V.legs; i++) feet.push(landerLeg(S, i / V.legs * Math.PI * 2 + .26, V));
+
+    // ---- the hull ----
+    // A lens: a shallow cone turned over for the belly, a rim band with lit ports round it,
+    // and a taller cone on top. G.cone stands on its base with the point up, so the belly is
+    // the same cone rolled a half turn about X.
+    S.put(G.cone, M.hullMid, R * .92, 3.6, R * .92, 0, B + 1.8, 0, Math.PI, 0, 0);
+    S.put(G.cyl, M.hullPale, R, 2.4, R, 0, B + 4.8, 0);
+    S.put(G.cyl, M.hullDark, R * 1.02, .5, R * 1.02, 0, B + 3.7, 0);
+    S.put(G.cyl, M.hullDark, R * 1.02, .5, R * 1.02, 0, B + 5.9, 0);
+    S.put(G.cone, M.hullMid, R * .97, 6.4, R * .97, 0, B + 9.2, 0);
+    S.put(G.cyl, M.hullPale, 3.2, 1.6, 3.2, 0, B + 12.2, 0);
+    S.put(G.sph, M.hullCore, 1.5, 1.9, 1.5, 0, B + 13.6, 0);
+    // ports round the rim, and the ribs between them
+    for (let i = 0; i < 26; i++) {
+      const a = i / 26 * Math.PI * 2;
+      const px = Math.sin(a) * (R + .06), pz = Math.cos(a) * (R + .06);
+      S.put(G.box, i % 2 ? M.hullLit : M.hullDark, i % 2 ? 1.5 : .7, i % 2 ? 1.1 : 2.6, .5, px, B + 4.8, pz, 0, a, 0);
     }
-    // the gateway: an arch swung across the opening, its blocks turned to follow the curve
-    const gw = R * Math.sin(V.gate);
-    for (let i = 0; i < 13; i++) {
-      const t = (i + .5) / 13, ang = Math.PI * t;
-      const rz = Math.atan2(Math.cos(ang) * 5.6, -Math.sin(ang) * gw);
-      S.put(G.box, i % 2 ? M.vaultC : M.vaultA, 2.1, 1.5, 2.4, Math.cos(ang) * gw, 6.0 + Math.sin(ang) * 5.6, -R, 0, 0, rz);
+    // engine bells under the belly, ringed round the lift
+    for (let i = 0; i < 5; i++) {
+      const a = i / 5 * Math.PI * 2 + .4, px = Math.sin(a) * (R * .52), pz = Math.cos(a) * (R * .52);
+      S.put(G.cone, M.hullDark, 2.1, 2.6, 2.1, px, B - 1.3, pz, Math.PI, 0, 0);
+      S.put(G.cyl, M.hullCore, 1.5, .3, 1.5, px, B - 2.4, pz);
+      S.put(G.cyl, M.hullMid, 1.0, 1.2, 1.0, px, B + .5, pz);
     }
-    S.put(G.box, M.vaultLit, gw * 1.7, .3, .5, 0, 12.0, -R + .1);
-
-    // five spires round the wall, and the two towers that flank the gate
-    const spires = [[.30, 34, 2.6], [1.28, 26, 2.1], [2.42, 39, 3.0], [4.05, 27, 2.2], [5.05, 31, 2.5]];
-    for (const [a, h, r0] of spires) vaultSpire(S, Math.sin(a) * R, Math.cos(a) * R, h, r0, a);
-    const gateT = [];
-    for (const sgn of [1, -1]) {
-      const a = Math.PI + sgn * (V.gate + .13);
-      gateT.push([Math.sin(a) * R, Math.cos(a) * R]);
-      vaultTower(S, Math.sin(a) * R, Math.cos(a) * R, 16, 2.9, a);
+    // three masts on the crown, which is all that is left of the spires -- they were the one
+    // part of the keep that read as alien rather than medieval
+    for (let i = 0; i < 3; i++) {
+      const a = i / 3 * Math.PI * 2 + .9, px = Math.sin(a) * 5.4, pz = Math.cos(a) * 5.4;
+      S.strut(G.cylT, M.hullPale, .5, px, B + 8.4, pz, px * 2.1, B + 20.5, pz * 2.1);
+      S.put(G.sph, M.hullLit, .55, .8, .55, px * 2.1, B + 20.8, pz * 2.1);
     }
 
-    // the dais: three shallow steps, and the splicer standing on the top of them
-    for (let i = 0; i < 3; i++) S.put(G.cyl, i % 2 ? M.vaultC : M.vaultB, 8.4 - i * 1.2, .5 + i * .5, 8.4 - i * 1.2, 0, (.5 + i * .5) / 2 + i * .5, 0);
-    // The splicer is two drums with four units of nothing between them, and the core hangs in
-    // the gap. Built as one shaft it swallowed its own light: the core is a unit and a half
-    // across and the column was one point seven.
-    const D = 1.5, CY = D + 7.6;
-    S.put(G.cylT, M.vaultB, 2.9, 2.2, 2.9, 0, D + 1.1, 0);
-    S.put(G.cyl, M.vaultA, 1.7, 3.4, 1.7, 0, D + 3.9, 0);
-    S.put(G.cyl, M.vaultB, 2.2, .5, 2.2, 0, D + 5.7, 0);
-    S.put(G.cyl, M.vaultB, 2.2, .5, 2.2, 0, D + 9.5, 0);
-    S.put(G.cyl, M.vaultA, 1.7, 2.4, 1.7, 0, D + 10.9, 0);
-    for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2;   // six rods carry the top drum over the gap
-      S.put(G.box, M.vaultC, .55, 4.0, .55, Math.sin(a) * 2.05, CY, Math.cos(a) * 2.05, 0, a, 0);
-      S.put(G.box, M.vaultLit, .2, 3.4, .2, Math.sin(a) * 1.72, CY, Math.cos(a) * 1.72, 0, a, 0); }
-    S.put(G.cyl, M.vaultB, 3.1, .7, 3.1, 0, D + 12.4, 0);
-    S.put(G.cone, M.vaultC, 2.5, 2.6, 2.5, 0, D + 14.0, 0);
+    // ---- the lift, and what stands at the bottom of it ----
+    // The shaft is the centrepiece: a column of light from the belly down to the dais, which
+    // is how you would get up into the hull the day the inside of it exists.
+    for (let i = 0; i < 3; i++) S.put(G.cyl, i % 2 ? M.hullMid : M.hullDark, 6.4 - i * 1.2, .5 + i * .5, 6.4 - i * 1.2, 0, (.5 + i * .5) / 2 + i * .5, 0);
+    const D = 1.5, CY = D + 3.4;
+    S.put(G.cyl, M.hullDark, 3.0, .5, 3.0, 0, D + .25, 0);
+    S.put(G.cyl, M.hullGlass, 2.4, B - D - .6, 2.4, 0, (D + B - .6) / 2, 0);
+    for (let i = 0; i < 4; i++) { const a = i / 4 * Math.PI * 2 + .4;   // the rails it runs on
+      S.strut(G.cyl, M.hullMid, .22, Math.sin(a) * 2.45, D + .3, Math.cos(a) * 2.45, Math.sin(a) * 2.45, B - .4, Math.cos(a) * 2.45); }
+    S.put(G.cyl, M.hullDark, 3.2, .6, 3.2, 0, B - .3, 0);
 
-    // six tanks round the inside of the wall, and two consoles facing the dais
+    // six tanks in a ring under the hull, and two consoles facing the lift
     this.tankAt = [];
     for (let i = 0; i < V.tanks; i++) {
       const a = i / V.tanks * Math.PI * 2 + .5;
-      const px = Math.sin(a) * 15.4, pz = Math.cos(a) * 15.4;
-      vaultTank(S, px, pz, a);
+      const px = Math.sin(a) * 11.6, pz = Math.cos(a) * 11.6;
+      landerTank(S, px, pz, a);
       this.tankAt.push([px, 3.7, pz]);
     }
     for (const sgn of [1, -1]) {
-      S.put(G.box, M.vaultB, 3.6, 3.5, 1.7, sgn * 9.4, -.25, 3.6);
-      S.put(G.box, M.vaultLit, 3.1, .12, 1.6, sgn * 9.4, 1.62, 3.55, -.5, 0, 0);
-      S.put(G.box, M.vaultC, .5, 1.4, .5, sgn * 9.4, 2.4, 4.3);
+      S.put(G.box, M.hullDark, 3.6, 3.5, 1.7, sgn * 7.4, -.25, 3.4);
+      S.put(G.box, M.hullLit, 3.1, .12, 1.6, sgn * 7.4, 1.62, 3.35, -.5, 0, 0);
+      S.put(G.box, M.hullMid, .5, 1.4, .5, sgn * 7.4, 2.4, 4.1);
     }
 
     this.shell = S.done();
 
-    // ---- what stops him, and what the camera is allowed through ----
+    // ---- what stops him ----
+    // `seeThru` on all of it: none of this is scenery standing between the lens and his
+    // chest, and pulling the boom in every time he walked past a leg would be miserable.
     const mark = (px, pz, r, top) => { const w = S.world(px, pz); const o = obAdd(w.x, w.z, r, null, top); o.seeThru = 1; return o; };
     this.obs = [];
-    for (let i = 0; i < 40; i++) {
-      const a = (i + .5) / 40 * Math.PI * 2;
-      if (inGate(a)) continue;
-      this.obs.push(mark(Math.sin(a) * R, Math.cos(a) * R, 2.3, S.base + V.wallH));
+    for (const f of feet) {
+      this.obs.push(mark(f.fx, f.fz, 2.6, S.base + 1.4));        // the pad: a low thing you step over
+      this.obs.push(mark(f.kx, f.kz, 1.3, Infinity));            // the knee: a post you go round
     }
-    for (const [a, , r0] of spires) this.obs.push(mark(Math.sin(a) * R, Math.cos(a) * R, r0 * 1.3, Infinity));
-    for (const [px, pz] of gateT) this.obs.push(mark(px, pz, 3.4, Infinity));
-    // The dais, as three steps rather than one block: each is half a unit over the last, and
-    // half a unit is well inside what he can walk up.
-    for (let i = 0; i < 3; i++) this.obs.push(mark(0, 0, 8.4 - i * 1.2, S.base + 1 + i * .5));
-    this.obs.push(mark(0, 0, 2.6, Infinity));                        // the splicer's column
+    for (let i = 0; i < 3; i++) this.obs.push(mark(0, 0, 6.4 - i * 1.2, S.base + 1 + i * .5));
+    this.obs.push(mark(0, 0, 2.5, Infinity));                    // the lift shaft
     for (const [px, , pz] of this.tankAt) this.obs.push(mark(px, pz, 1.8, Infinity));
 
     // ---- the parts that move ----
@@ -5714,15 +5714,18 @@ class Vault {
       .multiply(new THREE.Quaternion().setFromAxisAngle(_plY, yaw));
     this.g = g; scene.add(g);
     this.coreY = CY;
-    this.core = mesh(G.sph, M.vaultCore, 1.2, 1.2, 1.2, 0, CY, 0); g.add(this.core);
+    // the column of light in the shaft, and the load riding up it
+    this.beam = mesh(G.cyl, M.hullBeam, 2.2, B - D - 1.0, 2.2, 0, (D + B - .6) / 2, 0); g.add(this.beam);
+    this.core = mesh(G.sph, M.hullCore, 1.2, 1.2, 1.2, 0, CY, 0); g.add(this.core);
     this.coreGl = glow('#c48cff', 7, .8); this.coreGl.position.set(0, CY, 0); g.add(this.coreGl);
     this.light = new THREE.PointLight(0xa85cff, 2.2, 54, 2); this.light.position.set(0, CY + .5, 0); g.add(this.light);
-    // Three rings, each turning about its own axis at its own rate. G.torus has a major
-    // radius of one, so the scale IS the ring's radius.
+    this.belly = new THREE.PointLight(0x7fd8ff, 1.6, 46, 2); this.belly.position.set(0, B - 2.2, 0); g.add(this.belly);
+    // Three rings about the core, each turning on its own axis. G.ring has a thin tube, so
+    // the scale is the hoop's radius and it stays a hoop however big it gets.
     this.rings = [];
     for (let i = 0; i < 3; i++) {
       const rr = 2.3 + i * .6;
-      const r = mesh(G.ring, M.vaultLit, rr, rr, rr, 0, CY, 0);
+      const r = mesh(G.ring, M.hullLit, rr, rr, rr, 0, CY, 0);
       r.rotation.set(i * .7, 0, i * .5);
       r.userData.sp = (i % 2 ? 1 : -1) * (.35 + i * .18);
       g.add(r); this.rings.push(r);
@@ -5730,14 +5733,18 @@ class Vault {
     this.blobs = [];
     for (let i = 0; i < this.tankAt.length; i++) {
       const [px, py, pz] = this.tankAt[i];
-      const b = mesh(pick(G.blob), M.vaultCore, .68, .82, .68, px, py, pz);
+      const b = mesh(pick(G.blob), M.hullCore, .68, .82, .68, px, py, pz);
       b.userData.p = i / this.tankAt.length * 6.3; g.add(b); this.blobs.push(b);
     }
-    // What the camera does about this building. The court is a room with no roof, so the
-    // drone flies inside it and above the wall rather than being shoved through masonry.
-    world.pits.push({ x, z, r: R - 3, top: S.base + V.wallH + 2 });
-    world.vault = this;
-    logMsg('A vault stands in the ' + biomeAt(x, z).name + ', lit and empty.');
+    // the landing lights, which is what tells you at three hundred units that it is a machine
+    this.lamps = [];
+    for (let i = 0; i < feet.length; i++) {
+      const f = feet[i], gl = glow('#9fe8ff', 2.6, .8);
+      gl.position.set(f.fx, 1.9, f.fz); gl.userData.p = i / feet.length * 6.3;
+      g.add(gl); this.lamps.push(gl);
+    }
+    world.lander = this;
+    logMsg('A lander stands on its legs in the ' + biomeAt(x, z).name + ', lit and empty.');
   }
   update(dt) {
     const t = world.clock;
@@ -5746,18 +5753,27 @@ class Vault {
     this.core.scale.setScalar(1.2 * pulse); this.core.rotation.y += dt * .3;
     this.coreGl.scale.setScalar((6 + world.night * 5) * pulse);
     this.light.intensity = (1.4 + world.night * 2.2) * pulse;
+    this.belly.intensity = 1.0 + world.night * 2.6;
+    // the lift's column breathes and drifts upward; the texture is a scroll, not a motion
+    this.beam.material.opacity = (.10 + world.night * .12) * (.75 + Math.sin(t * .9) * .25);
+    this.beam.rotation.y += dt * .25;
+    for (let i = 0; i < this.lamps.length; i++) {
+      const L = this.lamps[i], ph = L.userData.p;
+      const k = Math.max(0, Math.sin(t * 1.4 + ph));
+      L.scale.setScalar((1.6 + world.night * 1.8) * (.35 + k * .9));
+      L.material.opacity = .35 + k * .5;
+    }
     for (let i = 0; i < this.blobs.length; i++) {
       const b = this.blobs[i], ph = b.userData.p;
       b.position.y = this.tankAt[i][1] + Math.sin(t * .7 + ph) * .55;
       b.rotation.y += dt * .5; b.rotation.x = Math.sin(t * .4 + ph) * .3;
       b.scale.setScalar(.72 + Math.sin(t * 1.3 + ph) * .06);
     }
-    // Standing on the dais, the splicer offers itself. It has nothing to work with yet and
+    // Standing at the lift, the splicer offers itself. It has nothing to work with yet and
     // says so -- the specimen half of this is not built, and a button that pretended
-    // otherwise would be worse than no button.
-    // The offer takes the right stick's tap away from the jump while it stands, so it is kept
-    // tight to the splicer rather than covering the whole court.
-    if (!INTRO.on && !player.aboard && !player.free && Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) < VAULT.reach)
+    // otherwise would be worse than no button. The offer takes the right stick's tap away
+    // from the jump while it stands, so it is kept tight to the dais.
+    if (!INTRO.on && !player.aboard && !player.free && Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) < LANDER.reach)
       offerAct({ icon: 'splice', label: 'SPLICE', run: () => {
         world.effects.push(new Burst(this.pos.x, this.pos.y + this.coreY, this.pos.z, '#c48cff', 13, 1.1));
         logMsg('The splicer turns over and finds the tanks empty. Nothing has been brought back yet.');
@@ -5765,7 +5781,6 @@ class Vault {
   }
   dispose() {
     for (const o of this.obs) obRemove(o);
-    const i = world.pits.findIndex(p => p.x === this.pos.x && p.z === this.pos.z); if (i >= 0) world.pits.splice(i, 1);
     scene.remove(this.g); scene.remove(this.shell);
   }
 }
@@ -5778,21 +5793,22 @@ function buildSites() {
   if (ring) out.push(buildStones(ring.x, ring.z));
   const huddle = siteSpot('huddle', ['scrub', 'pasture'], 2.6, 12, .2, [16, 13, 10, 8, 6], out);
   if (huddle) out.push(buildHuddle(huddle.x, huddle.z, rnd(Math.PI * 2)));
-  // The vault wants more room and flatter ground than anything else here -- forty-four units
-  // across -- and it is the one place you come back to, so unlike every other site it is not
-  // allowed to land on the sister isle across the water. It gets first refusal on the map.
+  // The lander wants more room and flatter ground than anything else here -- forty-two units
+  // across on six legs -- and it is the one place you come back to, so unlike every other
+  // site it is not allowed to come down on the sister isle across the water. It gets first
+  // refusal on the map for both reasons.
   const iso = { x: CENTERS[1][0] * W, z: CENTERS[1][1] * W };
   const reachable = q => q && Math.hypot(q.x - iso.x, q.z - iso.z) > W * .34;
-  let vault = null;
+  let pad = null;
   for (const c of [32, 26, 22, 18]) {
     for (const nm of ['pasture', 'scrub', 'highland'])
-      for (let i = 0; i < 8 && !vault; i++) { const q = randomBiome(nm, 3, 26, .12, 500, c); if (reachable(q)) vault = q; }
-    if (vault) break;
+      for (let i = 0; i < 8 && !pad; i++) { const q = randomBiome(nm, 3, 26, .12, 500, c); if (reachable(q)) pad = q; }
+    if (pad) break;
   }
-  if (!vault) for (const c of [26, 20, 16])
-    for (let i = 0; i < 60 && !vault; i++) { const q = randomLand(3, 26, .12, 400, c); if (reachable(q)) vault = q; }
-  if (vault) { world.structures.push(new Vault(vault.x, vault.z, rnd(Math.PI * 2))); out.push({ x: vault.x, z: vault.z }); }
-  else console.warn('[site] nowhere to put the vault');
+  if (!pad) for (const c of [26, 20, 16])
+    for (let i = 0; i < 60 && !pad; i++) { const q = randomLand(3, 26, .12, 400, c); if (reachable(q)) pad = q; }
+  if (pad) { world.structures.push(new Lander(pad.x, pad.z, rnd(Math.PI * 2))); out.push({ x: pad.x, z: pad.z }); }
+  else console.warn('[site] nowhere to set the lander down');
   const ruin = siteSpot('ruin', ['jungle', 'wetland'], 3, 14, .3, [13, 10, 8, 6, 4], out);
   if (ruin) {
     out.push(buildRuin(ruin.x, ruin.z, rnd(Math.PI * 2)));
@@ -6247,9 +6263,9 @@ function camInside(x, y, z) {
   let hit = false;
   obNear(x, z, 3, o => {
     // A building you walk about inside is the one thing this test must not react to. The
-    // vault's walls stop the wanderer and nothing else: pulling the boom in every time he
-    // stood near one would make the whole interior unusable, and there is no need -- the
-    // primitives are single-sided, so a lens that ends up past a wall simply sees the room.
+    // lander's legs and tanks stop the wanderer and nothing else: pulling the boom in every
+    // time he walked past a landing leg would be miserable, and there is no need -- the
+    // primitives are single-sided, so a lens that ends up past one simply sees through it.
     if (hit || o.seeThru || y > o.top) return;
     const r = obRad(o) + 1.1, dx = x - o.x, dz = z - o.z;
     if (dx * dx + dz * dz < r * r) hit = true;
@@ -6258,10 +6274,11 @@ function camInside(x, y, z) {
 }
 // The ground is boomLift's job now, and it answers in units rather than yes-or-no. What is
 // left for this is the thing a height field cannot see: the lens parked inside a solid.
-// A roofless room the camera has to work from above. The vault is open to the sky exactly so
-// that it can, and this is the half that puts it there -- without it a twenty-unit boom with
-// the wanderer standing in the middle of the court lands the lens flat against the outside of
-// the curtain wall, and the whole frame is masonry with a porthole cut in it.
+// A roofless room the camera has to work from above: while the target is inside one, the boom
+// is cut where it would leave the room and the lens is held over the parapet. Nothing uses
+// this since the walled keep became a ship on legs -- a hull held clear of the ground is open
+// on every side and needs no help -- but it is the general answer for any walled place, so it
+// stays. `world.pits` is simply empty.
 function pitAt(x, z) {
   for (const p of world.pits) { const dx = x - p.x, dz = z - p.z; if (dx * dx + dz * dz < p.r * p.r) return p; }
   return null;
@@ -6609,21 +6626,39 @@ function loadRig(g) {
 // to the chart before anything is done with it).
 const WEAPON = {
   url: 'models/alien_blaster.glb',
-  bone: 'weapon',                  // the joint just off the right hand; the model drops on at identity
+  bone: 'weapon',                  // the joint just off the right hand
   tip: 'weapon_direction',         // its child, one bone-length down the barrel: the muzzle
+  // It does NOT drop on at identity, however it was authored -- the exporter saw to that.
+  // Measured out of the file rather than guessed at:
+  //   * the node carries a 0.01 scale, so the model arrives a hundredth of the size the
+  //     skeleton is in. At identity the blaster came out fifteen millimetres long, which is
+  //     why it looked like it had never loaded.
+  //   * the node also carries a +90 degree turn about X, and the mesh's long axis is X. So in
+  //     the file's own root space the barrel runs along X while the joint's barrel is +Z.
+  //   * which end is the muzzle is not a guess either: slicing the mesh along X, the -X end
+  //     is thin and sparse (18 units tall, 591 vertices) and the +X end is tall, narrow and
+  //     dense with its centre dropping away -- a grip. Muzzle is -X.
+  // `fit` then sizes it so the barrel ends where weapon_direction is, whatever units the file
+  // turns out to be in next time, and `roll` is the one thing a measurement cannot settle.
+  fwd: [-1, 0, 0],                 // the barrel, in the model's own root space
+  up: [0, 0, 1],                   // and its top (mesh +Y, turned into root +Z by the node)
+  roll: 0,                         // a turn about the barrel, if it ends up on its side
+  fit: 1.06,                       // barrel length as a fraction of the joint-to-muzzle distance
+  drop: [0, 0, 0],                 // and a nudge, in joint units, if the grip sits proud
   drawRate: 3.6,                   // how fast `armed` crosses 0..1
   aimAt: .32,                      // stick magnitude that counts as an aim rather than a nudge
   cool: .5,                        // seconds before he can shoot again
   hold: .34,                       // how long the shot clip owns the arms
   camEase: 2.6,                    // how briskly the camera swings in behind the aim
-  bolt: { speed: 74, life: 2.2, rad: 2.2, blast: 14, size: 3.6 },
+  out: 1.6, high: .62,             // where the bolt actually leaves him: clear of the body, chest high
+  bolt: { speed: 74, life: 2.2, rad: 2.2, blast: 14, size: 3.6, grace: 2.4 },
   // The assist. Whatever is in the cone gets a reticle and a gentle pull — on the shot's
   // heading, so a near miss becomes a hit, and through that on the camera, so the thing you
   // are locked onto drifts toward the middle of the frame. Neither is a snap: aim at empty
   // ground and the bolt goes exactly where the stick pointed.
   lock: { cone: .5, range: 95, pull: 3.2, grab: .85, keep: .8 },
 };
-const weap = { model: null, bone: null, tip: null, ready: false };
+const weap = { model: null, bone: null, tip: null, ready: false, lastMuzzle: new THREE.Vector3() };
 Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0 });
 
 function attachWeapon(r) {
@@ -6640,16 +6675,33 @@ function attachWeapon(r) {
     console.warn('[weapon] ' + (weap.bone ? 'no rifle clips on the rig' : 'no `weapon` joint on the rig') + ' — no blaster.');
     return;
   }
+  // How far down the barrel the muzzle marker sits, in the joint's own units. Read off the
+  // rig rather than written down, so a re-export that changes the scale changes this too.
+  const tipD = weap.tip ? weap.tip.position.length() : 0;
   loadModel(WEAPON.url, e => {
-    // Both joints carry unit scale, and the blaster is authored in the same units as the
-    // body, so parenting at identity is the whole alignment. Nothing to line up by hand.
+    const W = WEAPON;
     const inst = markBody(cloneModel(e.root));
+    // Carry the model's own axes onto the joint's: its barrel onto +Z, where weapon_direction
+    // sits, and its top onto +Y. Then size it so the barrel ends at the marker.
+    const f = _wv.fromArray(W.fwd).normalize().clone();
+    const u = new THREE.Vector3().fromArray(W.up).normalize();
+    const r = new THREE.Vector3().crossVectors(u, f).normalize();
+    inst.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(r, u, f)).invert();
+    if (W.roll) inst.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(_wZ, W.roll));
+    const box = e.box, reach = Math.max(
+      Math.abs(box.min.x * f.x + box.min.y * f.y + box.min.z * f.z),
+      Math.abs(box.max.x * f.x + box.max.y * f.y + box.max.z * f.z));
+    const k = tipD && reach > 1e-6 ? tipD * W.fit / reach : 1;
+    inst.scale.setScalar(k);
+    inst.position.fromArray(W.drop);
     envUse(inst, .55);
     inst.traverse(m => { if (m.isMesh) m.castShadow = true; });
     weap.bone.add(inst);
     weap.model = inst; inst.visible = false;
     weap.ready = true;
     armB.hidden = false;
+    console.info('[weapon] muzzle marker ' + tipD.toFixed(1) + ' joint units out; barrel reaches '
+      + reach.toFixed(3) + ' in the file, so the blaster is scaled ' + k.toFixed(1) + '\u00d7.');
   });
 }
 
@@ -6694,6 +6746,24 @@ function fireBolt() {
   if (p.cool > 0) return;
   p.cool = WEAPON.cool; p.shootT = WEAPON.hold;
   muzzleChart(_wmz);
+  // Three things go wrong if the bolt simply starts at the bone, and all three read as "the
+  // shot comes out of his side":
+  //   * the gun is on his body and the body eases onto the aim over about a tenth of a
+  //     second, so on a flick-and-release the barrel still points where he was facing while
+  //     the bolt already flies where the stick pointed. Swing the muzzle onto the shot line.
+  //   * rifle_idle holds the blaster low and out -- measured at 1.4 to the right and 0.79 up
+  //     on a body 2.8 tall, which is hip height. A bolt that starts there is inside whatever
+  //     he is standing next to and bursts on it immediately. Lift it to chest height and push
+  //     it clear of him.
+  //   * and even then the first stride of its flight is through his own shoulder, so `grace`
+  //     below buys it a couple of units before anything can stop it.
+  {
+    const reach = Math.max(WEAPON.out, Math.hypot(_wmz.x - p.pos.x, _wmz.z - p.pos.z));
+    _wmz.x = p.pos.x + Math.sin(p.aimH) * reach;
+    _wmz.z = p.pos.z + Math.cos(p.aimH) * reach;
+    _wmz.y = Math.max(_wmz.y, p.pos.y + RIG.height * WEAPON.high);
+  }
+  weap.lastMuzzle.copy(_wmz);
   // Lift the shot toward whatever is locked, so an animal standing on a rise is not fired
   // under. With nothing locked the bolt travels flat.
   let dy = 0;
@@ -6784,6 +6854,9 @@ class Bolt {
   strike() {
     const B = WEAPON.bolt;
     if (Math.abs(this.x) > W || Math.abs(this.z) > W) { this.alive = false; return true; }
+    // The first couple of units are through his own shoulder and whatever he is standing
+    // beside. Nothing stops the bolt until it is clear of him.
+    if (this.t * B.speed < B.grace) return false;
     for (const o of world.creatures) {
       if (!o.alive) continue;
       const dx = o.pos.x - this.x, dy = o.pos.y + 1 - this.y, dz = o.pos.z - this.z;
@@ -7119,7 +7192,8 @@ function updatePlayer(dt) {
   const g = player.g;
   g.position.copy(player.pos);
   // heading is where the stick points; faceH is where the body has got round to yet
-  { let d = player.heading - player.faceH; d = Math.atan2(Math.sin(d), Math.cos(d)); player.faceH += d * Math.min(1, dt * 9); }
+  { let d = player.heading - player.faceH; d = Math.atan2(Math.sin(d), Math.cos(d));
+    player.faceH += d * Math.min(1, dt * (player.aiming ? 17 : 9)); }
   if (!player.fly && player.swim < .5) { alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.faceH); }
   else if (!player.fly) {   // in the water: lie along the wave, a little more so at speed
     const n = waveNormal(player.pos.x, player.pos.z);
@@ -7524,7 +7598,7 @@ function mapMarks() {
   add(world.camp, 'camp', 'camp');
   add(world.cave, 'cave', 'cave');
   add(world.isle, 'isle', 'floating isle');
-  add(world.vault, 'vault', 'the vault');
+  add(world.lander, 'lander', 'the lander');
   for (const st of world.structures) if (st.alive && st instanceof Cairn) out.push({ x: st.pos.x, z: st.pos.z, k: st.beacon ? 'beacon' : 'cairn', label: st.beacon ? 'beacon' : null });
   if (world.ship) out.push({ x: world.ship.pos.x, z: world.ship.pos.z, k: 'ship', label: 'ship', flying: world.ship.state !== 'landed', heading: world.ship.heading });
   // zoomed in, the map starts naming the things you would actually walk between
@@ -7539,7 +7613,7 @@ function mapMarks() {
 const MAP_KEY = {
   you: ['#ffe9b0', 'you'], way: ['#7fd8ff', 'waypoint'], ship: ['#ff8a3c', 'ship'], tree: ['#8fe6a8', 'Elderwillow'],
   camp: ['#ffb45a', 'camp'], cave: ['#9fd6ff', 'cave'], isle: ['#c9a6ff', 'floating isle'],
-  beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'], vault: ['#c48cff', 'the vault'],
+  beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'], lander: ['#c48cff', 'the lander'],
 };
 function drawMap() { drawMapTo(document.getElementById('mapc'), false); }
 // The minimap is the same picture at a tenth the size, so it is the same code with the
@@ -7603,7 +7677,7 @@ function drawMapTo(cv, mini) {
       g.globalAlpha = 1 - pu; g.beginPath(); g.arc(a, b, r0 * (1 + pu * .9), 0, 6.283); g.stroke(); g.globalAlpha = 1;
       g.beginPath(); g.arc(a, b, 1.5 * S * K, 0, 6.283); g.fillStyle = hex; g.fill(); g.shadowBlur = 0;
     }
-    else [a, b] = dot(m.x, m.z, hex, m.k === 'cairn' ? 2.4 : m.k === 'tree' || m.k === 'vault' ? 4.5 : 3.4, m.k === 'beacon' || m.k === 'isle' || m.k === 'vault');
+    else [a, b] = dot(m.x, m.z, hex, m.k === 'cairn' ? 2.4 : m.k === 'tree' || m.k === 'lander' ? 4.5 : 3.4, m.k === 'beacon' || m.k === 'isle' || m.k === 'lander');
     if (m.label && !mini) { g.fillStyle = 'rgba(246,238,222,.82)'; g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 4 * S;
       g.fillText(m.label, a, b + 7 * S); g.shadowBlur = 0; }
   }

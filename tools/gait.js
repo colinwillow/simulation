@@ -194,12 +194,12 @@ standTest('inland', () => { for (let i = 0; i < 60000; i++) { const x = (Math.ra
 standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Math.random() - .5) * 320, z = (Math.random() - .5) * 320;
   if (H(x, z) < global.__SEA - 6) return { x, z }; } return null; });
 
-// ---------- 5b. the vault ----------
-// It is the only building you go inside, so it gets checked like one: did it get built, is
-// the deck reachable from the ground outside, and does the gateway actually let you in.
+// ---------- 5b. the lander ----------
+// It is the one place you come back to, so it gets checked like one: did it get set down, can
+// he get in under the hull from every side, and is the shot from under there a shot of him.
 (() => {
-  const V = W.vault;
-  if (!V) return console.log('the vault                  not built');
+  const V = W.lander;
+  if (!V) return console.log('the lander                 not set down');
   // `C`, `CS` and `lens()` belong to the camera section below this one, and a const declared
   // below is not a const you can read from above.
   const C = global.__cam, CS = global.__camS;
@@ -223,8 +223,8 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
     const d = Math.hypot(P.pos.x - V.pos.x, P.pos.z - V.pos.z);
     if (d < best.got) best = { got: d, a: Math.round(a * 57.3), onDeck: P.pos.y - V.pos.y };
   }
-  // And the shot from inside it. The court is roofless so the camera can work from above the
-  // wall; if the lens ends up outside the wall radius or below its top, the frame is masonry.
+  // And the shot from under the hull. There are no walls now, so the only thing to check is
+  // that the lens does not end up buried in the belly: it should stay under it, or outside.
   P.pos.set(V.pos.x, gY(V.pos.x, V.pos.z) + 2, V.pos.z); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y;
   C.tgt.set(V.pos.x, P.pos.y + 3.4, V.pos.z); C.r = 20;
   let worstOut = 0, worstLow = 0;
@@ -233,15 +233,16 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
     hold(1.6, () => { ST.L.x = ST.L.y = 0; P.pos.set(V.pos.x, gY(V.pos.x, V.pos.z) + 2, V.pos.z); P.grounded = 1; });
     const L = lens(), out = Math.hypot(L.x - V.pos.x, L.z - V.pos.z);
     worstOut = Math.max(worstOut, out);
-    worstLow = Math.max(worstLow, (V.pos.y + 8.6) - L.y);
+    // buried = the lens is under the hull's footprint AND above its belly
+    if (out < 17) worstLow = Math.max(worstLow, L.y - (V.pos.y + 12.6));
   }
-  console.log('the vault                 ', JSON.stringify({ standingInTheMiddle: 'boom 20, all round',
-    wallIsAt: 22, lensNeverGotFurtherOutThan: +worstOut.toFixed(1),
-    lensLowestBelowTheWallTop: +Math.max(0, worstLow).toFixed(1) }));
+  console.log('the lander                ', JSON.stringify({ standingUnderIt: 'boom 20, all round',
+    hullRimIsAt: 17, bellyIsAt: 12.6, lensReachedOutTo: +worstOut.toFixed(1),
+    deepestIntoTheBelly: +Math.max(0, worstLow).toFixed(1) }));
 
-  console.log('the vault                 ', JSON.stringify({ at: [V.pos.x | 0, V.pos.z | 0],
+  console.log('the lander                ', JSON.stringify({ at: [V.pos.x | 0, V.pos.z | 0],
     colliders: V.obs.length,
-    walkedInToWithin: +best.got.toFixed(1) + ' of the middle',
+    walkedInToWithin: +best.got.toFixed(1) + ' of the lift',
     fromBearing: best.a + ' deg', endedThisFarAboveTheSiteBase: +best.onDeck.toFixed(2) }));
 })();
 
