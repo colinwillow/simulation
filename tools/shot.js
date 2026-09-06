@@ -489,14 +489,21 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       p.pos.set(x, g.groundY(x, z) + 1, z); p.vx = p.vz = 0; p.faceH = p.heading = a;
       g.cam.tgt.set(x, p.pos.y + 3.4, z); g.cam.az = a + Math.PI; g.cam.r = 8;
       if (p.armWant) g.toggleArm();
+      window.__target = c;                        // keep a handle so the probe can hold it still
       return { who: c.constructor.name, size: c.rad, poses: Object.keys(p.rigH ? p.rigH.acts : {}).filter(k => /pickUp|hold/.test(k)) };
     });
     if (pre.none) console.log('carry: no land animal to try it on');
     else {
-      await step(1.2);
+      // Freeze the target where it stands every frame until it is picked up, so it cannot
+      // wander out of reach in the second the probe waits before it presses.
+      await page.evaluate(() => { const g = window.__g, c = window.__target;
+        window.__hold = { x: c.pos.x, z: c.pos.z };
+        setInterval(() => { const p = g.player; if (!p.carry && !p.liftT && c.alive) {
+          c.pos.x = window.__hold.x; c.pos.z = window.__hold.z; c.vx = c.vz = 0; } }, 8); });
+      await step(1.0);
       const off = await page.evaluate(() => ({ label: document.querySelector('#stkR .lbl').textContent,
         ring: document.getElementById('stkR').classList.contains('hot') }));
-      await page.evaluate(() => { const a = window.__g.isle ? null : null; const A = window.__g; if (A.ACT && A.ACT.now) A.ACT.now.run(); });
+      await page.evaluate(() => { const A = window.__g; if (A.ACT && A.ACT.now) A.ACT.now.run(); });
       await step(1.6);
       const held = await page.evaluate(() => {
         const g = window.__g, p = g.player, c = p.carry;
@@ -506,15 +513,15 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
         return { holding: true, who: c.constructor.name,
           ahead: +(dx * s2 + dz * co).toFixed(2), toTheSide: +(-dx * co + dz * s2).toFixed(2),
           up: +(c.pos.y - p.pos.y).toFixed(2), ofAHeightOf: g.RIG.height,
-          holdWeight: +(p.rigH ? p.rigH.w.holdUp || 0 : 0).toFixed(2),
+          holdWeight: +(p.rigH ? p.rigH.w.holdUpper || 0 : 0).toFixed(2),
           label: document.querySelector('#stkR .lbl').textContent };
       });
       // and walk with it, which is the whole point of the upper-body layer
-      await page.evaluate(() => { window.__g.stick.L.y = -1; });
-      await step(1.6);
+      await page.evaluate(() => { const g = window.__g; g.stick.L.y = -1; g.cam.r = 9; });
+      await step(2.4);
       const walking = await page.evaluate(() => {
         const g = window.__g, p = g.player, r = p.rigH, out = {};
-        for (const k of ['walk', 'run', 'idle', 'holdUp']) if (r && r.w[k] > .02) out[k] = +r.w[k].toFixed(2);
+        for (const k of ['walk', 'run', 'idle', 'walkLegs', 'runLegs', 'idleLegs', 'holdUpper']) if (r && r.w[k] > .02) out[k] = +r.w[k].toFixed(2);
         return { w: out, speed: +Math.hypot(p.vx, p.vz).toFixed(1), stillHolding: !!p.carry };
       });
       await page.evaluate(() => { const g = window.__g; g.stick.L.y = 0; if (g.ACT && g.ACT.now) g.ACT.now.run(); });

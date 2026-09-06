@@ -1600,6 +1600,16 @@ at half weight over a run gives half a run and half a hold in the arms — a shr
 gives the run with the hold laid on top, which is the thing, and it means he walks, runs,
 jumps and rolls with an animal in his arms off clips that already exist.
 
+**Carrying overrides the upper body; it does not add to it.** The first version laid the hold
+on additively over the locomotion, and while running that put the run's arm-swing *and* the
+cradle delta on the same bones — so the arms flipped about and the spine twisted twice. The
+fix is to stop the gait touching anything from the spine up while he carries: `idleLegs` /
+`walkLegs` / `runLegs` are clones of the ground gaits with every spine-up track dropped (Hips
+stays — it carries the bounce and travel), and `holdUpper` is the hold pose with only the
+spine-up tracks, played normally at full weight. Nothing fights over a track, so nothing
+averages into a shrug and nothing compounds into a flip. The split is proportional to the
+carry amount, so a pick-up eases in.
+
 The socket is the **weapon joint** — the same one the blaster hangs on, and they are never
 both in use; `weapon_direction` gives the up vector. Like everything else that touches a bone,
 it is converted into chart space before it is used (`jointChart`), because a bone's world

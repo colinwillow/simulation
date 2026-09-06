@@ -855,7 +855,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b73';
+const BUILD = 'b74';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3415,20 +3415,28 @@ function attachRig(parent, cfg, done) {
     };
     // Retreating: the forward walk, cloned so it can have an action of its own, run backwards.
     if (clips.rifleWalk) { clips.rifleBack = clips.rifleWalk.clone(); clips.rifleBack.name = clips.rifleWalk.name + '__back'; }
-    // Carrying, from the spine up. Two steps and both matter. Drop every track below the
-    // spine, so the clip has nothing to say about the legs; then make what is left ADDITIVE
-    // against the idle pose, so what it contributes is "holding minus standing" rather than
-    // an absolute pose. Three blends actions by weighted average, so an absolute upper-body
-    // clip at half weight over a run gives you half a run and half a hold in the arms -- a
-    // shrug. Additive gives you the run with the hold laid on top, which is the thing.
-    if (clips.hold && THREE.AnimationUtils && THREE.AnimationUtils.makeClipAdditive) {
-      const up = clips.hold.clone();
-      up.name = clips.hold.name + '__upper';
+    // Carrying is an OVERRIDE, not a blend. "From the spine up" is the hold pose; from the
+    // spine down is whichever gait he is in. Additive was the first attempt and it is wrong
+    // here: it lays the hold on TOP of the run, so the arms get the run's swing plus the
+    // cradle delta and flip about, and the spine gets twisted twice. The fix is to stop the
+    // gait touching the upper body at all while he carries -- leg-only clones of the ground
+    // gaits -- and let a plain upper-only hold own the arms and spine. Nothing fights over a
+    // track, so nothing averages into a shrug and nothing compounds into a flip.
+    // holdUpper: the hold pose, spine-up tracks only, played normally at full weight.
+    if (clips.hold) {
+      const up = clips.hold.clone(); up.name = clips.hold.name + '__upper';
       up.tracks = up.tracks.filter(t => CARRY.upper.test(t.name));
-      if (up.tracks.length) {
-        try { THREE.AnimationUtils.makeClipAdditive(up, 0, clips.idle || clips.hold, 30); clips.holdUp = up; }
-        catch (err) { console.warn('[rig] could not make the carry pose additive: ' + err.message); }
-      } else console.warn('[rig] the carry pose has no tracks above the spine — check CARRY.upper');
+      if (up.tracks.length) clips.holdUpper = up;
+      else console.warn('[rig] the carry pose has no spine-up tracks — check CARRY.upper');
+    }
+    // idleLegs / walkLegs / runLegs: the same gait with every spine-up track dropped, so it
+    // moves the hips and legs and says nothing about the arms. Hips stays (it carries the
+    // whole body's bounce and travel), because it is not a spine-up bone.
+    if (clips.holdUpper) for (const g of ['idle', 'walk', 'run']) {
+      if (!clips[g]) continue;
+      const legs = clips[g].clone(); legs.name = clips[g].name + '__legs';
+      legs.tracks = legs.tracks.filter(t => !CARRY.upper.test(t.name));
+      if (legs.tracks.length) clips[g + 'Legs'] = legs;
     }
     for (const k of ['walk', 'run', 'rifleWalk', 'rifleRun']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
     // each clip's own floor, relative to the pose the rig was normalised on, in model units
@@ -3444,12 +3452,10 @@ function attachRig(parent, cfg, done) {
     const acts = {};
     for (const k in clips) {
       if (!clips[k]) continue;
-      const a = k === 'holdUp' && THREE.AdditiveAnimationBlendMode !== undefined
-        ? mixer.clipAction(clips[k], inst, THREE.AdditiveAnimationBlendMode)
-        : mixer.clipAction(clips[k]);
+      const a = mixer.clipAction(clips[k]);
       acts[k] = a;
       // A pose holds itself: one frame on repeat is a divide by its own zero length.
-      if (k === 'pickUp' || k === 'hold' || k === 'holdUp') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      if (k === 'pickUp' || k === 'hold' || k === 'holdUpper') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
       if (k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
       // The retreat runs its clip backwards, so it has to start at the end of it. From zero a
       // negative time scale spends its first cycle winding round to the far end.
@@ -3558,8 +3564,6 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // travel, and blending a walk into it just makes it look like a stumble. So does the stoop.
   want.roll = c.roll ? 1 : 0;
   want.pickUp = c.lift || 0;
-  // And the carry rides on top of everything: additive, upper body, so the legs are free.
-  want.holdUp = c.holding || 0;
   // water: tread <-> swim forward
   const sw = clamp(speed / 6, 0, 1);
   want.swimIdle = 1 - sw; want.swim = sw;
@@ -3577,10 +3581,21 @@ function stepRig(r, dt, speed, grounded, ctx) {
   want.jumpStart *= 1 - rollK; want.jumpAir *= 1 - rollK; want.jumpLand *= 1 - rollK;
   want.rifleShoot *= 1 - rollK;
   want.roll = c.roll ? 1 : 0; want.pickUp = c.lift || 0;   // neither is suppressed by the other
+  // Carrying: hand the arms and spine to the hold pose and the legs to a stripped gait, in
+  // proportion to how far into the carry he is, so a pick-up eases into it. Only the three
+  // ground gaits have leg clones; the rest (swim, jump, roll) carry nothing anyway.
+  const carry = a.holdUpper ? clamp(c.holding || 0, 0, 1) : 0;
+  want.holdUpper = carry;
+  if (carry > 0) for (const [base, legs] of [['idle', 'idleLegs'], ['walk', 'walkLegs'], ['run', 'runLegs']]) {
+    if (!a[legs]) continue;
+    const w = want[base] || 0; want[legs] = w * carry; want[base] = w * (1 - carry);
+  }
   if (a.walk) a.walk.timeScale = clamp(speed / ref, MODEL.rateMin, r.rateMax || MODEL.rateMax);
   // Every armed gait runs at the pace the unarmed walk was measured to need, including the
   // one that is the same clip played backwards.
   const armRate = a.walk ? a.walk.timeScale : 1;
+  if (a.walkLegs) a.walkLegs.timeScale = armRate;
+  if (a.runLegs && a.run) a.runLegs.timeScale = a.run.timeScale;
   if (a.rifleWalk) a.rifleWalk.timeScale = armRate;
   if (a.rifleBack) a.rifleBack.timeScale = -armRate;
   if (a.rifleLeft) a.rifleLeft.timeScale = armRate;
@@ -3595,7 +3610,7 @@ function stepRig(r, dt, speed, grounded, ctx) {
   for (const k in a) {
     const t = want[k] || 0, prev = r.w[k] || 0;
     if ((k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll' || k === 'pickUp') && t > .5 && prev <= .5) a[k].reset().play();
-    if (k === 'holdUp' && t > .01 && prev <= .01) a[k].reset().play();
+
     const nw = lerp(prev, t, Math.min(1, dt / .1));
     r.w[k] = nw; a[k].setEffectiveWeight(nw);
   }
