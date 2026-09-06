@@ -243,7 +243,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b61';
+const BUILD = 'b62';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -814,7 +814,7 @@ const M = {
   // All three carry a little emissive of their own. A dark stone at roughness .9 crushes to
   // black in any shade, and the vault is lit from inside by its own machine at night -- an
   // unlit rib next to a lit one read as a hole cut in the building.
-  vaultA: std(col('#bdb8cc'), { roughness: .84, emissive: col('#2e2c40'), emissiveIntensity: .5 }),
+  vaultA: std(col('#a09bb2'), { roughness: .84, emissive: col('#2e2c40'), emissiveIntensity: .5 }),
   vaultB: std(col('#575270'), { roughness: .88, emissive: col('#211f30'), emissiveIntensity: .55 }),
   vaultC: std(col('#7b7594'), { roughness: .86, emissive: col('#2a2840'), emissiveIntensity: .5 }),
   vaultLit: std(col('#cfe9ff'), { emissive: col('#5ec8ff'), emissiveIntensity: 1.5, roughness: .3 }),
@@ -5567,37 +5567,37 @@ function vaultSpire(S, px, pz, h, r0, spin) {
   let y = -VAULT.sink, r = r0 * 1.15;
   for (let i = 0; i < N; i++) {
     const sh = (h + VAULT.sink) / N * (1 + (i - 3) * .05);
-    S.put(G.cylT, i % 2 ? M.vaultA : M.vaultC, r * 2, sh, r * 2, px, y + sh / 2, pz, 0, spin + i * .5, 0);
-    if (i) S.put(G.cyl, M.vaultLit, r * 1.42, .17, r * 1.42, px, y, pz);
+    S.put(G.cylT, i % 2 ? M.vaultA : M.vaultC, r, sh, r, px, y + sh / 2, pz, 0, spin + i * .5, 0);
+    if (i) S.put(G.cyl, M.vaultLit, r * 1.08, .17, r * 1.08, px, y, pz);
     y += sh; r *= .82;
   }
-  S.put(G.cone, M.vaultB, r * 2.8, h * .16, r * 2.8, px, y + h * .08, pz);
-  S.put(G.sph, M.vaultCore, r * 1.4, r * 2.2, r * 1.4, px, y + h * .18, pz);
+  S.put(G.cone, M.vaultB, r * 1.5, h * .16, r * 1.5, px, y + h * .08, pz);
+  S.put(G.sph, M.vaultCore, r * .7, r * 1.1, r * .7, px, y + h * .17, pz);
 }
 // A tower: fatter, shorter, with a balcony you can count the railings on from the ground and
 // four lit slits at head height, which is what tells you it is a building and not a rock.
 function vaultTower(S, px, pz, h, r0, spin) {
-  S.put(G.cyl, M.vaultC, r0 * 2, h + VAULT.sink, r0 * 2, px, (h - VAULT.sink) / 2, pz);
-  S.put(G.cyl, M.vaultB, r0 * 2.55, .65, r0 * 2.55, px, h * .72, pz);
+  S.put(G.cyl, M.vaultC, r0, h + VAULT.sink, r0, px, (h - VAULT.sink) / 2, pz);
+  S.put(G.cyl, M.vaultB, r0 * 1.28, .65, r0 * 1.28, px, h * .72, pz);
   for (let i = 0; i < 11; i++) { const a = i / 11 * Math.PI * 2;
     S.put(G.box, M.vaultA, .28, .95, .28, px + Math.sin(a) * r0 * 1.16, h * .72 + .78, pz + Math.cos(a) * r0 * 1.16); }
   for (let i = 0; i < 4; i++) { const a = i / 4 * Math.PI * 2 + spin;
     S.put(G.box, M.vaultLit, .36, 2.3, .36, px + Math.sin(a) * r0 * .99, h * .44, pz + Math.cos(a) * r0 * .99); }
-  S.put(G.cyl, M.vaultA, r0 * 1.75, h * .2, r0 * 1.75, px, h * 1.1, pz);
-  S.put(G.cone, M.vaultB, r0 * 2.1, h * .3, r0 * 2.1, px, h * 1.35, pz);
-  S.put(G.sph, M.vaultLit, r0 * .7, r0 * 1, r0 * .7, px, h * 1.54, pz);
+  S.put(G.cyl, M.vaultA, r0 * .88, h * .2, r0 * .88, px, h * 1.1, pz);
+  S.put(G.cone, M.vaultB, r0 * 1.05, h * .3, r0 * 1.05, px, h * 1.35, pz);
+  S.put(G.sph, M.vaultLit, r0 * .35, r0 * .5, r0 * .35, px, h * 1.5, pz);
 }
 // A culture tank: a glass cylinder on a sunk plinth, with a cap and three ribs. What floats
 // inside it is not built here -- it moves, so it belongs to the Vault object.
 function vaultTank(S, px, pz, a) {
-  S.put(G.cyl, M.vaultB, 3.1, 4.0, 3.1, px, -1.0, pz);
-  S.put(G.cyl, M.vaultC, 2.5, .55, 2.5, px, 1.25, pz);
-  S.put(G.cyl, M.vaultLit, 1.9, .14, 1.9, px, 1.6, pz);
-  S.put(G.cyl, M.vaultGlass, 2.2, 4.4, 2.2, px, 3.7, pz);
-  S.put(G.cyl, M.vaultA, 2.8, .6, 2.8, px, 6.2, pz);
-  S.put(G.cyl, M.vaultB, 1.0, 1.5, 1.0, px, 7.2, pz);
+  S.put(G.cyl, M.vaultB, 1.55, 4.0, 1.55, px, -1.0, pz);
+  S.put(G.cyl, M.vaultC, 1.25, .55, 1.25, px, 1.25, pz);
+  S.put(G.cyl, M.vaultLit, .95, .14, .95, px, 1.6, pz);
+  S.put(G.cyl, M.vaultGlass, 1.1, 4.4, 1.1, px, 3.7, pz);
+  S.put(G.cyl, M.vaultA, 1.4, .6, 1.4, px, 6.2, pz);
+  S.put(G.cyl, M.vaultB, .5, 1.5, .5, px, 7.2, pz);
   for (let i = 0; i < 3; i++) { const b = a + i / 3 * Math.PI * 2;
-    S.put(G.box, M.vaultC, .3, 4.9, .3, px + Math.sin(b) * 1.06, 3.75, pz + Math.cos(b) * 1.06); }
+    S.put(G.box, M.vaultC, .22, 4.9, .22, px + Math.sin(b) * 1.22, 3.75, pz + Math.cos(b) * 1.22); }
 }
 class Vault {
   constructor(x, z, yaw) {
@@ -5656,21 +5656,21 @@ class Vault {
     }
 
     // the dais: three shallow steps, and the splicer standing on the top of them
-    for (let i = 0; i < 3; i++) S.put(G.cyl, i % 2 ? M.vaultC : M.vaultB, (8.4 - i * 1.2) * 2, .5 + i * .5, (8.4 - i * 1.2) * 2, 0, (.5 + i * .5) / 2 + i * .5, 0);
+    for (let i = 0; i < 3; i++) S.put(G.cyl, i % 2 ? M.vaultC : M.vaultB, 8.4 - i * 1.2, .5 + i * .5, 8.4 - i * 1.2, 0, (.5 + i * .5) / 2 + i * .5, 0);
     // The splicer is two drums with four units of nothing between them, and the core hangs in
     // the gap. Built as one shaft it swallowed its own light: the core is a unit and a half
     // across and the column was one point seven.
     const D = 1.5, CY = D + 7.6;
-    S.put(G.cylT, M.vaultB, 5.4, 2.2, 5.4, 0, D + 1.1, 0);
-    S.put(G.cyl, M.vaultA, 3.4, 3.4, 3.4, 0, D + 3.9, 0);
-    S.put(G.cyl, M.vaultB, 4.2, .5, 4.2, 0, D + 5.7, 0);
-    S.put(G.cyl, M.vaultB, 4.2, .5, 4.2, 0, D + 9.5, 0);
-    S.put(G.cyl, M.vaultA, 3.4, 2.4, 3.4, 0, D + 10.9, 0);
+    S.put(G.cylT, M.vaultB, 2.9, 2.2, 2.9, 0, D + 1.1, 0);
+    S.put(G.cyl, M.vaultA, 1.7, 3.4, 1.7, 0, D + 3.9, 0);
+    S.put(G.cyl, M.vaultB, 2.2, .5, 2.2, 0, D + 5.7, 0);
+    S.put(G.cyl, M.vaultB, 2.2, .5, 2.2, 0, D + 9.5, 0);
+    S.put(G.cyl, M.vaultA, 1.7, 2.4, 1.7, 0, D + 10.9, 0);
     for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2;   // six rods carry the top drum over the gap
       S.put(G.box, M.vaultC, .55, 4.0, .55, Math.sin(a) * 2.05, CY, Math.cos(a) * 2.05, 0, a, 0);
       S.put(G.box, M.vaultLit, .2, 3.4, .2, Math.sin(a) * 1.72, CY, Math.cos(a) * 1.72, 0, a, 0); }
-    S.put(G.cyl, M.vaultB, 6.2, .7, 6.2, 0, D + 12.4, 0);
-    S.put(G.cone, M.vaultC, 5.0, 2.6, 5.0, 0, D + 14.0, 0);
+    S.put(G.cyl, M.vaultB, 3.1, .7, 3.1, 0, D + 12.4, 0);
+    S.put(G.cone, M.vaultC, 2.5, 2.6, 2.5, 0, D + 14.0, 0);
 
     // six tanks round the inside of the wall, and two consoles facing the dais
     this.tankAt = [];
@@ -5701,7 +5701,7 @@ class Vault {
     // The dais, as three steps rather than one block: each is half a unit over the last, and
     // half a unit is well inside what he can walk up.
     for (let i = 0; i < 3; i++) this.obs.push(mark(0, 0, 8.4 - i * 1.2, S.base + 1 + i * .5));
-    this.obs.push(mark(0, 0, 2.9, Infinity));                        // the splicer's column
+    this.obs.push(mark(0, 0, 2.6, Infinity));                        // the splicer's column
     for (const [px, , pz] of this.tankAt) this.obs.push(mark(px, pz, 1.8, Infinity));
 
     // ---- the parts that move ----
@@ -5713,7 +5713,7 @@ class Vault {
       .multiply(new THREE.Quaternion().setFromAxisAngle(_plY, yaw));
     this.g = g; scene.add(g);
     this.coreY = CY;
-    this.core = mesh(G.sph, M.vaultCore, 1.5, 1.5, 1.5, 0, CY, 0); g.add(this.core);
+    this.core = mesh(G.sph, M.vaultCore, 1.2, 1.2, 1.2, 0, CY, 0); g.add(this.core);
     this.coreGl = glow('#c48cff', 7, .8); this.coreGl.position.set(0, CY, 0); g.add(this.coreGl);
     this.light = new THREE.PointLight(0xa85cff, 2.2, 54, 2); this.light.position.set(0, CY + .5, 0); g.add(this.light);
     // Three rings, each turning about its own axis at its own rate. G.torus has a major
@@ -5729,7 +5729,7 @@ class Vault {
     this.blobs = [];
     for (let i = 0; i < this.tankAt.length; i++) {
       const [px, py, pz] = this.tankAt[i];
-      const b = mesh(pick(G.blob), M.vaultCore, .95, 1.2, .95, px, py, pz);
+      const b = mesh(pick(G.blob), M.vaultCore, .68, .82, .68, px, py, pz);
       b.userData.p = i / this.tankAt.length * 6.3; g.add(b); this.blobs.push(b);
     }
     world.vault = this;
@@ -5739,14 +5739,14 @@ class Vault {
     const t = world.clock;
     for (const r of this.rings) { r.rotation.y += dt * r.userData.sp; r.rotation.x += dt * r.userData.sp * .4; }
     const pulse = .86 + Math.sin(t * 1.7) * .1 + Math.sin(t * 4.3) * .04;
-    this.core.scale.setScalar(1.5 * pulse); this.core.rotation.y += dt * .3;
+    this.core.scale.setScalar(1.2 * pulse); this.core.rotation.y += dt * .3;
     this.coreGl.scale.setScalar((6 + world.night * 5) * pulse);
     this.light.intensity = (1.4 + world.night * 2.2) * pulse;
     for (let i = 0; i < this.blobs.length; i++) {
       const b = this.blobs[i], ph = b.userData.p;
       b.position.y = this.tankAt[i][1] + Math.sin(t * .7 + ph) * .55;
       b.rotation.y += dt * .5; b.rotation.x = Math.sin(t * .4 + ph) * .3;
-      b.scale.setScalar(.9 + Math.sin(t * 1.3 + ph) * .08);
+      b.scale.setScalar(.72 + Math.sin(t * 1.3 + ph) * .06);
     }
     // Standing on the dais, the splicer offers itself. It has nothing to work with yet and
     // says so -- the specimen half of this is not built, and a button that pretended
