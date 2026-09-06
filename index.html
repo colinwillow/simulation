@@ -855,7 +855,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b75';
+const BUILD = 'b76';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3423,11 +3423,18 @@ function attachRig(parent, cfg, done) {
     // gaits -- and let a plain upper-only hold own the arms and spine. Nothing fights over a
     // track, so nothing averages into a shrug and nothing compounds into a flip.
     // holdUpper: the hold pose, spine-up tracks only, played normally at full weight.
+    // Does the pose actually place the socket? If it does, the socket's own direction is the
+    // authored up vector and the carry should use it. If it does not, the null is sitting
+    // wherever the bind pose left it and that vector means nothing, so the carry falls back
+    // to standing the animal up against the world.
+    let holdSocket = false;
     if (clips.hold) {
       const up = clips.hold.clone(); up.name = clips.hold.name + '__upper';
       up.tracks = up.tracks.filter(t => CARRY.upper.test(t.name));
       if (up.tracks.length) clips.holdUpper = up;
       else console.warn('[rig] the carry pose has no spine-up tracks — check CARRY.upper');
+      holdSocket = up.tracks.some(t => new RegExp(WEAPON.bone, 'i').test(t.name));
+      if (!holdSocket) console.warn('[rig] the carry pose does not keyframe the `' + WEAPON.bone + '` null — carrying upright instead of on the socket.');
     }
     // idleLegs / walkLegs / runLegs: the same gait with every spine-up track dropped, so it
     // moves the hips and legs and says nothing about the arms. Hips stays (it carries the
@@ -3488,7 +3495,7 @@ function attachRig(parent, cfg, done) {
         morphs.push({ inf: o.morphTargetInfluences, l: d[cfg.blinkL], r: d[cfg.blinkR] });
     });
     done({
-      root: inst, mixer, acts, box: e.box, scale: s, lift, span, baseY: inst.position.y, pivotY,
+      root: inst, mixer, acts, box: e.box, scale: s, lift, span, baseY: inst.position.y, pivotY, holdSocket,
       rateMax: cfg.rateMax,      // a short-strided clip may need to run faster than the default ceiling
       walkSpeed: walk ? e.strides[walk.name] * s : 0,
       runSpeed: run ? e.strides[run.name] * s : 0,
@@ -7846,10 +7853,18 @@ const CARRY = {
   cool: .35,
   drop: 2.0,         // how far in front of him it goes down
   // What "from the spine up" means, in the names this rig's bones actually have.
-  upper: /spine|chest|neck|head|shoulder|arm|hand|fore|clavicle/i,
+  //
+  // `weapon` is in here and it is the whole reason the carry looked wrong. The weapon nulls
+  // are the socket -- they say where the animal sits relative to him -- and they hang off the
+  // hand, so they are as spine-up as the hand is. Left out of this test their tracks fell
+  // through into the LEG clones instead, which meant the socket was wherever the idle or the
+  // run put it -- out at the end of his arm, in the rifle grip -- while the hold pose that was
+  // authored to place it got filtered away. The creature sat on his hand because that is
+  // literally where the joint was.
+  upper: /spine|chest|neck|head|shoulder|arm|hand|fore|clavicle|weapon/i,
 };
 const _cyA = new THREE.Vector3(), _cyB = new THREE.Vector3(), _cyU = new THREE.Vector3(), _cyQ = new THREE.Quaternion();
-const _cyF = new THREE.Vector3(), _cyR = new THREE.Vector3(), _cyM = new THREE.Matrix4();
+const _cyF = new THREE.Vector3(), _cyR = new THREE.Vector3(), _cyH = new THREE.Vector3(), _cyM = new THREE.Matrix4();
 // A joint's place in chart coordinates. Same conversion muzzleChart does, factored out
 // because the carry needs two of them (the socket and the tip that gives it an up vector).
 function jointChart(b, out) {
@@ -7914,19 +7929,26 @@ function carryStep(dt) {
   }
   c.pos.copy(_cyA); c.rx = _cyA.x; c.rz = _cyA.z; c.px0 = _cyA.x; c.pz0 = _cyA.z;
   c.animK = 0; c.moving = 0; c.stall = 0;
-  // It is carried the right way up. Taking the socket-to-tip vector as the creature's OWN up
-  // laid it flat across his hands, because that vector runs out along his forearms: it is the
-  // direction the thing FACES, not the direction its head points. So: its up is the world's
-  // up, and it faces out along the socket -- a quarter turn from where it was.
-  _cyF.copy(_cyU).addScaledVector(_plY, -_cyU.dot(_plY));
-  if (_cyF.lengthSq() < 1e-6) _cyF.set(Math.sin(p.faceH), 0, Math.cos(p.faceH));
-  _cyF.normalize();
-  _cyR.crossVectors(_plY, _cyF);                       // right = up x forward, for a +Z-forward model
-  c.g.quaternion.setFromRotationMatrix(_cyM.makeBasis(_cyR, _plY, _cyF));
+  // Which way up. When the hold pose keyframes the socket, the socket's own direction IS the
+  // authored up vector and the animal takes it: that is what the nulls are for. When it does
+  // not, that direction is a leftover from the bind pose -- it runs out along his forearm and
+  // lays the animal flat -- so stand it up against the world instead and face it out along
+  // the socket, which is a quarter turn from flat.
+  const socketUp = !!(p.rigH && p.rigH.holdSocket);
+  if (socketUp) {
+    c.g.quaternion.setFromUnitVectors(_plY, _cyU).multiply(_cyQ.setFromAxisAngle(_plY, p.faceH + Math.PI));
+  } else {
+    _cyF.copy(_cyU).addScaledVector(_plY, -_cyU.dot(_plY));
+    if (_cyF.lengthSq() < 1e-6) _cyF.set(Math.sin(p.faceH), 0, Math.cos(p.faceH));
+    _cyF.normalize();
+    _cyR.crossVectors(_plY, _cyF);                     // right = up x forward, for a +Z-forward model
+    c.g.quaternion.setFromRotationMatrix(_cyM.makeBasis(_cyR, _plY, _cyF));
+  }
   // And it hangs by its hips, not by the point between its feet -- the socket is where his
   // arms are, so that is where the animal's middle belongs, otherwise it floats a body-height
-  // above his hands.
-  c.g.position.copy(_cyA).addScaledVector(_plY, -c.pivotY());
+  // above his hands. Down its OWN up axis, whichever of the two above set it.
+  _cyH.set(0, c.pivotY(), 0).applyQuaternion(c.g.quaternion);
+  c.g.position.copy(_cyA).sub(_cyH);
   if (c.rig) c.rig.mixer.update(dt);              // it keeps breathing while it is held
 }
 function finishPlace() {
