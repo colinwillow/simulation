@@ -250,6 +250,27 @@ standTest('deep water', () => { for (let i = 0; i < 60000; i++) { const x = (Mat
     fromBearing: best.a + ' deg', endedThisFarAboveTheSiteBase: +best.onDeck.toFixed(2) }));
 })();
 
+// ---------- 5c. getting hit ----------
+// Nothing here kills an animal; a hit throws it and it gets up. Three things to prove: it
+// travelled, it came down somewhere it can actually stand, and it got back on its feet.
+(() => {
+  const cs = W.creatures.filter(o => o.alive && !o.aquatic && !o.flying && o.rad < 2);
+  if (!cs.length) return console.log('knockback                  no land creature to try it on');
+  for (const c of [cs[0], cs[cs.length - 1]]) {
+    const x0 = c.pos.x, z0 = c.pos.z;
+    c.knock({ x: x0 - 1, z: z0 }, 1);
+    let peak = 0, t = 0, upAgain = null;
+    hold(6, () => { t += .033;
+      peak = Math.max(peak, c.pos.y - gY(c.pos.x, c.pos.z));
+      if (upAgain === null && !c.fling && t > .1) upAgain = t; });
+    console.log('knockback                 ', JSON.stringify({ who: c.constructor.name, itsSize: c.rad,
+      threwIt: +Math.hypot(c.pos.x - x0, c.pos.z - z0).toFixed(1) + ' units',
+      peakedAt: +peak.toFixed(1) + ' off the ground',
+      backOnItsFeetAfter: upAgain === null ? 'STILL DOWN' : +upAgain.toFixed(1) + ' s',
+      stillAlive: c.alive, landedSomewhereItCanStand: c.terrainOK(c.pos.x, c.pos.z) }));
+  }
+})();
+
 // ---------- 6. the camera ----------
 // "It cuts through the mountain, it doesn't go up, it doesn't rotate." Three claims, three
 // numbers. Runs against any build -- it only reads cam, camS and the height field -- so the
@@ -297,10 +318,13 @@ function faceSpot(sign) {
 camRun('a steep face, climbing', () => faceSpot(1));
 camRun('the same face, descending', () => faceSpot(-1));
 
-// Rotation. The stick is read in camera space, so holding it sideways and swinging the boom
-// at the same time turns him as fast as the boom arrives and the pair chase each other round
-// a circle for ever -- which measures nothing. Pin a fixed WORLD heading instead, the way the
-// turn test pins a velocity, and time the boom coming round behind it.
+// Rotation. Auto-recentring is DELIBERATELY OFF: a drone that keeps you framed is not a drone
+// that re-aims every time you change direction, and having the view swing whenever the left
+// stick went left was wrong. "never" is the pass here, and this stays as a tripwire -- if it
+// ever starts reporting a time again, something has turned the yaw back on.
+// (The stick is read in camera space, so holding it sideways while the boom swings turns him
+// as fast as the boom arrives and the two chase each other round a circle for ever. Pin a
+// fixed WORLD heading instead, the way the turn test pins a velocity.)
 function recentreTest(deg) {
   const q = flatSpot(), a = deg * Math.PI / 180;
   P.pos.set(q.x, gY(q.x, q.z), q.z); P.vx = P.vz = P.vy = 0; P.grounded = 1; P.gy = P.pos.y;
@@ -314,8 +338,8 @@ function recentreTest(deg) {
     if (got === null && t > .5 && off() < .17) got = t;      // within ten degrees
   });
   P.wmag = 0;
-  console.log('camera                    ', JSON.stringify({ recentring: 'walking off ' + deg + ' deg from the boom',
-    behindHimAfter: got === null ? 'never' : +got.toFixed(1) + ' s',
+  console.log('camera                    ', JSON.stringify({ walkingOff: deg + ' deg from the boom',
+    theBoomFollowedAfter: got === null ? 'never (correct: the left stick must not move the view)' : +got.toFixed(1) + ' s',
     stillOffBy: +(off() * 57.3).toFixed(0) + ' deg' }));
 }
 recentreTest(90); recentreTest(170);

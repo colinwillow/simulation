@@ -52,11 +52,23 @@
   #maplg i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:-1px;font-style:normal}
   #mapfoot{margin-top:9px;font-size:11px;opacity:.45;font-style:italic}
   #boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-    gap:14px;background:#070a13;font-style:italic;letter-spacing:.05em;z-index:5;transition:opacity 1.2s}
-  /* The title card is the first thing fetched, before a single triangle exists, so it is a
-     115 KB webp rather than the 1.8 MB png it was drawn as. */
+    gap:14px;background:#0b0718;font-style:italic;letter-spacing:.05em;z-index:5;transition:opacity 1.2s}
+  /* No painted title card any more: the title screen is the world itself, and a painting of
+     it on the way in gives the real thing away and then contradicts it. What is above the
+     loading line is a placeholder mark; what is above THAT is the studio splash. */
   /* Both caps, or a phone in landscape gives the card the whole screen and pushes the line
      underneath it off the bottom. */
+  /* The painted title card is gone: the title screen is the world itself now, and a
+     painting of it on the way in gives the real thing away and then contradicts it. This
+     is a placeholder mark until the company splash goes here. */
+  #bootMark{position:relative;width:96px;height:96px;margin-bottom:26px}
+  #bootMark i{position:absolute;inset:0;border-radius:50%;border:1.5px solid rgba(150,246,255,.5);
+    border-top-color:rgba(190,250,255,.95);animation:bootspin 1.6s linear infinite}
+  #bootMark i:nth-child(2){inset:14px;animation-duration:2.4s;animation-direction:reverse;
+    border-color:rgba(196,140,255,.4);border-top-color:rgba(216,170,255,.9)}
+  #bootMark i:nth-child(3){inset:30px;animation-duration:1.1s;
+    border-color:rgba(255,214,168,.35);border-top-color:rgba(255,226,190,.85)}
+  @keyframes bootspin{to{transform:rotate(360deg)}}
   #boot img{max-width:min(86vw,760px);max-height:60vh;width:auto;height:auto;
     filter:drop-shadow(0 8px 40px rgba(0,0,0,.6))}
   #boot span{opacity:.62;font-size:14px}
@@ -166,7 +178,607 @@
 </style>
 </head>
 <body class="intro">
-<div id="boot"><img src="images/title_image_01.webp" alt="Plutopia"><span>growing a world…</span></div>
+<div id="boot"><div id="bootMark"><i></i><i></i><i></i></div><span>growing a world…</span></div>
+<!-- The company splash. Lifted verbatim out of colinwillow/robits (index.html, the
+     "STUDIO MAJIA" block) at 430ef4f, because it is the same studio and the same mark and
+     re-implementing it would only produce a worse copy. It is entirely self-contained: the
+     wordmark is inlined as SVG path data, so there is no asset to ship, and its only DOM is
+     the four elements below.
+
+     Two things are wired for this game rather than that one:
+       * window._BOOT_FLY = false, which tells it there is no boot flyover to wait on. Left
+         true it holds its whole timeline at zero waiting for a 3D layer that does not exist
+         here, and backs out after sixteen seconds.
+       * the world's loader calls window._majiaFinish() the moment the island is ready, so a
+         fast boot dismisses it early. Left alone it dissolves itself after about four and a
+         half seconds, with the loading card behind it.
+     Nothing else is changed. If the mark is re-exported, take the block again. -->
+<script>window._BOOT_FLY = false;</script>
+<!-- ══ STUDIO MAJIA — animated boot splash (plays once on top, then fades to the title) ══ -->
+<div id="majia-splash" style="position:fixed;inset:0;z-index:100200;transition:opacity .65s ease;">
+  <div id="majia-bg" style="position:absolute;inset:0;background:radial-gradient(ellipse at 50% 42%,#1a1038 0%,#0d0820 62%,#070418 100%);transition:opacity .7s ease"></div>
+  <canvas id="majia-c" style="position:absolute;inset:0;width:100%;height:100%;display:block;"></canvas>
+  <div style="position:absolute;left:50%;bottom:8%;transform:translateX(-50%);width:200px;max-width:54vw;height:2px;background:rgba(120,150,180,.12);border-radius:2px;overflow:hidden;">
+    <div id="majia-bar" style="width:0%;height:100%;background:linear-gradient(90deg,#00ffc8,#4488ff);box-shadow:0 0 10px #00ffc8aa;border-radius:2px;"></div>
+  </div>
+</div>
+<script>
+(() => {
+  const root=document.getElementById('majia-splash'), cv=document.getElementById('majia-c');
+  if(!root||!cv) return;
+  const ctx=cv.getContext('2d');
+  const bar=document.getElementById('majia-bar');
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W=0,H=0,DPR=1,F=120,cx=0,cy=0,S=5,eyeF=20,eyeY=0,preF=16,preY=0;
+  let targets=[],particles=[],edges=[],speed=(window._MAJIA_SPEED||1),running=true,fading=false,_ready=false;
+  let _wordImg=null,_wordDPR=1;   // the filled wordmark, pre-rendered once — every particle blits its own CELL of this, so the swarm assembling IS the exact logo (see the shard draw below), not a field of squares with a solid overlay faked in on top
+  const GRID_COLS=[[255,64,200],[150,90,255],[64,190,255],[80,255,170]];
+  const clamp01=t=>t<0?0:t>1?1:t;
+
+  // ── THE OFFICIAL WORDMARK ────────────────────────────────────────────────────────────────────────────────────
+  //   These are the real logo letterforms, copied verbatim out of images/majia_icon.svg (viewBox 1004 x 1010). The splash
+  //   used to rasterise fillText('MAJIA') in Orbitron 900 as a stand-in, which is close but is not the logo - wrong
+  //   letterforms, wrong weight distribution, wrong counters. Everything else about the splash is untouched: the
+  //   mandala bloom, the particle colours, the edge web, the release stagger. Only the SHAPE the particles fly into
+  //   changed, and both places that draw the word (the particle mask and the settled solid) now draw the same mark.
+  //   Inlined rather than fetched on purpose - the splash is the very first thing on screen and a load race there is
+  //   visible. IF YOU RE-EXPORT THE LOGO, update images/majia_icon.svg AND this array together.
+  //   window._MAJIA_SVG=false falls back to the drawn Orbitron text.
+  const MAJIA_PATHS=[
+    "M301.47,546.1c1.96-1.02,5.84-3.38,8.98-7.94,3.22-4.69,4-9.27,4.23-11.48-3.41-38.5-6.82-77.01-10.23-115.51-21.2,45.75-42.39,91.5-63.59,137.25l-63.84-140.88-10.68,124c1.06,2.38,3.17,6.24,7.14,9.73,2.61,2.29,5.2,3.71,7.17,4.58h-47.66c2.58-2.03,5.81-5,8.89-9.11,3.4-4.53,5.42-8.88,6.65-12.13,2.01-22.69,4.02-45.38,6.04-68.07.44-3.49,5.54-44.66,6.01-67.77.06-2.94.08-8.45-2.59-14.64-4.05-9.4-11.41-14.08-14.12-15.63h53.74l53.61,121.04,53.1-121.04h50.76c-2.62,1.62-6.84,4.7-10.38,9.94-2.59,3.84-3.93,7.5-4.64,10.1,3.45,49.12,6.91,98.24,10.36,147.36.27,2.32,1.18,7.41,4.96,12.43,3.4,4.52,7.44,6.78,9.54,7.77h-63.45Z",
+    "M562.01,545.97c-3-1.58-6.58-3.8-10.27-6.9-4.63-3.89-7.93-7.89-10.19-11.1-21.06-56.49-42.13-112.98-63.19-169.47h-53.22c1.75.83,7.61,3.86,10.81,10.8,2.24,4.87,2.09,9.33,1.88,11.44l-53.1,147.62c-1.07,2.53-2.81,5.9-5.65,9.37-3.32,4.05-6.84,6.66-9.37,8.24h44.55c-1.57-.75-4.98-2.65-7.55-6.6-3.29-5.04-3.07-10.14-2.94-11.78,5.48-13.9,10.97-27.8,16.45-41.7h66.82l16.57,45.06c.15,1.3.38,4.8-1.61,8.51-2.3,4.3-6.06,6.04-7.19,6.51h67.2ZM425.22,471.56l27.83-74.14,28.63,74.14h-56.46Z",
+    "M665.35,358.5c-2.72,1.97-7.17,5.72-10.79,11.81-3.5,5.89-4.68,11.4-5.14,14.7v139.51c-9.93,43.06-43.97,72.55-79.83,73.04-31.02.42-52.58-20.99-57.52-26.16,31.68,15.07,66.29,10.73,85.73-9.58,12.96-13.55,15.61-33.58,16.27-41.61v-140.51c-.59-2.53-1.69-5.91-3.86-9.45-4.13-6.74-9.78-10.22-12.71-11.75h67.85Z",
+    "M724.01,525.51c.37,2.73,1.41,7.67,4.84,12.74,2.59,3.83,5.55,6.29,7.6,7.72h-61.39c2.23-1.52,5.61-4.24,8.55-8.59,3.32-4.9,4.54-9.61,5.05-12.38v-141.41c-.6-3.28-1.92-8.28-5.09-13.67-3.32-5.63-7.28-9.31-9.93-11.42h66.43c-2.93,2.19-6.94,5.72-10.53,10.97-2.8,4.1-4.49,8-5.53,11.01v145.03Z",
+    "M921.37,545.97c-2.74-1.72-6.39-4.44-9.93-8.5-3.83-4.4-6.1-8.73-7.43-11.83-19.25-55.71-38.5-111.43-57.75-167.14h-51.28c2.35,1.52,6.74,4.85,9.67,10.71,1.49,2.99,2.18,5.78,2.5,7.9-17.44,50.03-34.88,100.06-52.32,150.09-1.06,2.73-2.84,6.47-5.87,10.36-3.13,4.01-6.45,6.71-8.89,8.41h43.25c-1.51-.81-4.99-2.93-7.42-7.2-2.88-5.06-2.49-9.93-2.29-11.57,4.88-13.73,9.75-27.45,14.63-41.18h64.36l15.54,44.03c.14,1.52.24,4.87-1.51,8.54-2.15,4.51-5.74,6.67-7.03,7.38h61.77ZM792.79,471.56l27.83-74.14,28.63,74.14h-56.46Z"
+  ];
+  const MAJIA_VB=[1004,1010];
+  let _mkP=null,_mkBB=null,_mkTried=false,_mkOK=false;
+  function _mkPaths(){ if(_mkP)return _mkP; try{ if(typeof Path2D==='undefined')return null; _mkP=MAJIA_PATHS.map(d=>new Path2D(d)); }catch(_){ _mkP=null; } return _mkP; }
+  // The ink BOX, measured rather than assumed: the viewBox is square while the wordmark is a wide band sitting in the
+  // middle of it, so centring on the viewBox would hang the logo well below centre. Rasterise once at quarter scale
+  // and scan the alpha for the true bounds. Cached — this runs a single time per session.
+  function _mkInk(){ if(_mkTried)return _mkBB; _mkTried=true;
+    const P=_mkPaths(); if(!P)return null;
+    try{ const K=0.25, c=document.createElement('canvas');
+      c.width=Math.ceil(MAJIA_VB[0]*K); c.height=Math.ceil(MAJIA_VB[1]*K);
+      const g=c.getContext('2d'); g.scale(K,K); g.fillStyle='#fff';
+      for(const q of P)g.fill(q,'evenodd');
+      const d=g.getImageData(0,0,c.width,c.height).data;
+      let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+      for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++){ if(d[(y*c.width+x)*4+3]>8){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+      if(x1<x0)return null;
+      _mkBB={x:x0/K, y:y0/K, w:(x1-x0+1)/K, h:(y1-y0+1)/K};
+    }catch(_){ _mkBB=null; }
+    return _mkBB; }
+  // fill the mark centred on (mx,my) at an ink height of mh. Even-odd so the counters inside the two A's punch through.
+  function _mkFill(g,mx,my,mh){ const P=_mkPaths(), B=_mkInk(); if(!P||!B||!B.h)return false;
+    const k=mh/B.h;
+    g.save(); g.translate(mx,my); g.scale(k,k); g.translate(-(B.x+B.w*0.5), -(B.y+B.h*0.5));
+    for(const q of P)g.fill(q,'evenodd');
+    g.restore(); return true; }
+  function buildTargets(){
+    // PORTRAIT-LOCK the logo to the SAME centred column the boombox uses — on a wide viewport the raw window width blew MAJIA
+    // up huge next to the now portrait-framed rig. EW = the phone-portrait column width (min of real width, height*cap); on an
+    // actual phone EW===W so the splash is byte-for-byte unchanged.
+    const EW=Math.min(W, H*(window._DJ_MAX_AR!=null?window._DJ_MAX_AR:0.52));
+    // SIZE. 0.165 of the column made F=64 on a 390pt phone, i.e. a mark about 161x46 CSS px - far too few pixels
+    // for a serif wordmark to resolve into, which is most of why the swarm read as mush. Raised so the WIDTH
+    // budget (_MAJIA_MAXW) is what actually governs, which is what it was always meant to do.
+    F=Math.min(EW*(window._MAJIA_F_K||0.30),H*0.26,168)*(window._MAJIA_SCALE!=null?window._MAJIA_SCALE:0.68);   // company logo smaller still (whole splash hangs off F)
+    const _ink=(window._MAJIA_SVG!==false)?_mkInk():null; _mkOK=!!_ink;
+    const MAXW=EW*(window._MAJIA_MAXW!=null?window._MAJIA_MAXW:0.58);   // a touch wider than the old 0.5 — the mark needs the pixels to resolve
+    if(_ink){
+      // Same width budget as before, applied to the REAL mark. F stays the layout's unit — the eyebrow, PRESENTS, the
+      // particle grain and the burst radius all still hang off it — so fitting the logo INTO the box that font size
+      // described means nothing underneath the logo moves. _MAJIA_CAP is the ink height as a fraction of F, and 0.72
+      // is what Orbitron 900's caps were actually putting on screen, so the mark lands at the size it already was.
+      const _wNeed=F*(window._MAJIA_CAP!=null?window._MAJIA_CAP:0.72)*(_ink.w/_ink.h);
+      if(_wNeed>MAXW) F=Math.max(24,F*MAXW/_wNeed);
+    } else { // fit the WORD to a fixed screen fraction by MEASURING it — real Orbitron 900 runs ~15% wider than the fallback,
+      // which shoved MAJIA's ends into the speaker towers on device while dev shots looked fine
+      try{ const mc=document.createElement('canvas').getContext('2d');
+        mc.font=`900 ${F}px Orbitron, sans-serif`; if('letterSpacing' in mc) mc.letterSpacing=(F*0.03)+'px';
+        const mw=mc.measureText('MAJIA').width;
+        if(mw>MAXW) F=Math.max(24,F*MAXW/mw); }catch(_){}
+    }
+    S=Math.max(2,Math.round(F/(window._MAJIA_GRAIN||32))); eyeF=Math.max(11,F*0.135);   // GRAIN: F/38 gave ~13 sample cells per letter, which cannot describe a serif. 72 sampled so finely the swarm read as one uniform white haze; 32 gives pieces you can count on the way in and still settles into the mark. _MAJIA_GRAIN raises/lowers the resolution.
+    cx=W*0.5; cy=H*(window._MAJIA_Y!=null?window._MAJIA_Y:0.468); eyeY=cy+F*0.64; preF=Math.max(10,eyeF*0.86); preY=cy+H*(window._MAJIA_PRE_DROP!=null?window._MAJIA_PRE_DROP:0.302);   // PRESENTS sits just under the deck (raised back up — 0.315 was too low), still clear of the PRESS prompt (was tucked right under STUDIOS) — reads MAJIA / STUDIOS / [deck] / PRESENTS, no double-word stack up top
+    const off=document.createElement('canvas'); off.width=W; off.height=H;
+    const o=off.getContext('2d');
+    o.fillStyle='#fff'; o.textAlign='center'; o.textBaseline='middle';
+    o.font=`900 ${F}px Orbitron, sans-serif`;
+    if('letterSpacing' in o) o.letterSpacing=(F*0.03)+'px';
+    const _drawWord=(g)=>{ if(!(_mkOK && _mkFill(g,cx,cy,F*(window._MAJIA_CAP!=null?window._MAJIA_CAP:0.72)))) g.fillText('MAJIA',cx,cy); };
+    _drawWord(o);
+    const hi=document.createElement('canvas'); hi.width=Math.max(1,Math.round(W*DPR)); hi.height=Math.max(1,Math.round(H*DPR));
+    const hg=hi.getContext('2d'); hg.setTransform(DPR,0,0,DPR,0,0);
+    hg.fillStyle=(window._MAJIA_INK||'#e75572'); hg.textAlign='center'; hg.textBaseline='middle'; hg.font=`900 ${F}px Orbitron, sans-serif`;   // the tiles blit THIS — the swatch's warm-red end lifted in HSL (hue and saturation kept, lightness up) — brighter and pink-leaning, but still the sunset's own red rather than a step toward white, which just went dusty
+    if('letterSpacing' in hg) hg.letterSpacing=(F*0.03)+'px';
+    _drawWord(hg);
+    _wordImg=hi; _wordDPR=DPR;   // hi-res source the tiles blit; off = the mask read below
+    const img=o.getImageData(0,0,W,H).data;
+    const op=(x,y)=>(x>=0&&x<W&&y>=0&&y<H)&&img[(y*W+x)*4+3]>120;
+    const ER=Math.max(1,Math.round(F*0.011));
+    const av=(x,y)=>((x>=0&&x<W&&y>=0&&y<H)?img[(y*W+x)*4+3]:0)/255;   // the ANGLE needs the alpha ramp, not just the yes/no
+    // ── KEEP THE OUTLINE ──────────────────────────────────────────────────────────────────────────────────────
+    // The old sampler demanded all EIGHT neighbours at +/-ER also be ink, which throws away every cell within ER
+    // of the edge - and on a serif mark the edge IS the letterform. Hairlines and serifs are only a few pixels
+    // wide, so they were erased outright and the swarm assembled into a blob rather than into MAJIA.
+    // window._MAJIA_ERODE=true restores the old interior-only sampling.
+    // ── AND EACH PIECE KNOWS WHICH WAY ITS STROKE RUNS ────────────────────────────────────────────────────────
+    // The alpha gradient points ACROSS a stroke, so the stroke runs perpendicular to it. Storing that angle lets
+    // a settled particle be drawn as a sliver lying ALONG its bit of the letter instead of as an axis-aligned
+    // square - which is what makes the assembled mark read as letterforms rather than as a bitmap of dots.
+    const _erode=(window._MAJIA_ERODE===true);
+    const _cellInk=(x0,y0,gs)=>{ const yEnd=Math.min(H,y0+gs), xEnd=Math.min(W,x0+gs);
+      for(let yy=y0;yy<yEnd;yy++){ const row=yy*W; for(let xx=x0;xx<xEnd;xx++){ if(img[(row+xx)*4+3]>40) return true; } } return false; };
+    const _sample=(gs)=>{ const out=[]; const hf=gs*0.5;
+      for(let y0=0;y0<H;y0+=gs) for(let x0=0;x0<W;x0+=gs){
+        if(!_cellInk(x0,y0,gs)) continue;
+        const cxp=x0+hf, cyp=y0+hf;
+        const gx=av(cxp+ER,cyp)-av(cxp-ER,cyp), gy=av(cxp,cyp+ER)-av(cxp,cyp-ER);
+        out.push({x:cxp,y:cyp, cx0:x0,cy0:y0, cs:gs, ang:(Math.hypot(gx,gy)>(window._MAJIA_ANG_MIN||0.10))?Math.atan2(gx,-gy):null});
+      }
+      return out; };
+    // COARSEN UNTIL IT FITS. This is the boot splash on a phone; a hitch here is the first thing anyone sees, so
+    // the finer grain is allowed to cost particles only up to a ceiling. _MAJIA_MAX_P sets it.
+    const _cap=(window._MAJIA_MAX_P||4200);
+    targets=_sample(S);
+    while(targets.length>_cap && S<10){ S++; targets=_sample(S); }
+    // published so the swarm's resolution is inspectable + tunable from the console rather than guessed at
+    try{ window._MAJIA_STATS={n:targets.length, grain:S, F:Math.round(F), angled:targets.filter(t=>t.ang!=null).length}; }catch(_){}
+    const gmap=new Map();
+    for(let i=0;i<targets.length;i++){ const t=targets[i]; gmap.set(Math.round(t.cx0/S)+','+Math.round(t.cy0/S),i); }
+    edges=[];
+    for(let i=0;i<targets.length;i++){ const t=targets[i],gx=Math.round(t.cx0/S),gy=Math.round(t.cy0/S); let n;
+      n=gmap.get((gx+1)+','+gy);     if(n!==undefined) edges.push([i,n]);
+      n=gmap.get(gx+','+(gy+1));     if(n!==undefined) edges.push([i,n]);
+      n=gmap.get((gx+1)+','+(gy+1)); if(n!==undefined&&Math.random()<0.5) edges.push([i,n]);
+      n=gmap.get((gx+1)+','+(gy-1)); if(n!==undefined&&Math.random()<0.5) edges.push([i,n]);
+    }
+    _ipBuild();
+  }
+  // ── THE BLOOM ── every particle is born at a single point, bursts outward, and settles into a MANDALA
+  //    (phyllotaxis spiral shaped by a rose curve — the same family as the audio visualiser's petals) before
+  //    it is released to fly into its letterform. window._MAJIA_MANDALA=false skips straight to the logo;
+  //    _MAJIA_MANDALA_MS is how long the flower holds, _MAJIA_PETALS / _MAJIA_MANDALA_R shape it.
+  const _mandMs=()=> (window._MAJIA_MANDALA===false?0:(window._MAJIA_MANDALA_MS!=null?window._MAJIA_MANDALA_MS:620));
+  const _GOLD=2.39996323;                            // golden angle -> even, seed-head packing with no visible rings
+  function _mandalaPolar(i,n){
+    const a=i*_GOLD, rr=Math.sqrt((i+0.5)/Math.max(1,n));
+    const pet=(window._MAJIA_PETALS||8);
+    const lobe=0.40+0.60*Math.abs(Math.cos(pet*a*0.5));      // rose modulation = petals
+    return { r:Math.min(W,H)*(window._MAJIA_MANDALA_R||0.30)*rr*lobe, a };
+  }
+  // the flower TURNS, and turns FASTER toward the middle — so the burst reads as a spiral winding outward
+  // rather than a shape the particles park on. window._MAJIA_MANDALA_SPIN / _SWIRL tune it.
+  function _mandalaAngle(p,tsec){
+    return p.ma + tsec*(window._MAJIA_MANDALA_SPIN!=null?window._MAJIA_MANDALA_SPIN:1.6)
+                * (1+(window._MAJIA_MANDALA_SWIRL||120)/Math.max(24,p.mr));
+  }
+  function _mandalaPos(i,n){ const q=_mandalaPolar(i,n); return { x:cx+Math.cos(q.a)*q.r, y:cy+Math.sin(q.a)*q.r*0.92, a:q.a, r:q.r }; }
+  function _pathOn(){ return window._MAJIA_PATH!==false && window._BOOT_FLY===false && !reduce && _mandMs()>0; }
+  let _ipPts=null;
+  function _ipBuild(){ try{
+    const R1=Math.min(W,H)*(window._MAJIA_LOOP_R||0.13), R2=R1*(window._MAJIA_LOOP2_R||0.45);
+    const bx=cx, by=cy+H*(window._MAJIA_LOOP_DROP||0.14);                       // the loop hangs just below the mark's line
+    const pts=[];
+    const ay0=H+40, ay1=by+R1;
+    for(let i=0;i<40;i++){ const t=i/40;                                        // A: rise from below the frame, wiggling like a straw
+      const wig=Math.sin(t*Math.PI*(window._MAJIA_WIG_N||2.3))*(1-t)*Math.min(W,H)*(window._MAJIA_WIG||0.05);
+      pts.push([bx+wig, ay0+(ay1-ay0)*t]); }
+    for(let i=0;i<=46;i++){ const a=Math.PI/2+(i/46)*Math.PI*2;                 // B: ONE big loop
+      pts.push([bx+Math.cos(a)*R1, by+Math.sin(a)*R1]); }
+    if(window._MAJIA_LOOP2!==false){ const c2y=by+R1-R2;                        // C: a smaller loop the OTHER way
+      for(let i=1;i<=30;i++){ const a=Math.PI/2-(i/30)*Math.PI*2;
+        pts.push([bx+Math.cos(a)*R2, c2y+Math.sin(a)*R2]); } }
+    const lp=pts[pts.length-1];
+    for(let i=1;i<=14;i++){ const t=i/14, e2=t*t*(3-2*t);                       // D: ease into the core
+      pts.push([lp[0]+(cx-lp[0])*e2, lp[1]+(cy-lp[1])*e2]); }
+    _ipPts=pts;
+  }catch(_){ _ipPts=null; } }
+  function _ipPt(u){ const P2=_ipPts; if(!P2)return [cx,cy];
+    const f=Math.max(0,Math.min(1,u))*(P2.length-1), i=Math.min(P2.length-2,Math.floor(f)), t=f-i;
+    return [P2[i][0]+(P2[i+1][0]-P2[i][0])*t, P2[i][1]+(P2[i+1][1]-P2[i][1])*t]; }
+  function _ipN(u){ const P2=_ipPts; if(!P2)return [1,0];
+    const f=Math.max(0,Math.min(1,u))*(P2.length-1), i=Math.max(0,Math.min(P2.length-2,Math.floor(f)));
+    const dx=P2[i+1][0]-P2[i][0], dy=P2[i+1][1]-P2[i][1], L=Math.hypot(dx,dy)||1;
+    return [-dy/L, dx/L]; }
+  let _bloomed=false, _released0=false;
+  function initParticles(){
+    const sc=F/130, n=targets.length;
+    const mand=(_mandMs()>0) && !_bloomed && !_released0;   // a resize mid-flight (iOS URL bar, rotate) must not restart the bloom
+    _bloomed=!mand;
+    particles=targets.map((t,i)=>{
+      const m=_mandalaPos(i,n);   // {x,y,a,r}
+      const a=Math.random()*Math.PI*2,d=F*(0.40+Math.random()*1.0);
+      const burst=(0.5+Math.random()*1.9)*sc;   // gentle nudge, not a fling — the spring eases each chip out to its petal; wide relative spread so speeds differ chip to chip
+      const pth=(_pathOn()&&mand);                                              // the curly-straw entrance feeds the core
+      const pd=pth?(Math.pow(i/Math.max(1,n),0.7)*(window._MAJIA_PATH_SPREAD||700)+Math.random()*140):0;
+      const pdur=pth?((window._MAJIA_PATH_MS||1800)*(0.9+Math.random()*0.28)):0;   // 1300 read as a blur off the bottom edge even at a good frame rate
+      return { lx:t.x, ly:t.y, ang:t.ang, cs:(t.cs||S), sx:(t.cx0!=null?t.cx0:t.x), sy:(t.cy0!=null?t.cy0:t.y), ang0:(Math.random()-0.5)*(window._MAJIA_SHARD_SPIN||2.2),   // sx/sy = this shard's source-cell centre in _wordImg; ang0 = its scatter tumble
+        mx:m.x, my:m.y, mr:m.r, ma:m.a,   // lx/ly = the letterform, ang = which way its stroke runs; mr/ma = polar seat on the (spinning) flower
+        tx:(mand?m.x:t.x), ty:(mand?m.y:t.y),                    // spring target starts on the flower
+        // STAGGERED LAUNCH: they wait in the core and fire out a few at a time (skewed, so the first ones go
+        // almost immediately and stragglers keep leaving), rather than the whole cloud erupting on one frame.
+        born:(pth?(pd+pdur+40+Math.random()*180):(mand?(Math.pow(i/Math.max(1,n),0.55)*(window._MAJIA_LAUNCH_SPREAD!=null?window._MAJIA_LAUNCH_SPREAD:(window._BOOT_FLY!==false?140:620))+Math.random()*(window._MAJIA_LAUNCH_JIT!=null?window._MAJIA_LAUNCH_JIT:(window._BOOT_FLY!==false?60:190))):0)),   // straw: each chip blooms right after it pours in; flyover: ONE poof
+        launched:!mand,
+        bdx:Math.cos(m.a), bdy:Math.sin(m.a), bspd:burst,
+        x:(pth?cx:(mand?cx+Math.cos(m.a)*(2+Math.random()*5):t.x+Math.cos(a)*d)),   // straw: below the frame; else waiting in the core
+        y:(pth?H+60:(mand?cy+Math.sin(m.a)*(2+Math.random()*5):t.y+Math.sin(a)*d)),
+        pu:(pth?0:null), pd:pd, pdur:pdur, plat:(pth?((Math.random()-0.5)*F*(window._MAJIA_PATH_LAT||0.5)):0),
+        vx:0, vy:0,
+        // WIDER SPREAD of weight/springiness per particle -> they arrive over a broader window and swirl at
+        // different rates instead of moving as one mass. (was maxSpeed 9-19, k 0.018-0.063, damp 0.86-0.935)
+        maxSpeed:(7.0+Math.random()*9.0)*sc*speed,    // eased off the top speed — they were crossing the screen too hot to read
+        k:0.013+Math.random()*0.034,                  // softer springs = longer, lazier arcs (was 0.018-0.063)
+        damp:0.885+Math.random()*0.082,               // WIDE damping spread is the whole trick: 0.885 rings out in ~24 frames, 0.967 takes ~85. Nobody finishes on the same beat.
+        lockJ:Math.pow(Math.random(),0.8),            // when THIS chip's closing assist begins — staggered, not one global frame
+        restEps:0.14+Math.random()*0.24,              // and each one calls itself "arrived" at its own tolerance
+        rk:0.020+Math.random()*0.026, rd:0.900+Math.random()*0.062,   // its own tumble rate + its own tumble decay
+        rel:Math.pow(Math.random(),0.75)*(window._MAJIA_RELEASE_SPREAD||300),   // staggered peel-off, skewed early
+        released:!mand, loose:!mand,
+        col:GRID_COLS[(Math.random()*GRID_COLS.length)|0],
+        rot:(Math.random()-0.5)*4.0, rotV:(Math.random()-0.5)*0.6, trot:0 };
+    });
+  }
+  let _majE=0;   // the frame's elapsed ms — each chip's closing window is timed off this, not off the shared `lock`
+  try{ window._majiaDbg=()=>({t:_majE, n:particles.length, W,H,cx,cy,preY,eyeY, preT0:draw._preT0, loose:particles.filter(q=>q.loose).length,
+    rest:particles.map(q=>q._restAt==null?-1:Math.round(q._restAt)),
+    spd:particles.filter(q=>q.loose).map(q=>Math.hypot(q.vx||0,q.vy||0))}); }catch(_){}
+  function step(p,lock){
+    if(p.pu!=null&&p.pu<1){                           // CURLY-STRAW ENTRANCE: ride the ribbon up from the bottom
+      const u=Math.max(0,Math.min(1,(_majE-p.pd)/Math.max(1,p.pdur)));
+      const ue=u*u*(3-2*u);                                                      // smoothstep: eases OUT of the bottom edge and INTO the core instead of snapping off both
+      const pt=_ipPt(ue), n2=_ipN(ue), fade=Math.min(1,u*8);                     // the stream fans out as it climbs
+      p.vx=(pt[0]+n2[0]*p.plat*fade)-p.x; p.vy=(pt[1]+n2[1]*p.plat*fade)-p.y;
+      p.x+=p.vx; p.y+=p.vy; p.rot+=p.rotV*0.4;
+      p.pu=u>=1?1:u;
+      return;                                         // arrived at the core -> the bloom launch (p.born) takes it from here
+    }
+    if(p.launched===false) return;                    // still waiting its turn in the core
+    if(window._MAJIA_WEB!==false){
+      // ── WEBSITE PHYSICS (ported from the studio site's tile swarm) ── one lightly-damped spring carries each chip
+      //    straight to its tile home; the overshoot-and-correct of that spring IS the "recoil and jiggle, they don't
+      //    stop so quickly" the site has. No seat spring, no crisp logo dropped on top: a tile springs, rings, and
+      //    snaps dead-on the instant it is genuinely at rest.
+      const dx=p.tx-p.x, dy=p.ty-p.y;
+      if(lock>=1 && p.loose===false){ p.x=p.tx; p.y=p.ty; p.vx=0; p.vy=0; p.rot=p.trot; p.rotV=0; return; }
+      p.vx=(p.vx+dx*p.k)*p.damp; p.vy=(p.vy+dy*p.k)*p.damp;
+      const sp=Math.hypot(p.vx,p.vy);
+      if(sp>p.maxSpeed){ p.vx=p.vx/sp*p.maxSpeed; p.vy=p.vy/sp*p.maxSpeed; }
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.released===false && p.mr!=null){ p.vx*=1.004; p.vy*=1.004; }   // barely-there anti-damping: coast outward on the spinning flower instead of braking onto it
+      p.rotV+=(p.trot-p.rot)*(p.rk||0.03); p.rotV*=(p.rd||0.93); p.rot+=p.rotV;
+      if(lock>0 && p.loose===false){ const sm=lock*lock*(3-2*lock);
+        p.x+=(p.tx-p.x)*sm*0.4; p.y+=(p.ty-p.y)*sm*0.4; p.vx*=(1-sm); p.vy*=(1-sm);
+        p.rot+=(p.trot-p.rot)*sm*0.4; p.rotV*=(1-sm); }
+      // ── THE CLOSING ASSIST ── never move the chip directly. Open a window per chip (p.lockJ), ramp a little extra
+      //   spring into it, and only then start bleeding energy. The ring keeps playing the whole way in, and because
+      //   every window opens at a different moment they arrive one after another instead of on a single frame.
+      if(p.loose){
+        const w0=LOCK_START+(p.lockJ||0)*(window._MAJIA_TAIL_STAGGER||560);
+        const a=clamp01((_majE-w0)/(window._MAJIA_TAIL_RAMP||700));
+        if(a>0){
+          const esc=clamp01((_majE-w0-(window._MAJIA_TAIL_RAMP||700))/(window._MAJIA_TAIL_ESC||750));   // and nothing may hang forever
+          const st=a*a*(window._MAJIA_TAIL_K||0.042)*(1+2.6*esc);
+          p.vx+=dx*st; p.vy+=dy*st;
+          const tb=1-(a*(window._MAJIA_TAIL_BLEED||0.030)+esc*(window._MAJIA_TAIL_ESC_BLEED||0.20));
+          p.vx*=tb; p.vy*=tb;
+          p.rot+=(p.trot-p.rot)*a*0.05; p.rotV*=(1-esc*0.10);
+        }
+      }
+      const eps=(p.restEps||0.22);
+      if(p.loose && Math.abs(dx)<eps && Math.abs(dy)<eps && sp<eps*0.5){ p.loose=false; p._restAt=_majE; p.x=p.tx; p.y=p.ty; p.vx=p.vy=0; p.rot=0; p.rotV=0; }
+      return;
+    }
+    if(lock>=1){
+      if(window._MAJIA_ELASTIC===false){ p.x=p.tx; p.y=p.ty; p.vx=0; p.vy=0; p.rot=p.trot; p.rotV=0; return; }
+      // ELASTIC SEAT — instead of snapping dead on arrival, each shard rings into its slot: a stiff, lightly-damped
+      // spring so it overshoots home and recoils a couple of times before it settles. This is the "they don't stop
+      // so quickly, they have a little recoil and jiggle" the website version has. _MAJIA_SEAT_K/_DAMP tune the ring.
+      const dx=p.tx-p.x, dy=p.ty-p.y;
+      if(p.seatJ==null)p.seatJ=0.82+Math.random()*0.36;                       // each chip rings at its own rate — unison read as a snap
+      const k=(window._MAJIA_SEAT_K||0.115)*p.seatJ, dmp=(window._MAJIA_SEAT_DAMP||0.78);   // tuned by sweep: ~4 recoils over ~0.7s with ~26% overshoot — springy, not jello (0.20/0.905 rang 18 times for 2s)
+      p.vx=(p.vx+dx*k)*dmp; p.vy=(p.vy+dy*k)*dmp;
+      p.x+=p.vx; p.y+=p.vy;
+      p.rot+=(p.trot-p.rot)*0.12; p.rotV=(p.rotV+(p.trot-p.rot)*0.05)*0.90;   // the tile keeps wobbling as it seats
+      return;
+    }
+    const dx=p.tx-p.x, dy=p.ty-p.y;
+    p.vx=(p.vx+dx*p.k)*p.damp; p.vy=(p.vy+dy*p.k)*p.damp;   // SPRING toward target + damping -> rubbery overshoot & wobble
+    const sp=Math.hypot(p.vx,p.vy);
+    if(sp>p.maxSpeed){ p.vx=p.vx/sp*p.maxSpeed; p.vy=p.vy/sp*p.maxSpeed; }
+    p.x+=p.vx; p.y+=p.vy;
+    p.rotV+=(p.trot-p.rot)*0.03; p.rotV*=0.93; p.rot+=p.rotV;
+    if(p.released===false && p.mr!=null){ p.vx*=1.004; p.vy*=1.004; }   // barely-there anti-damping while blooming: they keep coasting outward instead of braking onto the flower
+    if(lock>0){ const sm=lock*lock*(3-2*lock), _pull=(window._MAJIA_LOCK_PULL||0.15), _bleed=(window._MAJIA_LOCK_BLEED||0.16);
+      p.x+=(p.tx-p.x)*sm*_pull; p.y+=(p.ty-p.y)*sm*_pull; p.vx*=(1-sm*_bleed); p.vy*=(1-sm*_bleed);
+      p.rot+=(p.trot-p.rot)*sm*_pull; p.rotV*=(1-sm*_bleed); }   // KEEP THE ENERGY: this ramp used to zero the velocity outright (p.vx*=(1-sm)), which is exactly why the swarm arrived stiff and dead instead of ringing in
+  }
+  function resize(){
+    if(!running) return;                         // splash already handed off -> ignore
+    const w=cv.clientWidth, h=cv.clientHeight;
+    if(w<=0||h<=0) return;                        // transient zero-size mid-rotation -> skip (avoids getImageData throw)
+    W=w; H=h;
+    DPR=Math.min(2,window.devicePixelRatio||1);
+    cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    if(_ready && particles.length){ retarget(); }        // already flying: re-fit the glyph but KEEP every particle's
+    else { buildTargets(); initParticles(); }            // position/velocity/phase — never restart the cloud mid-air
+  }
+  window.addEventListener('resize',resize);
+  // iOS ROTATE FIX: orientationchange fires BEFORE the new layout settles, so a single resize() reads stale dimensions and
+  // leaves the splash disproportionate ("flip the screen mid-load and it's out of whack"). Re-fit again once the rotate lands.
+  window.addEventListener('orientationchange',()=>{ resize(); setTimeout(resize,180); setTimeout(resize,450); });
+
+  const _MAND=(window._MAJIA_MANDALA===false?0:(window._MAJIA_MANDALA_MS!=null?window._MAJIA_MANDALA_MS:620));   // release while they are still flying OUT, not after they land
+  // SOLID overlay held later when the shards ring into place — otherwise the crisp white logo drops on top at 1750
+  // and hides the very recoil/jiggle we just built. The shards tile the mark exactly on their own, so the overlay is
+  // now only the final crispness pass, and it waits for the ring to play out.
+  const _elasticSeat=(window._MAJIA_ELASTIC!==false && window._MAJIA_SHARD!==false);
+  const _PATHMS=_pathOn()?(window._MAJIA_PATH_SHIFT!=null?window._MAJIA_PATH_SHIFT:2600):0;   // the curly-straw entrance needs its runway (raised with _MAJIA_PATH_MS so the bloom still waits for the last chip)
+  const LOCK_START=1050+_MAND+_PATHMS,FREEZE_AT=1950+_MAND+_PATHMS,SOLID_AT=(_elasticSeat?3250:1750)+_MAND+_PATHMS,SOLID_IN=(_elasticSeat?680:400);   // the crisp mark used to fade in at 2200 and hide the recoil we just built
+  const HOLD_UNTIL=reduce?1500:(4600+_MAND+_PATHMS);
+  let start=performance.now();
+
+  function finish(){
+    if(fading) return; fading=true;
+    window.removeEventListener('resize',resize);
+    const _os=(window._MAJIA_OUT_S!=null?window._MAJIA_OUT_S:1.7);
+    root.style.transition='opacity '+_os+'s ease';                              // a LONG dissolve — the mark melts into the sunset rather than blinking off
+    root.style.opacity='0';
+    setTimeout(()=>{ running=false; try{ window._majiaDbg=null; particles=[]; targets=[]; edges=[]; }catch(_){} if(root&&root.parentNode) root.parentNode.removeChild(root); },_os*1000+250);
+  }
+  window._majiaFinish=finish;   // the DJ gate's tap dismisses the headline
+  function settle(){ if(settle._d)return; settle._d=true; window._majiaDone=true;   // COLLAPSED INTRO: the splash stays as the power page's headline —
+    try{ const bg=document.getElementById('majia-bg'); if(bg)bg.style.opacity='0';   // its bg CROSSFADES out over the identically-painted curtain (a hard swap flashed for a frame)
+      root.style.pointerEvents='none';
+      if(bar&&bar.parentElement)bar.parentElement.style.display='none'; }catch(_){} }
+  function draw(now){
+    if(!running) return;
+    if(!_ready) return;                        // nothing until the one real build has happened
+    requestAnimationFrame(draw);
+    if(draw._t0==null)draw._t0=now;
+    const eReal=now-draw._t0;                  // wall clock, never held — the loading bar and the backdrop ride this
+    // ── INTRO FIRST ── freeze the mark's entire timeline while the flyover plays and the bud opens.
+    if(window._BOOT_FLY!==false && !draw._seeded){
+      const O=window._BOOTFLY_ORIGIN;
+      const R3=window._BOOTFLY_READY;
+      if(O && O.on && O.k>=(window._BF_SEED_K!=null?window._BF_SEED_K:0.62)){ draw._seeded=2; }
+      else if(!R3 && eReal>(window._BF_SEED_MAX||4500)){ draw._seeded=1; }        // no 3D layer on this machine — boot the old way
+      else if(eReal>(window._BF_SEED_CAP||16000)){ draw._seeded=1; }              // absolute backstop, never hang the boot
+      else { start=now; draw._acc=0; }         // hold at e=0: no particles, no letters, just the world
+      if(draw._seeded){ try{ window._BF_SEEDED=draw._seeded; }catch(_){} }
+    }
+    // PRESENTS sits UNDER THE DECK, wherever the deck actually is on this device (it used to be a fixed fraction of
+    // the screen, so lifting the mark dragged it up onto the record player)
+    try{ const DS=window._BF_DECK_SCREEN;
+      if(DS&&window._BOOT_FLY!==false&&DS.bottom>0&&DS.bottom<H*1.4)
+        preY=Math.max(cy+H*(window._MAJIA_PRE_DROP!=null?window._MAJIA_PRE_DROP:0.302), DS.bottom+(window._BF_PRE_GAP||16));
+    }catch(_){}
+    // ── CLAMPED CLOCK ── a boot hitch must cost TIME, never FRAMES: advance the mark by capped deltas so
+    //    nothing can leap across the screen in one step (the straw entrance's "zip"). window._MAJIA_DT_CAP.
+    if(draw._pt==null)draw._pt=now;
+    const _rawDt=Math.max(0,now-draw._pt); draw._pt=now;
+    draw._acc=(draw._acc||0)+Math.min(_rawDt,(window._MAJIA_DT_CAP||64))*speed;
+    const e=(window._MAJIA_DT_CLAMP===false)?((now-start)*speed):draw._acc;
+    if(bar&&!settle._d) bar.style.width=Math.min(100,(Math.max(e,eReal*0.55)/(HOLD_UNTIL-250))*100)+'%';
+    // ── REVEAL THE FLYOVER ── #majia-bg is an opaque plate, and it used to hold until settle() at ~4.5s, which is
+    //    long after the mark has formed. Crossfade it out early: the boot terrain underneath becomes the backdrop,
+    //    and the swarm flies over a live world instead of a black card.
+    if(window._BOOT_FLY!==false && !settle._d){ try{ const bg=document.getElementById('majia-bg');
+      if(bg&&!bg._bfHeld){ const f0=(window._BF_BG_OUT_AT||220), f1=(window._BF_BG_OUT_T||800);
+        const kk=Math.max(0,Math.min(1,(eReal-f0)/f1)); bg.style.opacity=String(1-kk); if(kk>=1)bg._bfHeld=1; } }catch(_){} }
+    // LAUNCH WINDOW — pop each particle out of the core when its moment arrives
+    if(_MAND>0){ const EM=window._BOOTFLY_ORIGIN;
+      for(const p of particles){ if(p.launched)continue;
+      if(e>=p.born){ p.launched=true; p.vx=p.bdx*p.bspd; p.vy=p.bdy*p.bspd;
+        if(EM&&EM.on&&window._BOOT_FLY!==false){                                  // seeded from INSIDE the bud — and FIRED, not released
+          const sa=Math.random()*6.283, sr=Math.sqrt(Math.random())*(EM.r||12);   // even area fill, not a box
+          p.x=EM.x+Math.cos(sa)*sr; p.y=EM.y+Math.sin(sa)*sr*0.62;
+          const pw=(window._BF_SHOT_PW||1.85);                              // eased off: the seeds were cracking out faster than anything else in the shot                                     // muzzle velocity: an upward cone with real spread
+          // A CONE, AIMED UP: lateral spread stays narrow and every seed carries real upward speed. A burst that
+          // spreads equally in all directions on a flat plane is what reads as "coming at the camera".
+          p.vx=Math.cos(sa)*(0.5+Math.random()*0.7)*pw*(window._BF_SHOT_SPREAD||0.5);
+          p.vy=-(EM.up||2.4)*(1.0+Math.random()*0.55)*pw*(window._BF_SHOT_UP||0.5);
+          if(!window._BF_SHOT_T)window._BF_SHOT_T=performance.now();              // tell the flower it just fired
+        } } } }
+    // THE FLOWER SPINS. Its seats orbit (faster toward the centre), so nobody ever arrives and parks — they are
+    // still travelling when the letters call them, and the handover keeps whatever momentum they had.
+    if(_MAND>0&&!_bloomed){ const _ts=e/1000;
+      for(const p of particles){ if(p.released||p.mr==null)continue;
+        const a=_mandalaAngle(p,_ts);
+        p.tx=cx+Math.cos(a)*p.mr; p.ty=cy+Math.sin(a)*p.mr*0.92; } }
+    // PEEL OFF THE FLOWER, straight to the letters. Each particle leaves on its OWN beat (p.rel) with a tangential
+    // kick, so the bloom unwinds into the logo as a swirl instead of the whole cloud switching target on one frame.
+    if(_MAND>0&&!_bloomed&&e>=_MAND){ let all=true;
+      for(const p of particles){
+        if(p.released)continue;
+        // Released on ITS own clock: never before the shared hold, and never before it has had a real outward
+        // flight of its own — so a late launcher still shoots out and swirls instead of being yanked straight in.
+        const _relAt=Math.max(_MAND, (p.born||0)+(window._MAJIA_FLY_MIN||380))+p.rel;
+        if(p.launched && e>=_relAt){ p.released=true; p.loose=true; _released0=true; p.tx=p.lx; p.ty=p.ly;
+          const dx=p.x-cx, dy=p.y-cy, dl=Math.hypot(dx,dy)||1, sw=(window._MAJIA_RELEASE_SWIRL||1.9);
+          p.vx+=(-dy/dl)*sw; p.vy+=(dx/dl)*sw;                   // keep the vortex's tangential motion through the handover
+          p.k*=(window._MAJIA_RELEASE_K||1.35); }                // and pull a little harder to the letter so nothing dawdles
+        else all=false; }
+      if(all)_bloomed=true; }
+    if(window._BOOT_DJ!==false){ if(e>=(reduce?1300:(window._MAJIA_SETTLE_MS||3950)+_MAND))settle(); }   // the slowest-damped chips ring for ~1.4s; cutting at 2950 chopped their tail off               // DJ merge: settle + STAY (the gate's tap advances); boombox mode keeps the auto-fade
+    else if(e>=HOLD_UNTIL){ finish(); }
+    if(reduce){ ctx.clearRect(0,0,W,H); drawSolid(1); drawEyebrow(1); drawPresents(1); return; }
+    const lock=clamp01((e-LOCK_START)/(FREEZE_AT-LOCK_START));
+    _majE=e;
+    for(const p of particles) step(p,lock);
+    ctx.clearRect(0,0,W,H);
+    const solid=clamp01((e-SOLID_AT)/SOLID_IN);
+    const intro=clamp01(e/450);
+    const partA=0.95*intro;
+    const R=150,G=224,B=255;
+    const tissueA=intro*(1-clamp01(lock))*(window._MAJIA_TISSUE_A||0.3);
+    if(tissueA>0.02&&edges.length){
+      const TH=S*3.4,TH2=TH*TH;
+      ctx.lineWidth=1; ctx.strokeStyle=`rgba(${R},${G},${B},${tissueA})`;
+      ctx.beginPath();
+      for(let k=0;k<edges.length;k++){ const a=particles[edges[k][0]],b=particles[edges[k][1]];
+        if(a.loose===false&&b.loose===false) continue;   // both ends SEATED -> no web (this lingering grid was the residual squares)
+        const dx=a.x-b.x,dy=a.y-b.y; if(dx*dx+dy*dy<TH2){ ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); } }
+      ctx.stroke();
+    }
+    ctx.lineCap='round'; ctx.lineWidth=2.0;
+    // ── SHARD MODE ── each particle carries its exact CELL of the wordmark and blits it, so the swarm settling
+    //   reconstitutes the logo perfectly. While a shard is still travelling it tumbles (ang0, unwinding to 0 as it
+    //   arrives) so you see a real fragment of a letter turning into place, not a square. window._MAJIA_SHARD=false
+    //   drops back to the old sliver/square swarm.
+    const _web=(window._MAJIA_WEB!==false)&&_wordImg;
+    const _shard=(!_web)&&(window._MAJIA_SHARD!==false)&&_wordImg;
+    if(_web){
+      ctx.globalAlpha=partA; const _wd=_wordDPR||1;
+      for(const p of particles){
+        if(p.launched===false)continue;
+        const cs=p.cs||S, half=cs*0.5;
+        const sp=Math.hypot(p.vx,p.vy), sf=clamp01(sp/(p.maxSpeed*0.85));
+        if(sf<0.02 && p.rot>-0.012 && p.rot<0.012 && p.loose===false && p.released!==false){
+          // SETTLED: exact cell on the grid, so neighbours butt up and MAJIA reconstructs pixel-perfect
+          try{ ctx.drawImage(_wordImg, p.sx*_wd, p.sy*_wd, cs*_wd, cs*_wd, p.tx-half, p.ty-half, cs, cs); }catch(_){}
+        } else {
+          // IN FLIGHT: a chip of the mark, rotated about its centre; the fast ones drag a faint neon streak
+          ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+          try{ ctx.drawImage(_wordImg, p.sx*_wd, p.sy*_wd, cs*_wd, cs*_wd, -half, -half, cs, cs); }catch(_){}
+          ctx.restore();
+          if(sp>0.7){ const A=p.col; ctx.strokeStyle=`rgba(${A[0]},${A[1]},${A[2]},${0.55*partA*sf})`;
+            ctx.beginPath(); ctx.moveTo(p.x-p.vx*1.4,p.y-p.vy*1.4); ctx.lineTo(p.x,p.y); ctx.stroke(); }
+        }
+      }
+      ctx.globalAlpha=1;
+    } else if(_shard){
+      for(const p of particles){
+        if(p.launched===false)continue;
+        const sp=Math.hypot(p.vx,p.vy), sf=clamp01(sp/(p.maxSpeed*0.85));
+        const cs=p.cs||S, near=clamp01(1-sf*2.4);           // 1 when it has arrived, 0 while flying fast
+        const tumble=(p.ang0||0)*(1-near);                  // unwinds its scatter spin as it lands
+        const scl=(0.62+0.38*near);                         // flies a touch smaller, snaps to full size on arrival -> a subtle 'pop'
+        ctx.save();
+        ctx.globalAlpha=partA;
+        ctx.translate(p.x,p.y); ctx.rotate(p.rot*(1-near)+tumble); ctx.scale(scl,scl);
+        // a whisper of neon while it moves, gone the instant it seats -> the swarm reads coloured/energetic, the logo reads white
+        if(sf>0.04){ ctx.shadowColor=`rgba(${p.col[0]},${p.col[1]},${p.col[2]},${0.9*sf})`; ctx.shadowBlur=cs*1.6; }
+        try{ ctx.drawImage(_wordImg, p.sx-cs/2, p.sy-cs/2, cs, cs, -cs/2, -cs/2, cs, cs); }catch(_){}
+        ctx.restore();
+        if(sp>0.7){ ctx.strokeStyle=`rgba(${p.col[0]},${p.col[1]},${p.col[2]},${0.6*partA*sf})`;
+          ctx.beginPath(); ctx.moveTo(p.x-p.vx*1.4,p.y-p.vy*1.4); ctx.lineTo(p.x,p.y); ctx.stroke(); }
+      }
+    } else
+    for(const p of particles){
+      if(p.launched===false)continue;          // still inside the bud
+      const sp=Math.hypot(p.vx,p.vy),sf=clamp01(sp/(p.maxSpeed*0.85));
+      const r=(150+(p.col[0]-150)*sf)|0,g=(224+(p.col[1]-224)*sf)|0,b=(255+(p.col[2]-255)*sf)|0;
+      ctx.fillStyle=`rgba(${r},${g},${b},${partA})`;
+      const HS=1.2+1.7*sf;
+      if(sf<0.02&&p.rot>-0.012&&p.rot<0.012){
+        // AT REST it is a PIECE of the letter, not a dot: a sliver lying along its bit of the stroke, and sized
+        // to the sampling grain so neighbours butt up and the mark reads SOLID. The old 2.4px square was a fixed
+        // size regardless of grain, so at any spacing above ~2.4 the letters came out stippled.
+        const _L=S*(window._MAJIA_PC_LEN||1.5), _Wd=S*(window._MAJIA_PC_W||0.85);
+        if(p.ang!=null){ ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.ang); ctx.fillRect(-_L*0.5,-_Wd*0.5,_L,_Wd); ctx.restore(); }
+        else { const _q=S*(window._MAJIA_PC_FILL||1.05); ctx.fillRect(p.x-_q*0.5,p.y-_q*0.5,_q,_q); } }
+      else { ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot); ctx.fillRect(-HS,-HS,HS*2,HS*2); ctx.restore(); }
+      if(sp>0.7){ ctx.strokeStyle=`rgba(${r},${g},${b},${0.7*partA})`;
+        ctx.beginPath(); ctx.moveTo(p.x-p.vx*1.4,p.y-p.vy*1.4); ctx.lineTo(p.x,p.y); ctx.stroke(); }
+    }
+    if(solid>0 && window._MAJIA_WEB===false) drawSolid(solid);
+    drawEyebrow(clamp01((e-(SOLID_AT-300))/800));
+    // PRESENTS IS THE FOURTH BEAT: MAJIA / STUDIOS / the rig arrives and settles / then PRESENTS eases in beneath it.
+    { let _pa;
+      if(window._BOOT_FLY!==false){
+        if(window._BF_DECK_DOCKED && draw._preT0==null)draw._preT0=e;               // stamped the moment the deck finishes its dock
+        _pa=(draw._preT0==null)?0:clamp01((e-draw._preT0-(window._BF_PRE_DELAY||240))/(window._MAJIA_PRE_FADE||850));
+      } else _pa=clamp01((e-(window._MAJIA_PRE_AT!=null?window._MAJIA_PRE_AT:(3300+_PATHMS)))/(window._MAJIA_PRE_FADE||850));
+      drawPresents(_pa); }
+  }
+  function drawSolid(a){
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font=`900 ${F}px Orbitron, sans-serif`;
+    if('letterSpacing' in ctx) ctx.letterSpacing=(F*0.03)+'px';
+    ctx.shadowColor='transparent'; ctx.shadowBlur=0;
+    ctx.fillStyle=(window._MAJIA_INK||'#e75572');   // ...and the crisp solid that fades in over them matches it exactly
+    if(!(_mkOK && _mkFill(ctx,cx,cy,F*(window._MAJIA_CAP!=null?window._MAJIA_CAP:0.72)))) ctx.fillText('MAJIA',cx,cy);
+    ctx.restore();
+  }
+  function drawEyebrow(a){
+    if(a<=0) return;
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font=`400 ${eyeF}px Orbitron, sans-serif`;
+    if('letterSpacing' in ctx) ctx.letterSpacing=(eyeF*0.62)+'px';
+    // The rule and the word under the mark are ONE LOCKUP with it. Left cool-grey against an auburn MAJIA they
+    // read as two different logos stacked, so they take the same ink at a lower weight. _MAJIA_SUB overrides.
+    ctx.fillStyle=(window._MAJIA_SUB||'rgba(239,145,164,0.92)');
+    ctx.fillText('STUDIOS',cx+eyeF*0.31,eyeY);
+    const tw=ctx.measureText('STUDIOS').width+eyeF*0.62;
+    ctx.strokeStyle=(window._MAJIA_RULE||`rgba(231,85,114,${0.62*a})`); ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(cx-tw/2-eyeF*1.4,eyeY); ctx.lineTo(cx-tw/2-eyeF*0.4,eyeY);
+    ctx.moveTo(cx+tw/2+eyeF*0.4,eyeY); ctx.lineTo(cx+tw/2+eyeF*1.4,eyeY);
+    ctx.stroke(); ctx.restore();
+  }
+  function drawPresents(a){
+    if(a<=0||window._BOOT_DJ===false) return;   // back for the collapsed intro: white PRESENTS between STUDIOS and the turntable
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font=`400 ${preF}px Orbitron, sans-serif`;
+    if('letterSpacing' in ctx) ctx.letterSpacing=(preF*0.34)+'px';
+    ctx.fillStyle='rgba(240,248,255,0.88)';
+    ctx.fillText('PRESENTS', cx, preY);
+    ctx.restore();
+  }
+
+  // THE STUTTER: the logo used to build in the FALLBACK font, start animating, and then — the moment Orbitron
+  // arrived — rebuild every target, re-randomise every particle AND reset the clock. That is the hitch.
+  // Fix in two parts:
+  //  1. ACTUALLY LOAD the font before building. document.fonts.ready resolves immediately when nothing has
+  //     REQUESTED the face yet, so waiting on it alone still built in the fallback (wrong letterforms).
+  //     document.fonts.load() issues the request and resolves when the face is usable.
+  //  2. If it still lands late (cap expired, slow network), SOFT-RETARGET instead of rebuilding: keep every
+  //     particle's position and velocity and just move its destination onto the corrected glyph, so they glide
+  //     into the right letterforms. No snap, no restart, no clock reset.
+  const _begin=()=>{ if(_ready||fading)return; _ready=true;
+    resize();                                  // the one and only full build
+    start=performance.now();                   // clock starts when the first real frame can draw
+    requestAnimationFrame(draw); };
+  function retarget(){                          // rebuild the glyph, re-aim the EXISTING particles at it
+    if(!_ready||fading)return;
+    const old=particles;
+    buildTargets();
+    const sc=F/130, n=targets.length, np=new Array(n);
+    for(let i=0;i<n;i++){ const t=targets[i], src=old[i];
+      if(src){ const _m=_mandalaPos(i,n);
+        src.lx=t.x; src.ly=t.y; src.mx=_m.x; src.my=_m.y; src.mr=_m.r; src.ma=_m.a;   // glyph AND flower re-fitted to the new frame
+        src.sx=(t.cx0!=null?t.cx0:t.x); src.sy=(t.cy0!=null?t.cy0:t.y); src.cs=t.cs;
+        if(src.released)     { src.tx=t.x;   src.ty=t.y; }           // already peeling -> keep heading for the letter
+        else if(_mandMs()>0) { src.tx=_m.x;  src.ty=_m.y; }          // still blooming -> stay on the (re-fitted) flower
+        else                 { src.tx=t.x;   src.ty=t.y; }
+        np[i]=src; }
+      else { const a=Math.random()*Math.PI*2,d=F*(0.40+Math.random()*1.0);
+        const _m=_mandalaPos(i,n);
+        np[i]={ lx:t.x,ly:t.y, mx:_m.x,my:_m.y, mr:_m.r, ma:_m.a, released:!!_bloomed, rel:Math.random()*(window._MAJIA_RELEASE_SPREAD||200), tx:(_bloomed?t.x:_m.x),ty:(_bloomed?t.y:_m.y), x:t.x+Math.cos(a)*d, y:t.y+Math.sin(a)*d, vx:0,vy:0,
+          maxSpeed:(9.0+Math.random()*10.0)*sc*speed, k:0.018+Math.random()*0.045, damp:0.86+Math.random()*0.075,
+          sx:(t.cx0!=null?t.cx0:t.x), sy:(t.cy0!=null?t.cy0:t.y), cs:t.cs, launched:true, loose:true,
+          col:GRID_COLS[(Math.random()*GRID_COLS.length)|0], rot:(Math.random()-0.5)*4.0, rotV:(Math.random()-0.5)*0.6, trot:0 }; } }
+    particles=np;
+  }
+  { let _done=false; const go=()=>{ if(_done)return; _done=true;
+      requestAnimationFrame(()=>requestAnimationFrame(_begin)); };   // two frames of headroom so the first paint isn't the build frame
+    let _fontP=Promise.resolve();
+    try{ if(document.fonts&&document.fonts.load){
+      _fontP=Promise.all([ document.fonts.load('900 120px Orbitron'), document.fonts.load('700 20px Orbitron') ])
+        .then(()=>document.fonts.ready).catch(()=>{}); } }catch(_){}
+    _fontP.then(()=>{ if(_ready)retarget(); else go(); });          // ready already -> glide onto the real glyph; not yet -> build straight into it
+    setTimeout(go,(window._MAJIA_FONT_WAIT||1600));                 // cap: a stalled webfont can never hold the boot
+  }
+})();
+</script>
 <div id="intro" hidden><div class="bar top"></div><div class="bar bot"></div><div id="introFoot">
   <button id="startB">enter</button>
   <div id="introHint">it has been going without you &middot; tap anywhere to land</div>
@@ -243,7 +855,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b65';
+const BUILD = 'b67';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -1274,13 +1886,24 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         float bw = smoothstep(0.0, 0.2, t) * smoothstep(1.0, 0.8, t);
         c += hue((1.0 - t) * 0.72) * bw * uRainbow * smoothstep(0.0, 0.08, h) * 0.52 * (1.0 - cl * 0.7);
       }
+      // Out of the air. This used to sit at the very end of the shader and mix eighty per
+      // cent of the way to near-black -- over the top of the galaxy and both moons, which
+      // had already been drawn. So the further out the camera went, the emptier the sky
+      // got, which is exactly backwards: from up here the air is what disappears and the
+      // things beyond it are what remain. It goes in HERE instead, before them.
+      if (uHigh > 0.001) {
+        float limb = exp(-abs(h) * 8.0);
+        vec3 space = mix(vec3(0.011, 0.019, 0.048), c * 1.18, limb * 0.88);
+        c = mix(c, space, uHigh * 0.8);
+      }
       // The galaxy, in a band across one axis of the sky. It is behind the clouds and behind
-      // the bodies, so it goes in before both.
+      // the bodies, so it goes in before both. Brighter with height for the same reason the
+      // stars are: nothing is in front of it any more.
       if (uNeb > 0.003) {
         float g = fbm(d.xz*2.3 + d.y*1.7 + 5.0);
         float band = exp(-pow(abs(dot(d, vec3(0.36, 0.58, -0.73)))*2.4, 2.0));
         c += mix(vec3(0.34,0.17,0.55), vec3(0.10,0.36,0.46), fbm(d.xz*1.1 + 9.0))
-             * g*g*g * band * uNeb * (1.0 - cl*0.85);
+             * g*g*g * band * uNeb * (1.0 - cl*0.85) * (1.0 + uHigh * 1.4);
       }
       {   // the two bodies, the far one first so the near one draws over it
         vec4 ob = orb(d, uOrbB, 0.052, vec3(0.80,0.82,0.90), 0.0, sn);
@@ -1289,17 +1912,6 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         c = mix(c, oa.rgb, oa.a * (1.0 - cl*0.9));
       }
       c += uFlash * vec3(0.85, 0.92, 1.05) * (0.45 + 0.9 * cl);
-      // thinner air with height, and thinnest straight up: the horizon keeps its haze
-      // From up there the sky is not paler at the horizon and darker overhead -- that is
-      // what it looks like from inside it. It is black in every direction except a thin
-      // bright ring where the air is seen edge-on, and the first attempt at this keyed the
-      // darkening to the zenith, which left the whole pale band the camera actually looks
-      // at untouched. Key it to the limb instead.
-      if (uHigh > 0.001) {
-        float limb = exp(-abs(h) * 8.0);
-        vec3 space = mix(vec3(0.011, 0.019, 0.048), c * 1.18, limb * 0.88);
-        c = mix(c, space, uHigh * 0.8);
-      }
       gl_FragColor = vec4(c, 1.0);
     }`
 }));
@@ -1312,9 +1924,9 @@ const stars = (() => {
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('sz', new THREE.BufferAttribute(s, 1));
   const m = new THREE.Points(g, new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending,
-    uniforms: { uOp: { value: 0 }, uT: { value: 0 } },
-    vertexShader: `attribute float sz; varying float vS; uniform float uT;
-      void main(){ vS = sz*(0.6+0.4*sin(uT*1.7+sz*40.0)); vec4 mv=modelViewMatrix*vec4(position,1.); gl_PointSize=sz*2.2; gl_Position=projectionMatrix*mv; }`,
+    uniforms: { uOp: { value: 0 }, uT: { value: 0 }, uBig: { value: 1 } },
+    vertexShader: `attribute float sz; varying float vS; uniform float uT, uBig;
+      void main(){ vS = sz*(0.6+0.4*sin(uT*1.7+sz*40.0)); vec4 mv=modelViewMatrix*vec4(position,1.); gl_PointSize=sz*2.2*uBig; gl_Position=projectionMatrix*mv; }`,
     fragmentShader: `varying float vS; uniform float uOp;
       void main(){ vec2 c=gl_PointCoord-0.5; float a=smoothstep(0.5,0.0,length(c)); gl_FragColor=vec4(vec3(1.0,0.97,0.92)*vS*0.4, a*uOp); }`
   }));
@@ -2254,15 +2866,21 @@ class Stump {
 const FAR = MOBILE
   ? { MossTuft: 100, Bloom: 135, Litter: 115, Stump: 135, Mound: 115, Hopper: 115, Skimmer: 135, Burrower: 145, Weaver: 155, Drifter: 165, Grazer: 195, Walker: 300, Leviathan: 320 }
   : { MossTuft: 165, Bloom: 215, Litter: 185, Stump: 215, Mound: 185, Hopper: 185, Skimmer: 215, Burrower: 230, Weaver: 245, Drifter: 260, Grazer: 300, Walker: 420, Leviathan: 440 };
+// Sub-pixel from orbit. On the title screen the whole island is in frame at once and every
+// moss tuft on it is still being drawn: 2,600 calls and five million triangles for a picture
+// in which none of them covers a pixel. Past this boom length they simply do not exist.
+const TINY = { MossTuft: 1, Bloom: 1, Litter: 1, Mushroom: 1, Stump: 1, Mound: 1, Hopper: 1, Burrower: 1, Skimmer: 1 };
 let farT = 0;
 function cullFar(dt) {
   if ((farT -= dt) > 0) return;
   farT = .3;
+  const tiny = camS.r > 240;
   const x = cam.tgt.x, z = cam.tgt.z;
   for (const list of [world.plants, world.structures, world.creatures])
     for (const o of list) {
       const r = FAR[o.constructor.name];
       if (!r || !o.alive || !o.g) continue;
+      if (tiny && TINY[o.constructor.name]) { o.g.visible = false; continue; }
       const dx = o.pos.x - x, dz = o.pos.z - z;
       o.g.visible = dx * dx + dz * dz < r * r;
     }
@@ -3151,6 +3769,26 @@ const CREATURE_RIGS = {
   },
 };
 
+// Getting hit. Nothing in this game kills an animal, and nothing here starts: a hit throws.
+// The creature leaves the ground, tumbles, bounces, lies there a moment and gets up
+// frightened. That is the interaction that was asked for and it is also the honest one --
+// there are no death clips and no ragdoll, and a tumbling rigid body reads better than a
+// walk cycle playing while something slides backwards.
+const KNOCK = {
+  // Range goes as speed times airtime, and both used to divide by the animal's size -- so a
+  // tinker went thirty-four units and a mossback went one, off numbers only 1.8x apart. The
+  // lift divides by the root of it instead, which keeps the arc reading the same for both
+  // and leaves size deciding how far, not whether.
+  push: 14,        // horizontal speed a full hit imparts, before the animal's own size
+  lift: 9,         // and how much of it goes upward (divided by the root of the size)
+  spin: 8,         // tumble rate, radians a second
+  g: 26,           // it falls faster than a real thing would; a slow arc reads as floaty
+  bounce: .4, friction: .52, hops: 3, stop: 3.2,
+  rest: 1.0,       // how long it lies there before it gathers itself up
+  ghost: 2.5,      // and it may pass through obstacles for this long, having been thrown
+  body: .5,        // what running into it is worth against a full plasma hit
+  bodyAt: 6,       // and how fast he has to be going for a body-check to count at all
+};
 class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
@@ -3291,6 +3929,15 @@ class Creature {
         // push was a flat .3 whoever it was, so the biggest creature on the island had no
         // more weight than the smallest.
         const mine = this.rad * this.rad, yours = pl.rad * pl.rad, k = yours / (mine + yours);
+        // Run into it hard enough and it goes over rather than being nudged. Below the
+        // threshold it is the old shove, which is what you want when you are picking your
+        // way through a herd.
+        const sp = Math.hypot(pl.vx, pl.vz);
+        if (sp > KNOCK.bodyAt && !this.fling) {
+          this.knock(pl.pos, KNOCK.body * clamp(sp / MOVE.max, .4, 1.1));
+          pl.pushX -= dx / d * 3; pl.pushZ -= dz / d * 3;
+          return;
+        }
         this.pos.x += dx / d * over * k * .6; this.pos.z += dz / d * over * k * .6;
         pl.pushX -= dx / d * over * (1 - k) * 5; pl.pushZ -= dz / d * over * (1 - k) * 5;
         this.steer.x += dx / d * 1.7 * k; this.steer.z += dz / d * 1.7 * k;
@@ -3316,6 +3963,68 @@ class Creature {
     this.met = 0; this.metWho = null; this.abandon();
     if (radius > 0) for (const o of world.creatures)
       if (o !== this && o.alive && o.constructor === this.constructor && o.alarm <= 0 && this.dist(o.pos) < radius) o.spook(from, 0);
+  }
+  // Thrown. `force` is 1 for a direct plasma hit and less for the edge of a blast or a
+  // shoulder barge.
+  knock(from, force = 1) {
+    if (!this.alive || this.aquatic) return;
+    const dx = this.pos.x - from.x, dz = this.pos.z - from.z, d = Math.hypot(dx, dz) || 1;
+    const heft = Math.max(.7, this.rad);          // a grovewalker takes a lot more moving than a hopper
+    const f = force * KNOCK.push / heft;
+    this.fling = {
+      x: this.pos.x, y: this.pos.y, z: this.pos.z,
+      vx: dx / d * f, vz: dz / d * f, vy: KNOCK.lift * force / Math.sqrt(heft),
+      sx: rnd(-KNOCK.spin, KNOCK.spin), sz: rnd(-KNOCK.spin, KNOCK.spin),
+      rx: 0, rz: 0, hops: 0, rest: 0,
+    };
+    this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
+    world.effects.push(new Burst(this.pos.x, this.pos.y + this.rad, this.pos.z, '#ffe0a8', 8, .7));
+  }
+  // While it is in the air it owns its own position: none of the steering, the obstacle
+  // resolve or the pose runs. Returns true for as long as that is true.
+  tumble(dt) {
+    const K = KNOCK, k = this.fling;
+    if (k.rest > 0) {                              // down, gathering itself up
+      k.rest -= dt;
+      k.rx = lerp(k.rx, 0, Math.min(1, dt * 7)); k.zz = 0;
+      k.sz = lerp(k.sz, 0, Math.min(1, dt * 7));
+      k.rz = lerp(k.rz, 0, Math.min(1, dt * 7));
+      if (k.rest <= 0) { this.fling = null; this.spook(this.pos, 0); return false; }
+    } else {
+      k.vy -= K.g * dt;
+      // It cannot be thrown into the sea or off a cliff it could never stand on: the far side
+      // of a bad step is a wall it bounces off, which also stops a hit near the shore
+      // launching a mossback out to drown.
+      // Skid along the edge rather than stopping dead on it: a straight step into the sea
+      // still leaves the step along the shore available, and a mossback knocked near the
+      // waterline used to travel one unit because both were thrown away together.
+      const nx = k.x + k.vx * dt, nz = k.z + k.vz * dt;
+      if (this.terrainOK(nx, nz)) { k.x = nx; k.z = nz; }
+      else if (this.terrainOK(nx, k.z)) { k.x = nx; k.vz *= -.2; }
+      else if (this.terrainOK(k.x, nz)) { k.z = nz; k.vx *= -.2; }
+      // Thrown flat into a cliff: it stops there and drops, rather than reversing a quarter of
+      // its speed every substep, which just oscillates in place. A creature that reports being
+      // thrown nowhere was pinned against something, which is a real thing to be.
+      else { k.vx = k.vz = 0; if (!k.thud) { k.thud = 1; world.effects.push(new Burst(k.x, k.y + .5, k.z, '#cdbf9c', 7, .6)); } }
+      k.y += k.vy * dt;
+      k.rx += k.sx * dt; k.rz += k.sz * dt;
+      const g = groundY(k.x, k.z);
+      if (k.y <= g && k.vy < 0) {
+        if (++k.hops < K.hops && -k.vy > K.stop) {
+          k.y = g; k.vy = -k.vy * K.bounce; k.vx *= K.friction; k.vz *= K.friction;
+          k.sx *= K.friction; k.sz *= K.friction;
+          world.effects.push(new Burst(k.x, g + .3, k.z, '#cdbf9c', 6, .55));
+        } else { k.y = g; k.vy = 0; k.vx = k.vz = 0; k.rest = K.rest; }
+      }
+    }
+    const gy = groundY(k.x, k.z);
+    this.pos.set(k.x, Math.max(k.y, gy), k.z);
+    this.rx = k.x; this.rz = k.z; this.px0 = k.x; this.pz0 = k.z; this.animK = 0; this.moving = 0;
+    this.g.position.set(k.x, Math.max(k.y, gy), k.z);
+    alignTo(this.g, k.x, k.z, .35); this.g.rotateY(this.heading);
+    this.g.rotateX(k.rx); this.g.rotateZ(k.rz);
+    if (this.rig) this.rig.mixer.update(dt);      // keep the skin ticking so it is not a statue
+    return true;
   }
   // Somewhere to run to: away from whatever it is, and somewhere it can stand.
   pickFlee(from) {
@@ -3514,6 +4223,7 @@ class Creature {
     if (this.legs.length) this.animLegs(this.gait);
   }
   update(dt) {
+    if (this.fling && this.tumble(dt)) return;
     if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); }
     else if (!this.senses(dt)) this.think(dt);
     this.locomote(dt);
@@ -6087,6 +6797,7 @@ SKY.day  = { top: new THREE.Color(0x070a24), mid: new THREE.Color(0x14224e), low
 // with only the sun, the clouds and the bodies drawn over it. It is tinted by the time of day
 // either way, so the cycle survives.
 SKY.envK = .82;
+SKY.space = col('#04050e');       // what the dome fades to once you are outside the air
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
 const tmpG = new THREE.Color();
 const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new THREE.Vector3(), _skyV2 = new THREE.Vector3();
@@ -6122,6 +6833,15 @@ function updateSky() {
   tmpG.setRGB(.44, .47, .53).multiplyScalar(greyL);
   for (const k of ['top', 'mid', 'low', 'fog']) tmpC[k].lerp(tmpG, oc);
   tmpC.hs.lerp(tmpG, oc * .8); tmpC.sun.lerp(tmpG, oc * .5);
+  // Far enough out and the atmosphere is behind you: the dome stops being a sky and becomes
+  // space. Nothing in the walking game gets here -- it takes a boom of several hundred units
+  // -- but the title screen lives out here, and a title screen of a whole planet wants stars
+  // behind it rather than a blue afternoon. The HDRI skyline goes with it, for the same
+  // reason: a horizon is a thing you have from the ground.
+  const camUp = camera.position.length() - PLANET.R;
+  const spaceK = smooth(PLANET.R * .35, PLANET.R * 1.5, camUp);
+  if (spaceK > .001) for (const k of ['top', 'mid', 'low']) tmpC[k].lerp(SKY.space, spaceK);
+  skyUni.uEnvK.value = SKY.envK * (1 - spaceK) * (ENV.map ? 1 : 0);
   skyUni.uTop.value.copy(tmpC.top); skyUni.uMid.value.copy(tmpC.mid); skyUni.uLow.value.copy(tmpC.low);
   mist.c0.copy(tmpC.fog); mist.c1.copy(tmpC.fog);
   rain.mat.uniforms.uC0.value.copy(tmpC.fog).lerp(tmpG.setRGB(1, 1, 1), .45); rain.mat.uniforms.uC1.value.copy(tmpC.low).lerp(tmpG, .6);
@@ -6129,13 +6849,13 @@ function updateSky() {
   // Haze was tuned for a flat world where the far shore was the furthest thing there was.
   // From the air the whole planet is in frame and that density erases it, so the fog thins
   // out with altitude -- which is also what real haze does, being a thing of the low air.
-  const camAlt = Math.max(0, camera.position.length() - PLANET.R);
+  const camAlt = Math.max(0, camUp);
   scene.fog.color.copy(tmpC.fog);
   // Thinner than it was. It is already a small number -- half a percent at a hundred units --
   // but it is the only thing standing between the lens and a horizon worth looking at, and
   // this world has a lot more distance in it than the one those figures were chosen for.
   scene.fog.density = lerp(.0038, .0013, dayK) * (170 / W) * (1 + WX.rain * .8 + WX.storm * .5)
-    / (1 + Math.max(0, camAlt - 20) * .012);
+    / (1 + Math.max(0, camAlt - 20) * .012) * (1 - spaceK * .95);
   // Less fill, deeper shadow. The old rig lit every face of everything and left no dark side
   // for a glow to sit against.
   // Less fill than it had, because the old rig lit every face of everything and left no dark
@@ -6150,8 +6870,11 @@ function updateSky() {
   scene.fog.color.lerp(FOG_HIGH, skyUni.uHigh.value * .55);
   // The stars never go all the way out: thin air, and it is the single cheapest thing that
   // says this is not Earth. A third of their brightness survives noon.
-  skyUni.uNeb.value = lerp(.10, .85, Math.max(world.night, skyUni.uHigh.value * .8)) * (1 - WX.cloud * .7);
-  stars.material.uniforms.uOp.value = Math.max(.34, Math.max(world.night, skyUni.uHigh.value * .85));
+  skyUni.uNeb.value = lerp(.10, .95, Math.max(world.night, skyUni.uHigh.value * .8, spaceK)) * (1 - WX.cloud * .7 * (1 - spaceK));
+  stars.material.uniforms.uOp.value = Math.max(.34, Math.max(world.night, skyUni.uHigh.value * .85, spaceK));
+  // Two pixels of star is a speck on a phone from the ground and nothing at all against a
+  // whole planet. Out in space they are the only thing in the frame besides the world.
+  stars.material.uniforms.uBig.value = 1 + spaceK * 1.8;
   stars.material.uniforms.uT.value = world.clock; stars.rotation.y = world.clock * .004;
   M.lantern.emissiveIntensity = lerp(.4, 3.2, world.night);
   for (const m of M.bloom) m.emissiveIntensity = lerp(.3, 1.6, world.night);
@@ -6193,11 +6916,20 @@ function eraName() {
 // travel is one cosine so it never starts, stops or turns a corner.
 const INTRO = {
   on: true,
-  wide: { r: 224, pol: .80, up: 30 },      // the planet
+  // The wide end is a long way out on purpose. At 224 the planet fills the frame and reads
+  // as a hillside; at 640 it is a ball with space around it and the star field behind, which
+  // is what the title screen is meant to be -- the whole world floating there with all its
+  // regions on it, the ship going round the outside, and the name standing on top of it.
+  wide: { r: 640, pol: 1.02, up: 0 },      // the world, entire
   near: { r:  74, pol: 1.24, up: 8 },      // the meadow
-  craneT: 52,                              // seconds from one end to the other and back
+  // And the plaque grows with the boom, so it holds its size on screen the whole way in: a
+  // monument you could walk around at seventy units, and something the size of a mountain
+  // range standing on the world at six hundred. Without this the title screen's own title is
+  // four pixels tall. It eases back to 1 during the descent.
+  plaque: 7,
+  craneT: 62,                              // seconds from one end to the other and back
   sweep: .46, rate: .055,                  // how far the shot swings across the letters
-  t: 0, dive: 0, diveT: 3.4, r0: 0
+  t: 0, dive: 0, diveT: 5.2, r0: 0, plaque0: 1
 };
 const introEl = document.getElementById('intro'), startB = document.getElementById('startB');
 function introFrame(dt) {
@@ -6218,6 +6950,7 @@ function introFrame(dt) {
   cam.pol0 = lerp(W1.pol, N1.pol, e);
   cam.r = lerp(W1.r, N1.r, e);
   cam.idle = 0;
+  if (world.title) world.title.scale.setScalar(INTRO.plaque0 = clamp(cam.r / N1.r, 1, INTRO.plaque));
   // and send the ship round the island. This is the sortie it has always known how to fly
   // -- lift, one lap at altitude, land -- which is switched off in play because it is his
   // ship now, and is exactly the right thing for a title screen.
@@ -6230,6 +6963,7 @@ function introFrame(dt) {
 function startGame() {
   if (!INTRO.on) return;
   INTRO.on = false; INTRO.r0 = cam.r; INTRO.dive = INTRO.diveT;
+  if (weap.ready) armB.hidden = false;
   introEl.classList.add('go');
   setTimeout(() => introEl.remove(), 1000);
   document.body.classList.remove('intro');
@@ -6240,8 +6974,12 @@ function startGame() {
 function diveFrame(dt) {
   INTRO.dive = Math.max(0, INTRO.dive - dt);
   const k = 1 - INTRO.dive / INTRO.diveT;
-  cam.r = lerp(INTRO.r0, 20, k * k * (3 - 2 * k));
-  if (INTRO.dive <= 0) cam.rWalk = 0;
+  const e = k * k * (3 - 2 * k);
+  cam.r = lerp(INTRO.r0, 20, e);
+  // The plaque comes back down to the size it is in the world as you arrive at it, so the
+  // thing you were reading from orbit turns out to be a monument standing in a meadow.
+  if (world.title) world.title.scale.setScalar(lerp(INTRO.plaque0, 1, e));
+  if (INTRO.dive <= 0) { cam.rWalk = 0; if (world.title) world.title.scale.setScalar(1); }
 }
 
 // ---------- camera + input ----------
@@ -6266,8 +7004,20 @@ const GIMBAL = {
   // a jolt in the frame -- but it stiffens as the gap opens, so a step is smoothed and a
   // cliff is not left half a field behind.
   lag: { xz: 9, up: 2.6, down: 4.2, catch: 13, gap: [2.5, 11] },
-  lead: .30, leadMax: 7,             // seconds of travel the frame is pushed ahead of him
-  recentre: 1.6, recentreAt: 1.1,    // how briskly, and how soon, it works its way back behind him
+  // Both of these are off, and it is worth writing down why rather than deleting them.
+  //
+  // `lead` pushed the frame ahead of him along his heading, and `recentre` worked the boom
+  // back behind him while he walked. Together they mean the view answers the LEFT stick:
+  // push left, and the frame slides left and then the whole camera swings round to follow.
+  // That is a common third-person convention and it is not what was asked for -- a drone
+  // that keeps you framed is not a drone that re-aims every time you change direction. The
+  // left stick moves the body; only the right stick and a drag move the view.
+  //
+  // Everything else about the drone stays: the slow vertical follow that smooths a rock and
+  // catches a cliff, the climb over ridges, the tilt for the ground ahead. Those never touch
+  // the azimuth. Set either number above zero to have the old behaviour back.
+  lead: 0, leadMax: 7,
+  recentre: 0, recentreAt: 1.1,
   clear: 2.5,                        // how far off the ground the boom flies
   // The climb. `maxK` is how far straight up it will go to clear a ridge, as a fraction of
   // the boom -- a fixed ceiling was wrong in both directions: thirty units is a silly climb
@@ -6411,8 +7161,11 @@ function followCam(dt) {
     cam.az += d * Math.min(1, dt * G.recentre * sp * smooth(G.recentreAt, G.recentreAt + .9, cam.idle));
   }
 
-  const P = G.pitch;
-  const ah = groundY(cam.tgt.x + Math.sin(p.faceH) * P.ahead, cam.tgt.z + Math.cos(p.faceH) * P.ahead);
+  // The tilt is read along the way the LENS is pointing, not the way he is walking. Off his
+  // heading it was a second, smaller way for the left stick to move the frame: strafe across
+  // a slope and the pitch rocked with the stick.
+  const P = G.pitch, look = cam.az + Math.PI;
+  const ah = groundY(cam.tgt.x + Math.sin(look) * P.ahead, cam.tgt.z + Math.cos(look) * P.ahead);
   const rise = clamp((ah - (cam.tgt.y - 3.4)) / P.ahead, -1, 1);
   cam.polBias = lerp(cam.polBias, clamp(-rise * P.k, -P.max, P.max), Math.min(1, dt * P.rate));
 }
@@ -6490,6 +7243,14 @@ const DRONE = {
   // him at the ground lights the scene he is standing in and only ever grazes the body.
   spot: { ang: 1.02, pen: .78, decay: 1.3, dist: 62, day: .45, night: 3.4 },
   fill: { dist: 13, day: .16, night: .9 },   // and just enough not to leave the hull black
+  // It gets out of the way rather than being walked through, and it aims the dodge at where
+  // he WILL be -- steering off his current position is always a beat late and a sprint walks
+  // straight through it.
+  evade: { lead: .5, veer: 4.6, veerK: 52, space: 2.1, side: 1.4 },
+  // And it can be hit. A shoulder barge at speed or a bolt sends it tumbling away, and the
+  // spring that normally holds it beside him is slackened while it flies so it actually
+  // travels instead of being yanked back on the next frame.
+  knock: { push: 17, lift: 7.5, time: 1.5, spin: 14, slack: .1, at: 5 },
 };
 
 // ---------- the wanderer: a body to move through the world with ----------
@@ -6681,7 +7442,14 @@ const WEAPON = {
   hold: .34,                       // how long the shot clip owns the arms
   camEase: 2.6,                    // how briskly the camera swings in behind the aim
   out: 1.6, high: .62,             // where the bolt actually leaves him: clear of the body, chest high
-  bolt: { speed: 74, life: 2.2, rad: 2.2, blast: 14, size: 3.6, grace: 2.4 },
+  // `ride` is the whole of "it should follow the topology of the ground": the bolt holds a
+  // height above the *ground under it* rather than flying a straight line, so it goes over a
+  // rise, drops into a hollow and carries on instead of burying itself in the first bank. It
+  // climbs at `climb` and settles at `fall`, both in units a second, so a slope steeper than
+  // about thirty degrees still stops it -- which is right. A plasma bolt should splash on a
+  // cliff; it should not splash on a hummock.
+  bolt: { speed: 74, life: 2.2, rad: 2.2, blast: 14, size: 3.6, grace: 1.8,
+          ride: 2.6, climb: 44, fall: 13, zaps: 4 },
   // The assist. Whatever is in the cone gets a reticle and a gentle pull — on the shot's
   // heading, so a near miss becomes a hit, and through that on the camera, so the thing you
   // are locked onto drifts toward the middle of the frame. Neither is a snap: aim at empty
@@ -6729,7 +7497,7 @@ function attachWeapon(r) {
     weap.bone.add(inst);
     weap.model = inst; inst.visible = false;
     weap.ready = true;
-    armB.hidden = false;
+    if (!INTRO.on) armB.hidden = false;
     console.info('[weapon] muzzle marker ' + tipD.toFixed(1) + ' joint units out; barrel reaches '
       + reach.toFixed(3) + ' in the file, so the blaster is scaled ' + k.toFixed(1) + '\u00d7.');
   });
@@ -6794,15 +7562,9 @@ function fireBolt() {
     _wmz.y = Math.max(_wmz.y, p.pos.y + RIG.height * WEAPON.high);
   }
   weap.lastMuzzle.copy(_wmz);
-  // Lift the shot toward whatever is locked, so an animal standing on a rise is not fired
-  // under. With nothing locked the bolt travels flat.
-  let dy = 0;
-  if (p.lock) {
-    const d = Math.hypot(p.lock.pos.x - _wmz.x, p.lock.pos.z - _wmz.z);
-    if (d > 2) dy = clamp((p.lock.pos.y + 1.2 - _wmz.y) / d, -.55, .55);
-  }
-  const nk = 1 / Math.hypot(1, dy);
-  world.effects.push(new Bolt(_wmz.x, _wmz.y, _wmz.z, Math.sin(p.aimH) * nk, dy * nk, Math.cos(p.aimH) * nk));
+  // No elevation to work out any more: the bolt rides the ground, which puts it at the
+  // height of an animal's chest wherever the animal happens to be standing.
+  world.effects.push(new Bolt(_wmz.x, _wmz.y, _wmz.z, Math.sin(p.aimH), 0, Math.cos(p.aimH)));
   world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#cdf4ff', 4.5, .28));
 }
 
@@ -6864,6 +7626,11 @@ class Bolt {
       sp.position.z = -k * B.size * 2.2;
       this.g.add(sp); this.parts.push(sp);
     }
+    // The crackle. Four small hot sprites thrown to new places inside the ball every frame,
+    // half of them dark at any moment -- which at thirty frames a second is what electricity
+    // looks like. Cheaper and better than an arc mesh, and it costs no allocation after this.
+    this.zaps = [];
+    for (let i = 0; i < B.zaps; i++) { const z = glow('#eaf6ff', B.size * .3, .9); this.g.add(z); this.zaps.push(z); }
     this.g.position.set(x, y, z);
     this.g.quaternion.setFromUnitVectors(_wZ, _wv.set(dx, dy, dz).normalize());
     scene.add(this.g);
@@ -6875,11 +7642,19 @@ class Bolt {
     // wide enough for a bolt to pass clean through a mudlark.
     for (let i = 0; i < 2; i++) {
       const h = dt * .5;
-      this.x += this.vx * h; this.y += this.vy * h; this.z += this.vz * h;
+      this.x += this.vx * h; this.z += this.vz * h;
+      const floor = groundY(this.x, this.z) + B.ride;
+      this.y = this.y < floor ? Math.min(floor, this.y + B.climb * h) : Math.max(floor, this.y - B.fall * h);
       if (this.strike()) return;
     }
     this.g.position.set(this.x, this.y, this.z);
+    this.g.rotation.z += dt * 9;
     this.parts[0].scale.setScalar(B.size * (.86 + Math.sin(this.t * 46) * .14));
+    for (const z of this.zaps) {
+      z.position.set(rnd(-1, 1), rnd(-1, 1), rnd(-1.7, .5)).multiplyScalar(B.size * .44);
+      z.scale.setScalar(B.size * rnd(.12, .34));
+      z.material.opacity = Math.random() < .55 ? rnd(.4, 1) : 0;
+    }
   }
   strike() {
     const B = WEAPON.bolt;
@@ -6900,16 +7675,32 @@ class Bolt {
       if (dx * dx + dz * dz < r * r) solid = true;
     });
     if (solid) { this.pop('#d8ffb0', 9, .85); return true; }
+    // The drone is fair game. It is beside him rather than in front, so this only lands when
+    // it has drifted into the shot -- which is exactly the sort of thing worth landing.
+    if (!player.free && !player.aboard) {
+      const dx = fairy.pos.x - this.x, dy = fairy.pos.y - this.y, dz = fairy.pos.z - this.z;
+      if (dx * dx + dy * dy + dz * dz < 6.8) { droneKnock(this.x, this.y, this.z, 1.5); this.pop('#bfe8ff', 8, .7); return true; }
+    }
+    // The ground no longer stops it -- it rides over the ground. What stops it is ground it
+    // could not climb: a bank steeper than the climb rate, which it has now driven into.
     const g = groundY(this.x, this.z);
-    if (this.y <= g + .3) { this.y = g + .35; this.pop(this.y < SEA + .5 ? '#9fe8ff' : '#ffd9a0', 10, .9); return true; }
+    if (this.y < g - .1) { this.y = g + .3; this.pop(this.y < SEA + .5 ? '#9fe8ff' : '#ffd9a0', 10, .9); return true; }
     return false;
   }
   pop(hex, size, life) {
+    const B = WEAPON.bolt;
     this.alive = false;
     world.effects.push(new Burst(this.x, this.y, this.z, hex, size, life));
     world.effects.push(new Burst(this.x, this.y, this.z, '#ffffff', size * .42, life * .45));
-    for (const o of world.creatures)
-      if (o.alive && o.spook && Math.hypot(o.pos.x - this.x, o.pos.z - this.z) < WEAPON.bolt.blast) o.spook(this, 10);
+    for (const o of world.creatures) {
+      if (!o.alive) continue;
+      const d = Math.hypot(o.pos.x - this.x, o.pos.z - this.z);
+      if (d > B.blast) continue;
+      // Right where it went off, it throws. Out at the edge of the blast it only startles.
+      if (d < B.rad + (o.rad || 1) + 1.6 && o.knock) o.knock(this, 1);
+      else if (d < B.blast * .45 && o.knock) o.knock(this, clamp(1 - d / (B.blast * .45), .25, .6));
+      else if (o.spook) o.spook(this, 10);
+    }
   }
   dispose() { scene.remove(this.g); for (const sp of this.parts) sp.material.dispose(); }
 }
@@ -7270,6 +8061,7 @@ const FAIRY = {
 const fairy = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), off: new THREE.Vector3(2.2, 2.4, -.5),   // replaced from the rig's own bounds once it loads
   t: rnd(100), dart: rnd(2, 5), want: new THREE.Vector3(), lit: 1,
+  hit: 0, spin: 0, roll: 0,      // knocked: how long it is still flying, how fast it is tumbling, and where that has got to
 };
 // The drone's wash. This was the fairy's trail -- half-unit additive sprites at nearly full
 // opacity, which through a bloom pass are two-unit white holes, and there are a hundred and
@@ -7317,6 +8109,17 @@ function standOn(x, z, feetY) {
   return top;
 }
 
+// Knock the drone off. Called by a bolt that catches it and by his own shoulder.
+function droneKnock(x, y, z, force = 1) {
+  const f = fairy, K = DRONE.knock;
+  const dx = f.pos.x - x, dy = f.pos.y - y, dz = f.pos.z - z, d = Math.hypot(dx, dy, dz) || 1;
+  f.vel.x += dx / d * K.push * force;
+  f.vel.z += dz / d * K.push * force;
+  f.vel.y += (dy / d * .4 + .8) * K.lift * force;
+  f.hit = Math.max(f.hit || 0, K.time * Math.min(2, force));
+  f.spin = (f.spin || 0) + K.spin * force;
+  world.effects.push(new Burst(f.pos.x, f.pos.y, f.pos.z, '#cdf2ff', 7, .6));
+}
 function updateFairy(dt) {
   const p = player, f = fairy;
   if (p.aboard) {   // she rides in with him: parked in the hull, lamp out, no trail
@@ -7331,13 +8134,17 @@ function updateFairy(dt) {
     p.pos.y + f.off.y + Math.sin(f.t * 1.9) * .38 + Math.sin(f.t * .53) * .5,
     p.pos.z - f.off.x * sn + f.off.z * c + Math.cos(f.t * .61) * 1.1 + Math.cos(f.t * 1.31) * .3);
   // a soft spring with heavy damping: it never quite catches up, and drifts past on a stop
-  // stiffer than it looks: the damping below is what makes it lag, not a weak spring
-  const k = p.free ? 26 : 11;
+  // stiffer than it looks: the damping below is what makes it lag, not a weak spring.
+  // While it is tumbling from a hit the spring is nearly off, so it really does fly away
+  // before it comes back.
+  f.hit = Math.max(0, (f.hit || 0) - dt);
+  const knocked = f.hit > 0 ? DRONE.knock.slack : 1;
+  const k = (p.free ? 26 : 11) * knocked;
   f.vel.x += (f.want.x - f.pos.x) * k * dt;
   f.vel.y += (f.want.y - f.pos.y) * k * dt;
   f.vel.z += (f.want.z - f.pos.z) * k * dt;
   f.vel.multiplyScalar(Math.max(0, 1 - 4.2 * dt));
-  if ((f.dart -= dt) <= 0) {   // the sudden little flit that makes it read as alive
+  if ((f.dart -= dt) <= 0 && f.hit <= 0) {   // the sudden little flit that makes it read as alive
     f.dart = rnd(1.6, 4.5);
     f.vel.x += rnd(-2.6, 2.6); f.vel.y += rnd(-1, 2.6); f.vel.z += rnd(-2.6, 2.6);
   }
@@ -7346,24 +8153,39 @@ function updateFairy(dt) {
   // its own just parks it against the surface. Steering off first is what reads as alive:
   // it curves away from the body well before it arrives, and the push-out is only there to
   // catch a dart that beat the turn.
+  // It dodges, and it can be hit. The dodge is measured against where he WILL be in half a
+  // second, not where he is, so walking at it does not simply catch it -- and it steers
+  // sideways as well as straight back, which is what makes it read as getting out of the way
+  // rather than being shoved.
   {
-    const dx = f.pos.x - p.pos.x, dz = f.pos.z - p.pos.z, d = Math.hypot(dx, dz);
+    const E = DRONE.evade;
+    const ax = p.pos.x + p.vx * E.lead, az2 = p.pos.z + p.vz * E.lead;
+    const dx = f.pos.x - ax, dz = f.pos.z - az2, d = Math.hypot(dx, dz);
     const ux = d > 1e-3 ? dx / d : 1, uz = d > 1e-3 ? dz / d : 0;
-    if (f.pos.y > p.pos.y - .2 && f.pos.y < p.pos.y + RIG.height * 1.05) {
-      if (d < FAIRY.veer) {
-        const k = 1 - d / FAIRY.veer;
-        f.vel.x += ux * k * k * FAIRY.veerK * dt; f.vel.z += uz * k * k * FAIRY.veerK * dt;
+    if (f.pos.y > p.pos.y - .2 && f.pos.y < p.pos.y + RIG.height * 1.15) {
+      if (d < E.veer && f.hit <= 0) {
+        const kk = 1 - d / E.veer, w = kk * kk * E.veerK * dt;
+        f.vel.x += ux * w; f.vel.z += uz * w;
+        f.vel.x += -uz * w * E.side; f.vel.z += ux * w * E.side;   // and round him, not just back
+        f.vel.y += w * .35;
       }
-      if (d < FAIRY.space) {
-        f.pos.x = p.pos.x + ux * FAIRY.space; f.pos.z = p.pos.z + uz * FAIRY.space;
-        const inward = f.vel.x * ux + f.vel.z * uz;   // cancel only the part heading into him
-        if (inward < 0) { f.vel.x -= ux * inward; f.vel.z -= uz * inward; }
+      // Actually caught. Not a teleport out of him any more -- he knocks it flying, which is
+      // the interaction that was asked for. A stroll into it just nudges it aside.
+      const now = Math.hypot(f.pos.x - p.pos.x, f.pos.z - p.pos.z);
+      if (now < E.space) {
+        const nx = now > 1e-3 ? (f.pos.x - p.pos.x) / now : 1, nz = now > 1e-3 ? (f.pos.z - p.pos.z) / now : 0;
+        f.pos.x = p.pos.x + nx * E.space; f.pos.z = p.pos.z + nz * E.space;
+        const sp = Math.hypot(p.vx, p.vz);
+        if (sp > DRONE.knock.at && f.hit <= 0) droneKnock(p.pos.x, p.pos.y + RIG.height * .5, p.pos.z, clamp(sp / MOVE.max, .4, 1));
+        else { const inward = f.vel.x * nx + f.vel.z * nz;
+          if (inward < 0) { f.vel.x -= nx * inward * 1.6; f.vel.z -= nz * inward * 1.6; } }
       }
     }
   }
-  // a leash, so a dart during a sprint can never strand it half a field away
-  const away = f.pos.distanceTo(f.want);
-  if (away > 5.5) { f.pos.lerp(f.want, 1 - 5.5 / away); f.vel.multiplyScalar(.5); }
+  // a leash, so a dart during a sprint can never strand it half a field away -- but a drone
+  // that has just been shot is allowed to be a long way off for a moment
+  const away = f.pos.distanceTo(f.want), leash = f.hit > 0 ? 40 : 5.5;
+  if (away > leash) { f.pos.lerp(f.want, 1 - leash / away); f.vel.multiplyScalar(.5); }
   const fl = groundY(f.pos.x, f.pos.z) + .5; if (f.pos.y < fl) { f.pos.y = fl; f.vel.y = Math.abs(f.vel.y) * .4; }
   p.lamp.position.copy(f.pos);
   p.lamp.visible = !p.free;
@@ -7380,8 +8202,12 @@ function updateFairy(dt) {
     const yaw = sp2 > .8 ? Math.atan2(f.vel.x, f.vel.z) : p.faceH;
     let d = yaw - p.lamp.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
     p.lamp.rotation.y += d * Math.min(1, dt * DRONE.turn);
-    p.drone.rotation.z = Math.sin(f.t * 1.7) * .06 - clamp(sp2 * .035, 0, .22);   // banks into it
-    p.drone.rotation.x = clamp(-f.vel.y * .05, -.28, .28);
+    // Knocked about, it tumbles; the spin bleeds off and it rights itself.
+    f.spin = (f.spin || 0) * Math.max(0, 1 - dt * 1.5);
+    f.roll = (f.roll || 0) + f.spin * dt;
+    p.drone.rotation.z = Math.sin(f.t * 1.7) * .06 - clamp(sp2 * .035, 0, .22) + f.roll;
+    p.drone.rotation.x = clamp(-f.vel.y * .05, -.28, .28) + f.roll * .6;
+    if (f.spin < .05 && f.roll) f.roll = lerp(f.roll, 0, Math.min(1, dt * 3));
   }
   // The fill only has to keep the hull off black; the cone does the lighting, and because it
   // points past him rather than at him, drifting close no longer washes him out.
@@ -7897,6 +8723,7 @@ function frame(now) {
     const urls = Object.keys(MODELS);
     if (world.clock > 6 || (urls.length > 3 && urls.every(u => MODELS[u].ready || MODELS[u].failed))) {
       booted = true;
+      if (window._majiaFinish) window._majiaFinish();          // the studio mark bows out early on a fast boot
       const b = document.getElementById('boot'); b.style.opacity = 0; setTimeout(() => b.remove(), 1300);
       if (INTRO.on) introEl.hidden = false; else document.body.classList.remove('intro');
     }

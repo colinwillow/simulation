@@ -1476,6 +1476,16 @@ of which read as "the shot comes out of his side":
 
 After: 1.6 ahead, 0.0 to the side, 1.74 up.
 
+**The bolt rides the ground.** It holds `bolt.ride` above whatever is under it rather than
+flying a straight line, so it goes over a rise, drops into a hollow and carries on instead of
+burying itself in the first bank. It climbs at `climb` and settles at `fall`, both in units a
+second, so a slope steeper than about thirty degrees still stops it — which is right: a plasma
+bolt should splash on a cliff and not on a hummock. Because it rides, it is at the height of an
+animal's chest wherever the animal is standing, and the shot needs no elevation solve at all.
+The crackle is four small hot sprites thrown to new places inside the ball every frame with
+half of them dark at any moment, which at thirty frames a second is what electricity looks
+like, and costs no allocation after construction.
+
 ### The camera is a drone
 
 Not a boom bolted to his back. Three separate jobs, all in `followCam` and `solveCam`:
@@ -1499,9 +1509,18 @@ Not a boom bolted to his back. Three separate jobs, all in `followCam` and `solv
   in order until one said "clear". A yes-or-no answer can only pop between rungs, which is why
   walking a ridge looked like the camera was being kicked. Measured on the same steep face:
   **81.5 units a second of vertical jerk descending, down to under ten.**
-* **Recentring** works the boom back behind him — only while he is moving, only once the look
-  control has been quiet for a second, never while he is aiming, and at a rate that scales
-  with his speed. Ninety degrees takes about two seconds.
+* **Recentring and look-ahead are OFF**, and that is the point rather than an oversight. The
+  lead pushed the frame ahead of him along his heading and the recentre worked the boom back
+  behind him; together they mean the *view answers the left stick* — push left, the frame
+  slides left and then the whole camera swings round after it. That is a common third-person
+  convention and it is not what a drone does. The left stick moves the body; only the right
+  stick and a drag move the view. The knobs are still there (`GIMBAL.lead`, `GIMBAL.recentre`)
+  and setting either above zero brings the old behaviour back. The gimbal's tilt was moved off
+  his heading and onto the camera's for the same reason: strafing a slope used to rock the
+  pitch with the stick.
+
+  `check:gait` still runs the recentring test, now as a **tripwire**: "never" is the pass. If
+  it ever reports a time again, something has turned the yaw back on.
 
 `camClear` is now only asked the one question the height field cannot answer: is the lens
 inside a solid? A building you walk about inside is the one thing that test must *not* react
@@ -1512,6 +1531,30 @@ close the lens came to the ground, how many frames it spent inside it, and the w
 then pins a world heading and times the boom coming round. The recentring test has to pin the
 heading: the stick is read in camera space, so holding it sideways while the boom swings turns
 him as fast as the boom arrives and the two chase each other round a circle for ever.
+
+### Getting hit
+
+Nothing in this game kills an animal, and `Creature.knock()` does not start. A hit **throws**:
+the creature leaves the ground, tumbles, bounces, lies there about a second and gets up
+frightened. That is the honest implementation as well as the one that was asked for — there
+are no death clips and no ragdoll, and a tumbling rigid body reads better than a walk cycle
+playing while something slides backwards. While it is in the air it owns its own position:
+none of the steering, the obstacle resolve or the pose runs.
+
+Two things it will not do. It cannot be thrown into the sea or off a cliff — the far side of a
+bad step is a wall it skids along, checked per-axis so a hit near the waterline still travels
+along the shore instead of stopping dead. And thrown flat into a cliff it stops and drops
+rather than reversing a quarter of its speed every substep, which just oscillates in place.
+
+Range goes as speed × airtime and both used to divide by the animal's size, so a tinker went
+thirty-four units and a mossback went one off numbers only 1.8× apart. The lift divides by the
+*root* of the size instead: 11 units and 17 now, which is size deciding how far rather than
+whether. `check:gait` throws two animals of different sizes and reports the distance, the
+apex, whether it got up, and whether it landed somewhere it can stand.
+
+A bolt throws at the point of impact, throws more gently out to half the blast radius, and
+only startles beyond that. Running into an animal above `KNOCK.bodyAt` throws it too; below
+that it is the old shove, which is what you want picking through a herd.
 
 ### The drone
 
@@ -1530,11 +1573,20 @@ three things changed with it:
   sprites at 0.85 opacity, through a bloom pass, are a hundred and seventy two-unit white
   holes following him about. Small, faint and cold now.
 
+It **dodges and it can be hit**, which is the whole of having one. The dodge steers off where
+he *will* be in half a second rather than where he is — off his current position it is always
+a beat late and a sprint walks straight through it — and it steers round him as well as
+straight back, which is what reads as getting out of the way rather than being shoved. Catch
+it anyway at speed, or land a bolt on it, and it goes tumbling: the spring that normally holds
+it beside him is slackened to a tenth while it flies, so it actually travels before it comes
+back, and the leash goes from five units to forty for the same reason.
+
 One trap worth naming: `worldTint` installs an *instance* `onBeforeCompile`, which shadows the
 prototype's, so it has to chain the see-through hole on by hand — and skip it on the same
 terms the prototype skips it. The drone is marked `noHole` because it rides with him and
 hovers inside the hole's radius all day; without the check it would dissolve the one thing
-lighting him.
+lighting him. `shot.js --bright` reports the opt-out for the drone, the blaster and the body,
+because "it goes see-through sometimes" is not a thing to take on trust.
 
 ### The lander
 
@@ -1577,6 +1629,39 @@ fine for a box lying flat and miserable for anything that has to reach between t
 Only the lift's column, the splicer's rings, the cores in the tanks and the landing lights are
 live objects. `npm run check:gait` reports whether it got set down, how many colliders it has,
 how far in he gets from every bearing, and whether the lens ever ends up buried in the belly.
+
+---
+
+### The title screen, and the studio splash
+
+The painted title card is gone. The title screen is the world itself, seen from a **640-unit
+boom** — far enough out that it is a ball with space around it rather than a hillside filling
+the frame — with the name standing on it and the ship going round the outside. The plaque
+grows with the boom so it holds its size on screen the whole way in, and eases back to its
+real size during the descent, so the thing you were reading from orbit turns out to be a
+monument standing in a meadow. Without that it is four pixels tall.
+
+Two things had to change for it to work at that range.
+
+**The dome becomes space when you leave the air.** It already had a `uHigh` blend toward
+near-black — but it sat at the very *end* of the fragment shader and mixed eighty per cent of
+the way over the top of the galaxy and both moons, which had already been drawn. So the
+further out the camera went, the emptier the sky got, which is exactly backwards: from up
+there the air is what disappears and the things beyond it are what remain. It goes in before
+them now, the nebula and the stars are brightened by the same number, and the HDRI skyline
+fades out with it (a horizon is a thing you have from the ground).
+
+**Sub-pixel things stop being drawn.** From orbit the whole island is in frame and every moss
+tuft on it was still being submitted: 2,600 draw calls and five million triangles for a picture
+in which none of them covers a pixel. Past a 240-unit boom the classes in `TINY` do not exist.
+
+The **studio splash** is lifted verbatim out of `colinwillow/robits` at `430ef4f` — same
+studio, same mark, and re-implementing it would only produce a worse copy. It is entirely
+self-contained (the wordmark is inlined as SVG path data) and only two things are wired for
+this game: `window._BOOT_FLY = false`, without which it holds its whole timeline at zero
+waiting for a boot flyover that does not exist here; and the world's loader calls
+`window._majiaFinish()` when the island is ready, so a fast boot dismisses it early. Left
+alone it dissolves itself after about four and a half seconds.
 
 ---
 

@@ -376,12 +376,22 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
       });
       const near = [];
       for (const ps of g.world.psys) near.push({ psys: ps.pts ? ps.pts.geometry.attributes.position.count : 0, rate: +(ps.rate || 0).toFixed(0) });
-      return { drone: !!p.drone, spot: p.spot ? +p.spot.intensity.toFixed(2) : null,
+      // Anything riding with him must be opted out of the see-through hole, or it dissolves
+      // along with the scenery whenever the camera comes in close. Report it rather than
+      // trusting it: the hole is decided at shader-compile time off userData.noHole.
+      const holes = [];
+      const check = (root, tag) => { if (!root) return holes.push(tag + ': MISSING');
+        const bad = []; root.traverse(o => { for (const m of [].concat(o.material || []))
+          if (m && !m.userData.noHole) bad.push(m.name || m.type); });
+        holes.push(tag + ': ' + (bad.length ? bad.length + ' material(s) STILL CUT BY THE HOLE' : 'opted out')); };
+      check(p.drone, 'drone'); check(g.weap.model, 'blaster'); check(p.rig, 'body');
+      return { holes, drone: !!p.drone, spot: p.spot ? +p.spot.intensity.toFixed(2) : null,
         fill: p.light ? +p.light.intensity.toFixed(2) : null, gl: p.gl ? +p.gl.scale.x.toFixed(2) : null,
         sprites: out.filter(o => o.sp).length, lit: out.length, psys: near.length,
         sample: out.slice(0, 14) };
     });
     console.log('bright: drone ' + (b.drone ? 'hung' : 'MISSING') + ' | spot ' + b.spot + ' fill ' + b.fill + ' flare ' + b.gl);
+    console.log('  see-through hole -- ' + b.holes.join(' | '));
     console.log('  ' + b.lit + ' hot objects, ' + b.sprites + ' of them sprites, ' + b.psys + ' particle systems');
     console.log('  ' + JSON.stringify(b.sample));
   }
