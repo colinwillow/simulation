@@ -165,16 +165,20 @@
   .wslot.sel .wico{opacity:1;filter:drop-shadow(0 0 5px rgba(140,240,255,.85))}
   .wslot.sel span:last-child{opacity:.9;color:#bff4ff}
   /* The lock. Positioned in px by the frame loop, so it needs no layout of its own. */
-  #retic{position:fixed;z-index:5;left:0;top:0;width:52px;height:52px;margin:-26px 0 0 -26px;
+  #retic{position:fixed;z-index:5;left:0;top:0;width:64px;height:64px;margin:-32px 0 0 -32px;
     pointer-events:none;will-change:transform,opacity;transition:opacity .16s}
-  #retic span{position:absolute;inset:0;border-radius:50%;
-    border:2px solid rgba(150,246,255,.9);
-    box-shadow:0 0 12px rgba(120,238,255,.75),inset 0 0 10px rgba(120,238,255,.4);
-    animation:reticspin 2.6s linear infinite}
-  #retic span::before,#retic span::after{content:'';position:absolute;left:50%;top:50%;
-    width:2px;height:11px;margin:-26px 0 0 -1px;background:rgba(180,250,255,.95);border-radius:1px}
-  #retic span::after{margin-top:15px}
+  #retic svg{width:100%;height:100%;display:block;overflow:visible;
+    filter:drop-shadow(0 0 5px rgba(120,238,255,.8))}
+  /* transform-box:view-box so the origin is the viewBox's own middle rather than each
+     group's tight bounding box, which would spin every layer about a different point. */
+  #retic svg g,#retic svg path{transform-box:view-box;transform-origin:32px 32px}
+  .rA{animation:reticspin 7s linear infinite}
+  .rB{animation:reticspin 4.2s linear infinite reverse}
+  .rC{animation:reticbrk 1.5s ease-in-out infinite}
+  .rD{animation:reticdia 1.5s ease-in-out infinite}
   @keyframes reticspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+  @keyframes reticbrk{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(.9);opacity:1}}
+  @keyframes reticdia{0%,100%{transform:scale(1);opacity:.5}50%{transform:scale(1.1);opacity:.95}}
   #sticks .knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;
     border-radius:50%;pointer-events:none;
     background:radial-gradient(circle at 38% 32%,rgba(255,242,220,.55),rgba(255,196,124,.26) 58%,rgba(206,132,62,.14));
@@ -860,7 +864,23 @@
     <span class="wico" id="armIco"></span><span class="wlbl" id="armLbl">blaster</span>
   </button>
 </div>
-<div id="retic" hidden><span></span></div>
+<!-- The lock. Drawn rather than borrowed: a slow outer ring of ticks turning one way, a pair
+     of index blades turning the other, four hard corner brackets that breathe, and a lozenge
+     over the animal itself. Alien instrument, not a camera crosshair. -->
+<div id="retic" hidden><svg viewBox="0 0 64 64" fill="none">
+  <g class="rA"><circle cx="32" cy="32" r="25.5" stroke="rgba(150,246,255,.42)" stroke-width="1.1" stroke-dasharray="2.4 8.4"/></g>
+  <g class="rB">
+    <path d="M32 3.4l4.4 6.6h-8.8z" fill="rgba(190,252,255,.95)"/>
+    <path d="M32 60.6l4.4-6.6h-8.8z" fill="rgba(190,252,255,.5)"/>
+    <path d="M3.4 32l6.6-4.4v8.8zM60.6 32l-6.6-4.4v8.8z" fill="rgba(150,246,255,.55)"/>
+  </g>
+  <g class="rC">
+    <path d="M13 21.5V13h8.5M51 21.5V13h-8.5M13 42.5V51h8.5M51 42.5V51h-8.5"
+      stroke="rgba(170,250,255,.95)" stroke-width="2.4" stroke-linecap="butt"/>
+  </g>
+  <path class="rD" d="M32 22.5l8.4 9.5-8.4 9.5-8.4-9.5z" stroke="rgba(200,253,255,.9)" stroke-width="1.3"/>
+  <circle cx="32" cy="32" r="1.5" fill="rgba(226,255,255,1)"/>
+</svg></div>
 <div id="ui">
   <canvas id="mini" title="open the map"></canvas>
   <button id="logT" class="tog icon" title="the island's notes">notes</button>
@@ -918,7 +938,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b79';
+const BUILD = 'b80';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -7864,12 +7884,14 @@ const WEAPON = {
   // heading, so a near miss becomes a hit, and through that on the camera, so the thing you
   // are locked onto drifts toward the middle of the frame. Neither is a snap: aim at empty
   // ground and the bolt goes exactly where the stick pointed.
-  // A nudge, not a lock. `grab` is the fraction of the way onto the bearing the aim settles
-  // at while held, and at .85 it was doing the aiming for you: point roughly at an animal and
-  // the shot went to it, every time, which is not aim assist -- it is auto-aim with a reticle
-  // drawn on. A third of the way, inside a seventeen-degree cone at seventy units, means most
-  // shots go exactly where the stick pointed and one you were already nearly on gets helped.
-  lock: { cone: .30, range: 70, pull: 3.0, grab: .34, keep: .55 },
+  // The assist lives in WHETHER something locks, not in how far toward it the shot gets. A
+  // seventeen-degree cone at seventy units is narrow enough that pointing at open ground
+  // locks nothing and the shot goes exactly where the stick pointed -- which is the subtlety
+  // that was wanted. But once a reticle is actually ON an animal, the shot has to go to that
+  // animal: at a third of the way there the reticle was drawing a promise the gun did not
+  // keep, which is worse than no assist at all. `grab` is 1 and `pull` is the rate he swings
+  // onto it, so it is a lead-on rather than a snap.
+  lock: { cone: .30, range: 70, pull: 5.0, grab: 1, keep: .55 },
 };
 
 // ---------- the net gun ----------
@@ -8220,6 +8242,81 @@ function setChargeRing(k) {
   if (chgRing._full !== full) { chgRing._full = full; chgRing.classList.toggle('full', !!full); }
 }
 
+// ---------- where it will land ----------
+// A wind-up you cannot see the end of is a guess, so the arc is solved forward from the same
+// numbers hurl() will use -- the animal's own heft included, because a mossback does not go
+// as far as a tinker off the same wind-up -- and the answer is drawn on the ground: a ring at
+// the landing point with the arc dashed out to it. Instrument, not puddle: it has ticks.
+const TMARK = { dashes: 14, steps: 34, h: .055, r: 1.5, cool: '#8ff0ff', hot: '#ffd2a0' };
+const _tmCool = new THREE.Color(TMARK.cool), _tmHot = new THREE.Color(TMARK.hot);
+let tmark = null;
+function buildThrowMark() {
+  const g = new THREE.Group(); g.userData.noHole = 1;
+  const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(TMARK.cool), transparent: true,
+    opacity: .55, side: THREE.DoubleSide, depthWrite: false });
+  mat.userData.noHole = 1;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(.84, 1, 44), mat); ring.rotation.x = -Math.PI / 2;
+  const pip = new THREE.Mesh(new THREE.RingGeometry(.3, .38, 20), mat); pip.rotation.x = -Math.PI / 2; pip.position.y = .03;
+  g.add(ring, pip);
+  for (let i = 0; i < 3; i++) {                       // three ticks outside the ring
+    const a = i / 3 * Math.PI * 2 - .13;
+    const t = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.36, 4, 1, a, .26), mat);
+    t.rotation.x = -Math.PI / 2; t.position.y = .03; g.add(t);
+  }
+  g.scale.setScalar(TMARK.r);
+  scene.add(g);
+  const dashes = [];
+  for (let i = 0; i < TMARK.dashes; i++) { const s = glow(TMARK.cool, .5, .5); scene.add(s); dashes.push(s); }
+  return { g, mat, dashes, ring, pip };
+}
+// Walks the arc in fixed steps until it meets the ground, filling `out` with the samples it
+// passed through. Returns how many it wrote.
+const _tmArc = new Float32Array(TMARK.steps * 3);
+function throwArc(power) {
+  const p = player, c = p.carry;
+  const f = lerp(THROW.speed[0], THROW.speed[1], power) / Math.max(.7, c ? (c.rad || 1) : 1);
+  const hx = Math.sin(p.aimH), hz = Math.cos(p.aimH), h = TMARK.h;
+  let x = p.pos.x, z = p.pos.z, vy = f * THROW.lift;
+  let y = c ? c.pos.y : p.pos.y + RIG.height * .6;
+  let n = 0;
+  for (let i = 0; i < TMARK.steps; i++) {
+    x += hx * f * h; z += hz * f * h; vy -= KNOCK.g * h; y += vy * h;
+    const gy = groundY(x, z);
+    const done = y <= gy;
+    if (done) y = gy;
+    _tmArc[n * 3] = x; _tmArc[n * 3 + 1] = y; _tmArc[n * 3 + 2] = z; n++;
+    if (done) break;
+  }
+  return n;
+}
+function throwMarkStep(show, power) {
+  if (!tmark) { if (!show) return; tmark = buildThrowMark(); }
+  if (!show) {
+    if (tmark.g.visible) { tmark.g.visible = false; for (const d of tmark.dashes) d.visible = false; }
+    return;
+  }
+  const n = throwArc(power);
+  const ex = _tmArc[(n - 1) * 3], ey = _tmArc[(n - 1) * 3 + 1], ez = _tmArc[(n - 1) * 3 + 2];
+  tmark.g.visible = true;
+  tmark.g.position.set(ex, ey + .07, ez);
+  alignTo(tmark.g, ex, ez, .9);
+  tmark.g.rotateY(world.clock * .7);                  // it turns slowly, so it reads as live
+  tmark.g.scale.setScalar(TMARK.r * (1 + power * .5));
+  tmark.mat.color.copy(_tmCool).lerp(_tmHot, power);
+  tmark.mat.opacity = .42 + power * .3 + (power > .995 ? Math.sin(world.clock * 11) * .12 : 0);
+  // The dashes thin out toward him: dense at the target end, so the eye goes to the ring.
+  for (let i = 0; i < tmark.dashes.length; i++) {
+    const d = tmark.dashes[i];
+    const k = (i + 1) / (tmark.dashes.length + 1);
+    const s = Math.min(n - 1, Math.round(k * k * (n - 1)));
+    d.visible = true;
+    d.position.set(_tmArc[s * 3], _tmArc[s * 3 + 1] + .12, _tmArc[s * 3 + 2]);
+    d.scale.setScalar(.22 + k * .5);
+    d.material.opacity = .16 + k * .5;
+    d.material.color.copy(tmark.mat.color);
+  }
+}
+
 // The right stick belongs to the throw while his arms are full, the same way it belongs to
 // the aim while the blaster is out. Returns true while it does, so the caller knows not to
 // orbit the camera with it. A tap is still SET DOWN: a tap is under .3 of travel and this
@@ -8228,7 +8325,7 @@ function stepThrow(dt, rx, ry) {
   const p = player;
   if (!p.carry || p.liftT > 0 || p.placeT > 0 || p.aboard || p.free) {
     if (p.throwAim) { p.throwAim = 0; p.throwK = 0; }
-    setChargeRing(0); return false;
+    setChargeRing(0); throwMarkStep(false); return false;
   }
   const mag = Math.hypot(rx, ry);
   if (mag > THROW.at) {
@@ -8248,6 +8345,7 @@ function stepThrow(dt, rx, ry) {
     let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
     cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
     setChargeRing(Math.max(p.throwK, .06));       // a sliver from the first frame, so it reads as armed
+    throwMarkStep(true, p.throwK);
     return true;
   }
   if (p.throwAim) {                               // let go: it goes
@@ -8257,10 +8355,10 @@ function stepThrow(dt, rx, ry) {
       ? (p.throwRise - THROW.rise[0]) / (THROW.rise[1] - THROW.rise[0])
       : p.throwK;
     hurlCarried(clamp(power, THROW.min, 1), quick);
-    p.throwK = 0; setChargeRing(0);
+    p.throwK = 0; setChargeRing(0); throwMarkStep(false);
     return true;
   }
-  setChargeRing(0);
+  setChargeRing(0); throwMarkStep(false);
   return false;
 }
 function hurlCarried(power, quick) {
@@ -8379,7 +8477,11 @@ function stepWeapon(dt, rx, ry) {
     if (!p.aiming) { p.aiming = 1; p.aimAz = cam.az; p.aimAdj = 0; }
     const sa = Math.sin(p.aimAz), ca = Math.cos(p.aimAz);
     const raw = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
-    p.lock = pickTarget(raw + p.aimAdj);
+    // Chosen from the TRUE stick heading, not from the corrected one. Feeding the corrected
+    // heading back in was a loop: once the aim had swung onto an animal, the test for what to
+    // aim at was being made from a bearing already glued to it, so pointing the stick
+    // somewhere else could not shake it off.
+    p.lock = pickTarget(raw);
     // The ease is a correction that accumulates while the aim is held, not a fraction
     // reapplied to a fresh stick reading every frame -- which is what it was, and which meant
     // holding an aim for a second still left it a good five degrees off the animal. It
@@ -8394,6 +8496,10 @@ function stepWeapon(dt, rx, ry) {
     cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
   } else if (p.aiming) {
     p.aiming = 0;
+    // Locked: the shot leaves on the animal's exact bearing, taken this frame rather than
+    // from wherever the eased heading had got to. The muzzle sits a metre or two down that
+    // same line, so the ray still passes through the animal.
+    if (p.lock && p.lock.alive) { p.aimH = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z); p.heading = p.aimH; }
     if (p.wpn === 'net') fireNet(); else fireBolt(p.charge);
     p.charge = 0; p.lock = null;
   }
@@ -9045,7 +9151,10 @@ function updatePlayer(dt) {
   // Aiming, he faces the aim -- always now, not only when standing still. That used to be a
   // moonwalk because the only armed gait was a forward walk; with the strafes and the
   // reversed walk in, travelling one way while facing another is the whole point of them.
-  if (player.aiming) player.heading = player.aimH;
+  // Through the recoil as well as through the aim: letting go used to hand his heading back
+  // to the walk on the very frame the shot left, so a locked shot was fired by a man already
+  // turning away from it.
+  if (player.aiming || player.shootT > 0) player.heading = player.aimH;
   // Winding up a throw turns him to face it too -- you throw where you are looking.
   if (player.throwAim) player.heading = player.aimH;
   // The dodge takes the wheel: its own heading, its own speed curve, no steering. The rest of
@@ -9173,7 +9282,7 @@ function updatePlayer(dt) {
   g.position.copy(player.pos);
   // heading is where the stick points; faceH is where the body has got round to yet
   { let d = player.heading - player.faceH; d = Math.atan2(Math.sin(d), Math.cos(d));
-    player.faceH += d * Math.min(1, dt * (player.aiming ? 17 : 9)); }
+    player.faceH += d * Math.min(1, dt * (player.aiming || player.shootT > 0 || player.throwAim ? 17 : 9)); }
   if (!player.fly && player.swim < .5) { alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.faceH); }
   else if (!player.fly) {   // in the water: lie along the wave, a little more so at speed
     const n = waveNormal(player.pos.x, player.pos.z);
