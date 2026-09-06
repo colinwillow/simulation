@@ -16,8 +16,19 @@ That's it.
 
 **Do not run, unless he explicitly asks:**
 - `tools/shot.js` screenshots — ~10 minutes each under swiftshader.
-- `npm run check:shader` / `check:sim` / `check:gait` — only when he asks, or when
-  chasing a bug he has already reported and reading the code isn't settling it.
+- `npm run check:gait` — **minutes, not seconds.** An earlier version of this file
+  called it sub-second; that was wrong. It builds the whole world and then plays
+  thirty scripted cases at 30 fps of simulated time.
+- `npm run check:shader` (~2s) / `check:sim` — only when he asks, or when chasing a
+  bug he has already reported and reading the code isn't settling it.
+
+**What the probes cannot see.** Every tool in `tools/` runs headless with no WebGL
+and no network, so **no GLB ever loads**. Nothing they report is evidence about a
+clip, a bone, a blend weight or a pose — `gait.js` fakes the rig outright (its dodge
+case sets `rollT` by hand and never calls `flickRoll`). For anything about the
+animation, read the file directly with `@gltf-transform/core` instead; that is how
+the knotted wrists, the finger curl and the roll's dead lead-in were all pinned
+down, in seconds, without a render.
 
 **Never:**
 - Background waiter loops (`until ! pgrep ...; do sleep N; done`). They time out, get
