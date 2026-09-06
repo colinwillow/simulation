@@ -938,7 +938,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b80';
+const BUILD = 'b81';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3496,6 +3496,17 @@ function attachRig(parent, cfg, done) {
       pickUp: pickPose(e.anims, cfg.pickUp),
       hold: pickPose(e.anims, cfg.hold),
     };
+    // See RIG.stillFingers for why. Cloned rather than edited in place, because the clips
+    // belong to the cached file and every future instance of this model would inherit the
+    // edit -- and the clone keeps the ORIGINAL NAME, because the stride and floor caches
+    // below are keyed on it and the mixer keys actions on the object, not the name.
+    if (cfg.stillFingers) for (const k of ['idle', 'walk', 'run', 'jumpStart', 'jumpAir', 'jumpLand', 'swim', 'swimIdle', 'roll']) {
+      const cl = clips[k];
+      if (!cl || !cl.tracks.some(t => cfg.stillFingers.test(t.name))) continue;
+      const c2 = cl.clone(); c2.name = cl.name;
+      c2.tracks = c2.tracks.filter(t => !cfg.stillFingers.test(t.name));
+      clips[k] = c2;
+    }
     // Retreating: the forward walk, cloned so it can have an action of its own, run backwards.
     if (clips.rifleWalk) { clips.rifleBack = clips.rifleWalk.clone(); clips.rifleBack.name = clips.rifleWalk.name + '__back'; }
     // Braced. rifle_idle is at ease -- the gun is down and he is standing about -- which is
@@ -3732,6 +3743,7 @@ function stepRig(r, dt, speed, grounded, ctx) {
   if (a.run) a.run.timeScale = clamp(speed / (r.runSpeed || ref * 3), .75, 1.6);
   if (a.rifleRun) a.rifleRun.timeScale = a.run ? a.run.timeScale : 1;
   if (a.rifleShoot) a.rifleShoot.timeScale = 1.35;
+  if (a.pickUp) a.pickUp.timeScale = 2;      // the stoop was slow enough to feel like a cutscene
   if (a.swim) a.swim.timeScale = clamp(speed / 6, .6, 1.6);
   if (a.jumpLand) a.jumpLand.timeScale = 1.5;
   if (a.jumpStart) a.jumpStart.timeScale = 2;    // the crouch has to be over by the time he lifts
@@ -4554,15 +4566,17 @@ class Creature {
         this.heading = Math.atan2(-dx, -dz);        // dragged backwards, facing away from him
       }
     }
-    this.moving = 0; this.moveK = lerp(this.moveK, 0, Math.min(1, dt * 5));
-    // Plenty of animation, no ground covered, which is exactly the read.
-    this.animK = lerp(this.animK, .26 + Math.abs(Math.sin(world.clock * 7 + this.phase)) * .3, Math.min(1, dt * 7));
-    this.heading += Math.sin(world.clock * 5.5 + this.phase) * dt * 1.2;
+    // It runs flat out and goes nowhere -- which is what an animal in a net does, and reads
+    // far better than an idle. The rig is handed a full-speed number while the body stays
+    // pinned; the primitive-bodied species get the same thing through animK.
+    this.moving = 1; this.moveK = lerp(this.moveK, 1, Math.min(1, dt * 6));
+    this.animK = lerp(this.animK, 1, Math.min(1, dt * 6));
+    this.heading += Math.sin(world.clock * 5.5 + this.phase) * dt * 1.6;   // and it fights the direction too
     const kR = Math.min(1, dt * 12);
     this.rx = lerp(this.rx, this.pos.x, kR); this.rz = lerp(this.rz, this.pos.z, kR);
     this.px0 = this.pos.x; this.pz0 = this.pos.z; this.stall = 0; this.pinned = 0;
     this.pose(dt); this.trackHead(dt);
-    if (this.rig) stepRig(this.rig, dt, 0, true, { top: this.speed * 1.45, runAt: .78, runFull: .98 });
+    if (this.rig) stepRig(this.rig, dt, this.speed * 1.45, true, { top: this.speed * 1.45, runAt: .78, runFull: .98 });
     return true;
   }
   update(dt) {
@@ -7724,6 +7738,17 @@ const RIG = {
   rifleLeft: 'rifle_strafe_left', rifleRight: 'rifle_strafe_right',
   rifleShoot: 'rifle_shoot_stationary_01',
   roll: 'roll',
+  // The knotted wrists. Measured out of the GLB rather than guessed at: these clips came from
+  // a human library and curl the finger joints into a relaxed fist -- 24 to 54 degrees off
+  // bind on the idle, and up to 127 on the walk. On a hand with four long claws that is not a
+  // fist, it is a knot, and it is what the hands have looked like since the first animated
+  // export. Nothing in the skeleton is wrong and nothing recent caused it: the last three
+  // exports are identical to the degree in every hand bone. Drop the finger tracks from the
+  // unarmed gaits and the fingers hold the shape the model was sculpted in; the wrist and arm
+  // tracks are fine and stay. The rifle clips keep theirs, because a grip needs them, and so
+  // do the two poses, which were authored on this rig rather than borrowed -- `holding_item`
+  // already leaves every finger at rest, which is the tell.
+  stillFingers: /Hand(Index|Middle|Ring|Pinky|Thumb)/i,
   // Two poses rather than two animations, and they are used differently. `pickUp` is played
   // as a one-shot whose BLEND is the movement -- fading a standing body into a bent-over pose
   // over a third of a second IS bending over, and needs no keys. `hold` is shoulders and arms
@@ -7910,17 +7935,22 @@ const NET = {
   cool: 1.15,          // slower than the blaster: it is a capture, not a rate of fire
   speed: 46, life: 3.0, grace: 1.8,
   ride: 2.4, climb: 40, fall: 14,     // the same terrain-hugging flight the bolt has
-  rings: 3, spokes: 10,               // 31 nodes, 60 cords. Small enough to relax four times a frame.
-  R0: .5, R1: 3.6,                    // furled at the muzzle, open by the time it arrives
+  rings: 4, spokes: 14,               // 57 nodes, 112 cords. Fine enough to read as mesh at ten units.
+  R0: .5, R1: 4.2,                    // furled at the muzzle, open by the time it arrives
   bloom: .16,                         // seconds from one to the other
   spin: 5.2,
-  iters: 4, grav: 17, damp: .972, gnd: .34,
-  catch: 1.5,                         // how much wider than the animal it has to pass to take it
+  iters: 5, grav: 17, damp: .965, gnd: .34,
+  // A cord PULLS. It does not push -- that is the whole difference between rope and a spring,
+  // and pushing was why the thing sat there as a rigid hoop instead of crumpling onto
+  // anything. A trace of push is left in so it cannot fold flat into a line.
+  give: .5, shove: .1,
+  rim: 2.4,                           // the outer hoop is weighted, the way a cast net's is
+  catch: .95,                         // how much of the open radius has to pass the animal to take it
   hold: 16,                           // seconds an animal stays in it before it works free
   dragHold: 6,                        // and the floor that keeps while you are dragging it
   fade: 7,                            // an empty net on the ground lasts this long
-  cling: .55,                         // how hard the cords are drawn down onto whatever is inside
-  cord: '#cfe8d8', lit: '#8ff0d8',
+  cling: 3.2,                         // how hard the cords are drawn down onto whatever is inside
+  cord: '#cfe8d8', lit: '#8ff0d8', knot: .3,
   drag: { reach: 5.2, rope: 3.4, pull: 30, slow: .42 },
 };
 // What he can carry. The rack is built from this, in this order, so adding a third weapon is
@@ -8005,7 +8035,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null,
   throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
-  wpn: 'blaster', drag: null });
+  wpn: 'blaster', drag: null, approach: null, approachT: 0 });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -8064,10 +8094,16 @@ function attachWeapon(r) {
 const CARRY = {
   reach: 4.6,        // how near you have to be for the prompt to appear
   size: 2.0,         // the biggest thing he can get his arms round, by its collider radius
-  lift: .62,         // how long the stoop owns him
-  place: .42,        // and the set-down
-  blend: .22,        // how much of each is the ramp in and out -- the ramp is the bend
+  lift: .32,         // how long the stoop owns him. Was .62, which read as a cutscene.
+  place: .3,         // and the set-down
+  blend: .11,        // how much of each is the ramp in and out -- the ramp is the bend
   cool: .35,
+  // The prompt reaches 4.6 units and his arms reach about two, so pressing it from the far
+  // end of that had him stooping over open ground while the animal stood a body-length off.
+  // Close the gap first: he walks himself in, then bends.
+  grab: 2.0,         // near enough that the stoop lands on the animal
+  walk: .8,          // how hard he walks himself in
+  walkMax: 2.0,      // and the longest he is allowed to spend doing it before giving up
   drop: 2.0,         // how far in front of him it goes down
   // What "from the spine up" means, in the names this rig's bones actually have.
   //
@@ -8102,7 +8138,7 @@ function carryOffer() {
     if (!p.throwAim) offerAct({ icon: 'put', label: 'SET DOWN', run: setDown });
     return;
   }
-  if (p.armWant || p.carryCool > 0) return;          // both hands are on the blaster
+  if (p.armWant || p.carryCool > 0 || p.approach) return;   // both hands are busy, or he is already walking to it
   let best = null, bd = CARRY.reach;
   for (const o of world.creatures) {
     if (!o.alive || o.carried || o.net || o.aquatic || o.flying || (o.rad || 1) > CARRY.size) continue;
@@ -8111,15 +8147,37 @@ function carryOffer() {
   }
   if (best) offerAct({ icon: 'lift', label: 'PICK UP', run: () => pickUp(best) });
 }
+// Asked for. If it is already within arm's reach he bends now; if it is out at the far end of
+// the prompt's range he walks himself in and bends when he arrives.
 function pickUp(o) {
   const p = player;
   if (!o || !o.alive || p.carry || p.liftT > 0) return;
+  if (Math.hypot(o.pos.x - p.pos.x, o.pos.z - p.pos.z) > CARRY.grab) {
+    p.approach = o; p.approachT = CARRY.walkMax;
+    logMsg('He goes over to it.');
+    return;
+  }
+  beginLift(o);
+}
+function beginLift(o) {
+  const p = player;
+  p.approach = null;
+  if (!o || !o.alive || o.carried || o.net || p.carry || p.liftT > 0) return;
   p.liftT = CARRY.lift; p.carryPend = o;
   o.carried = 1; o.fling = null; o.abandon(); o.wp = null; o.target = null; o.alarm = 0;
   p.heading = Math.atan2(o.pos.x - p.pos.x, o.pos.z - p.pos.z);
   p.vx = p.vz = 0;
   logMsg('He stoops and gets his arms round it.');
   logMsg('Swipe the right stick to throw it, or hold to wind up. A tap sets it down.');
+}
+// The walk-in. It gives up if the animal wanders off, if something else takes it, or if it
+// simply takes too long -- a chase is not what was asked for.
+function stepApproach(dt) {
+  const p = player, o = p.approach;
+  if (!o) return;
+  if (!o.alive || o.carried || o.net || p.carry || p.liftT > 0 || p.aboard || p.free || p.swim > .5
+      || (p.approachT -= dt) <= 0) { p.approach = null; return; }
+  if (Math.hypot(o.pos.x - p.pos.x, o.pos.z - p.pos.z) <= CARRY.grab) beginLift(o);
 }
 function setDown() {
   const p = player;
@@ -8130,6 +8188,7 @@ function setDown() {
 }
 function carryStep(dt) {
   const p = player;
+  stepApproach(dt);
   p.carryCool = Math.max(0, p.carryCool - dt);
   // Anything that needs both hands, or both feet, puts it down where he stands.
   if (p.carry && (p.aboard || p.free || p.swim > .5 || !p.carry.alive)) { p.placeAt = { x: p.pos.x, z: p.pos.z }; p.placeT = 0; finishPlace(); }
@@ -8702,12 +8761,23 @@ class NetShot {
       const i = la[k] * 2, j = lb[k] * 2;
       this.rest[k] = Math.hypot(this.lay[i] - this.lay[j], this.lay[i + 1] - this.lay[j + 1]) * NET.R1;
     }
+    // The outer hoop is weighted, the way the lead line on a cast net is. It is what turns a
+    // sheet into a bag: the rim falls faster than the middle, swings under, and closes.
+    this.heavy = new Uint8Array(n);
+    for (let s = 0; s < S; s++) this.heavy[1 + (R - 1) * S + s] = 1;
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(la.length * 6), 3));
     this.mat = new THREE.LineBasicMaterial({ color: new THREE.Color(NET.cord), transparent: true, opacity: .95 });
     this.mesh = new THREE.LineSegments(this.geo, this.mat);
     this.mesh.frustumCulled = false;                 // the geometry is rebuilt every frame; its bounds are a lie
-    this.g = new THREE.Group(); this.g.add(this.mesh);
+    // A knot at every crossing. Additive points, so at distance the cords fade to a haze and
+    // the knots stay as a constellation -- which is what keeps it legible on a phone.
+    this.kgeo = new THREE.BufferGeometry();
+    this.kgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    this.kmat = new THREE.PointsMaterial({ map: glowTex, color: new THREE.Color(NET.lit), size: NET.knot,
+      sizeAttenuation: true, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false });
+    this.knots = new THREE.Points(this.kgeo, this.kmat); this.knots.frustumCulled = false;
+    this.g = new THREE.Group(); this.g.add(this.mesh, this.knots);
     this.hub = glow(NET.lit, 1.5, .8); this.g.add(this.hub);
     scene.add(this.g);
     this.place(0); this.draw();
@@ -8760,7 +8830,7 @@ class NetShot {
     for (const o of world.creatures) {
       if (!o.alive || o.net || o.carried || o.aquatic || o.flying) continue;
       const dx = o.pos.x - this.x, dy = o.pos.y + (o.rad || 1) * .6 - this.y, dz = o.pos.z - this.z;
-      const r = rad * NET.catch + (o.rad || 1);
+      const r = rad * NET.catch + (o.rad || 1) * .9;
       if (dx * dx + dy * dy + dz * dz < r * r) { this.take(o); return true; }
     }
     let solid = false;
@@ -8778,10 +8848,27 @@ class NetShot {
     this.state = 'wrap'; this.prey = o; o.net = this; this.held = NET.hold;
     o.abandon(); o.wp = null; o.target = null; o.fling = null; o.alarm = 0; o.stall = 0;
     this.px = o.pos.x; this.py = o.pos.y; this.pz = o.pos.z;
-    this.place(1);                                   // open the instant it arrives
+    this.drape(o);
     this.mat.color.set(NET.lit);
     world.effects.push(new Burst(o.pos.x, o.pos.y + (o.rad || 1), o.pos.z, '#9ff0d8', 11, .9));
     logMsg('The net comes down over it. Walk up and take hold to drag it.');
+  }
+  // Re-lay it flat OVER the animal. Leaving it standing where the shot happened to stop was
+  // the whole reason it never looked like it wrapped anything: the disc had been flying
+  // edge-on and stayed edge-on, a hoop planted beside the creature. Now it becomes a sheet
+  // held above its back, slightly domed, thrown down and inward -- so it visibly snaps shut
+  // rather than waiting for gravity to think about it.
+  drape(o) {
+    const R = (o.rad || 1), rad = Math.max(NET.R1 * .82, R * 2.3);
+    const cx = o.pos.x, cy = o.pos.y + o.pivotY() + R * 1.35, cz = o.pos.z;
+    for (let i = 0; i < this.n; i++) {
+      const a = this.lay[i * 2], b = this.lay[i * 2 + 1], i3 = i * 3;
+      const q = a * a + b * b;                       // 0 at the hub, 1 at the rim
+      this.p[i3] = cx + a * rad;
+      this.p[i3 + 1] = cy + (1 - q) * R * .5;        // domed, so the middle lands first
+      this.p[i3 + 2] = cz + b * rad;
+      this.v[i3] = -a * rad * 1.9; this.v[i3 + 1] = -6.5; this.v[i3 + 2] = -b * rad * 1.9;
+    }
   }
   land() { if (this.state !== 'fly') return; this.state = 'ground'; this.place(1); }
   // Let whatever is in it out, and start the net itself fading.
@@ -8804,7 +8891,7 @@ class NetShot {
     for (let i = 0; i < n; i++) {
       const i3 = i * 3;
       p0[i3] = p[i3]; p0[i3 + 1] = p[i3 + 1]; p0[i3 + 2] = p[i3 + 2];
-      v[i3 + 1] -= NET.grav * h;
+      v[i3 + 1] -= NET.grav * (this.heavy[i] ? NET.rim : 1) * h;
       p[i3] += v[i3] * h; p[i3 + 1] += v[i3 + 1] * h; p[i3 + 2] += v[i3 + 2] * h;
     }
     for (let it = 0; it < NET.iters; it++) this.relax();
@@ -8825,7 +8912,10 @@ class NetShot {
       const i = la[k] * 3, j = lb[k] * 3;
       const dx = p[j] - p[i], dy = p[j + 1] - p[i + 1], dz = p[j + 2] - p[i + 2];
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
-      const f = (d - rest[k]) / d * .5, ox = dx * f, oy = dy * f, oz = dz * f;
+      // A cord pulls hard and shoves barely at all. Shoving as hard as it pulls is a spring,
+      // and a net of springs is a hoop that will not crumple onto anything.
+      const f = (d - rest[k]) / d * (d > rest[k] ? NET.give : NET.shove);
+      const ox = dx * f, oy = dy * f, oz = dz * f;
       p[i] += ox; p[i + 1] += oy; p[i + 2] += oz;
       p[j] -= ox; p[j + 1] -= oy; p[j + 2] -= oz;
     }
@@ -8867,6 +8957,10 @@ class NetShot {
       a[o + 3] = p[j] - cx; a[o + 4] = p[j + 1] - cy; a[o + 5] = p[j + 2] - cz;
     }
     this.geo.attributes.position.needsUpdate = true;
+    const kb = this.kgeo.attributes.position.array;
+    for (let i = 0; i < n; i++) { const i3 = i * 3; kb[i3] = p[i3] - cx; kb[i3 + 1] = p[i3 + 1] - cy; kb[i3 + 2] = p[i3 + 2] - cz; }
+    this.kgeo.attributes.position.needsUpdate = true;
+    this.kmat.opacity = .85 * this.op;
     this.g.position.set(cx, cy, cz);
     this.mat.opacity = .95 * this.op;
     this.hub.visible = this.state === 'fly';
@@ -8874,7 +8968,7 @@ class NetShot {
   }
   dispose() {
     if (this.prey) { this.prey.net = null; if (player.drag === this.prey) player.drag = null; }
-    scene.remove(this.g); this.geo.dispose(); this.mat.dispose();
+    scene.remove(this.g); this.geo.dispose(); this.mat.dispose(); this.kgeo.dispose(); this.kmat.dispose();
     if (this.hub.material) this.hub.material.dispose();
   }
 }
@@ -9157,6 +9251,14 @@ function updatePlayer(dt) {
   if (player.aiming || player.shootT > 0) player.heading = player.aimH;
   // Winding up a throw turns him to face it too -- you throw where you are looking.
   if (player.throwAim) player.heading = player.aimH;
+  // Walking himself in to pick something up: he steers, not the stick.
+  if (player.approach && !player.fly && !player.free) {
+    const o = player.approach, dx = o.pos.x - player.pos.x, dz = o.pos.z - player.pos.z;
+    const d = Math.hypot(dx, dz) || 1;
+    player.wx = dx / d; player.wz = dz / d; player.wmag = CARRY.walk;
+    player.heading = Math.atan2(dx, dz);
+    player.moving = lerp(player.moving, CARRY.walk, Math.min(1, dt * 9));
+  }
   // The dodge takes the wheel: its own heading, its own speed curve, no steering. The rest of
   // the frame -- gravity, the ground, the collider -- runs exactly as it does otherwise.
   player.rollCool = Math.max(0, player.rollCool - dt);
