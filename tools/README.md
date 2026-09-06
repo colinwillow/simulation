@@ -1285,9 +1285,20 @@ tint, and the second argument to the banded one turns the stripes on.
 photograph with only the sun, the clouds and the bodies drawn over it. It is sampled as an
 equirectangular map from the fragment direction, **decoded from sRGB on the way in** (the
 composite pass does the gamma at the very end, so everything in the sky shader is linear),
-tinted by the hour so the day-night cycle still runs across it, and faded out below the
-horizon — the bottom half of a panorama is the ground it was shot standing on, and this world
-has its own.
+tinted by the hour so the day-night cycle still runs across it, and faded out **right at the
+horizon line and nowhere else**.
+
+That fade is worth a warning. The first version rolled it in from zero to seven degrees, to
+keep the panorama's own ground out of frame — which is precisely the band a skyline lives in,
+so the one part of the image worth showing was the one part being hidden, and the report back
+was "you can barely see the HDRI". Anything below the line is behind the sea anyway, and a
+horizon sitting just above ours reads as distant land, which is the whole point of having it.
+
+While that was being diagnosed: **fog was not the cause and could not have been.** The dome is
+drawn with `fog: false`, so scene fog never touches the sky at any density, and the density
+was 0.6% at a hundred units and 5.7% at three hundred. Worth measuring before turning knobs —
+it is thinner now anyway, since it is the only thing between the lens and a horizon worth
+looking at and this world has far more distance in it than the numbers were chosen for.
 
 The equirectangular original is kept alongside the prefiltered cubemap for this. They are not
 interchangeable: the cubemap is blurred per roughness level and is for reflections, the flat

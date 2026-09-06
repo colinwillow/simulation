@@ -225,7 +225,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b58';
+const BUILD = 'b59';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -1211,7 +1211,12 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         // does the gamma at the very end -- so it has to be decoded on the way in.
         vec3 e = pow(texture2D(uEnv, euv).rgb, vec3(2.2));
         e *= mix(vec3(0.30, 0.34, 0.52), vec3(1.06, 1.02, 0.96), dayL);
-        c = mix(c, e, uEnvK * smoothstep(-0.02, 0.12, h));
+        // Faded right at the horizon line and nowhere else. The first version rolled it in
+        // from zero to seven degrees to keep the panorama's own ground out of frame -- which
+        // is precisely the band a skyline lives in, so the one part of the image worth
+        // showing was the one part being hidden. Anything below the line is behind the sea
+        // anyway, and a horizon just above ours reads as distant land, which is the point.
+        c = mix(c, e, uEnvK * smoothstep(-0.04, 0.015, h));
       }
       float sh = fbm(cuv * 2.7 + 3.1);
       vec3 cLit = mix(vec3(1.0), uMid, 0.3) * dayL;
@@ -5716,7 +5721,7 @@ SKY.day  = { top: new THREE.Color(0x070a24), mid: new THREE.Color(0x14224e), low
 // How much of the HDRI shows on the dome. 0 is the procedural sky alone; 1 is the photograph
 // with only the sun, the clouds and the bodies drawn over it. It is tinted by the time of day
 // either way, so the cycle survives.
-SKY.envK = .55;
+SKY.envK = .82;
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
 const tmpG = new THREE.Color();
 const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new THREE.Vector3(), _skyV2 = new THREE.Vector3();
@@ -5761,7 +5766,10 @@ function updateSky() {
   // out with altitude -- which is also what real haze does, being a thing of the low air.
   const camAlt = Math.max(0, camera.position.length() - PLANET.R);
   scene.fog.color.copy(tmpC.fog);
-  scene.fog.density = lerp(.0050, .0019, dayK) * (170 / W) * (1 + WX.rain * .8 + WX.storm * .5)
+  // Thinner than it was. It is already a small number -- half a percent at a hundred units --
+  // but it is the only thing standing between the lens and a horizon worth looking at, and
+  // this world has a lot more distance in it than the one those figures were chosen for.
+  scene.fog.density = lerp(.0038, .0013, dayK) * (170 / W) * (1 + WX.rain * .8 + WX.storm * .5)
     / (1 + Math.max(0, camAlt - 20) * .012);
   // Less fill, deeper shadow. The old rig lit every face of everything and left no dark side
   // for a glow to sit against.
