@@ -101,6 +101,19 @@
   #sticks .stick.hot .ico{opacity:1;transform:scale(1.08);filter:drop-shadow(0 0 7px rgba(120,238,255,.9))}
   #sticks .stick.hot .lbl{opacity:1;color:#bff4ff;letter-spacing:.24em;
     text-shadow:0 0 10px rgba(120,238,255,.8)}
+  /* The wind-up. A ring fills round the right stick while a throw charges, in the same cyan
+     as everything else lit on this stick, and goes the instant he lets go. It sits outside
+     the stick's own border so it reads under a thumb, and the mask cuts the middle out so it
+     is a ring and not a pie. */
+  #stkR .chg{position:absolute;inset:-7px;border-radius:50%;pointer-events:none;opacity:0;
+    transition:opacity .1s linear;
+    background:conic-gradient(from -90deg,rgba(160,248,255,.96) calc(var(--k,0) * 360deg),rgba(150,246,255,0) 0);
+    -webkit-mask:radial-gradient(circle,transparent 60%,#000 63%);
+    mask:radial-gradient(circle,transparent 60%,#000 63%);
+    filter:drop-shadow(0 0 9px rgba(120,238,255,.85))}
+  #stkR .chg.on{opacity:1}
+  #stkR .chg.full{filter:drop-shadow(0 0 16px rgba(190,252,255,1));animation:chgfull .5s ease-in-out infinite}
+  @keyframes chgfull{0%,100%{opacity:.82}50%{opacity:1}}
   #stkL{left:calc(20px + env(safe-area-inset-left))} #stkR{right:calc(20px + env(safe-area-inset-right))}
   /* The blaster button sits just inboard of the right stick, where the thumb already is. */
   #armB{position:fixed;z-index:6;right:calc(150px + env(safe-area-inset-right));
@@ -791,7 +804,7 @@
 <div id="hint">left stick walks · right stick looks · scroll or pinch to zoom<br>WASD / arrows also work · tap the ground to drop a spark</div>
 <div id="sticks">
   <div class="stick" id="stkL"><div class="knob"></div><div class="lbl">MOVE</div></div>
-  <div class="stick" id="stkR"><div class="knob"><svg class="ico" id="stkRIco" viewBox="0 0 40 40" fill="none">
+  <div class="stick" id="stkR"><div class="chg" id="stkRChg"></div><div class="knob"><svg class="ico" id="stkRIco" viewBox="0 0 40 40" fill="none">
     <ellipse cx="20" cy="24" rx="16" ry="6.2" fill="#ffdca8" opacity=".92"/>
     <path d="M9.5 22.5a10.5 9 0 0 1 21 0z" fill="#ffeecb"/>
     <ellipse cx="20" cy="24" rx="16" ry="6.2" stroke="#7a4a18" stroke-opacity=".5"/>
@@ -855,7 +868,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b76';
+const BUILD = 'b77';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3946,6 +3959,26 @@ const KNOCK = {
   body: .5,        // what running into it is worth against a full plasma hit
   bodyAt: 6,       // and how fast he has to be going for a body-check to count at all
 };
+
+// Getting rid of one. Two ways, and they are the same gesture at two speeds: swipe the right
+// stick and it goes NOW, as hard as you swiped; push and hold and a bar fills instead and it
+// goes as far as you were patient. Both let go along the stick.
+//
+// The quick one is judged on how fast the stick left centre rather than on how far it got,
+// because a touch stick pins at the rim: measured on travel alone, a slow shove to the edge
+// and a flick are the same reading. Measured on the rate, they are ten to one apart.
+const THROW = {
+  at: .34,           // how far out the stick has to be to be winding up rather than looking
+  quickT: .30,       // let go inside this and it was a swipe
+  quickAt: .55,      // and the stick has to have got at least this far out to have been one
+  rise: [4, 20],     // stick-travel a second: the softest swipe that counts, and a full one
+  chargeT: 1.7,      // a standing hold takes this long to fill the bar
+  min: .26,          // nothing leaves his hands slower than this
+  speed: [15, 54],   // launch speed at no power and at full
+  lift: .40,         // and the share of it that goes up, which is the arc
+  spin: 11,          // how hard it tumbles once it is out of his hands
+  cool: .5,          // before he can pick anything up again
+};
 class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
@@ -4139,6 +4172,22 @@ class Creature {
     };
     this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
     world.effects.push(new Burst(this.pos.x, this.pos.y + this.rad, this.pos.z, '#ffe0a8', 8, .7));
+  }
+  // Thrown, rather than hit. Same flight as a knock -- tumble() does not care how it got up
+  // there -- but the direction and the speed are given rather than worked out from where the
+  // blow came from, because a throw is aimed. It leaves from wherever it is standing, which
+  // while it is being carried is his hands.
+  hurl(hx, hz, speed, lift) {
+    if (!this.alive) return;
+    const f = speed / Math.max(.7, this.rad);      // a mossback does not go as far as a tinker
+    this.fling = {
+      x: this.pos.x, y: this.pos.y, z: this.pos.z,
+      vx: hx * f, vz: hz * f, vy: f * lift,
+      sx: rnd(-THROW.spin, THROW.spin), sz: rnd(-THROW.spin, THROW.spin),
+      rx: 0, rz: 0, hops: 0, rest: 0,
+    };
+    this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
+    world.effects.push(new Burst(this.pos.x, this.pos.y + this.rad * .5, this.pos.z, '#cfe9ff', 9, .8));
   }
   // While it is in the air it owns its own position: none of the steering, the obstacle
   // resolve or the pose runs. Returns true for as long as that is true.
@@ -7788,7 +7837,8 @@ function stepChargeFx(c, dt) {
 }
 Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0, charge: 0,
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
-  carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null });
+  carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null,
+  throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0 });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -7875,8 +7925,16 @@ function jointChart(b, out) {
 }
 function carryOffer() {
   const p = player;
+  ACT.force = null;                                 // cleared here, set again below if he is winding up
   if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5 || p.liftT > 0 || p.placeT > 0) return;
-  if (p.carry) { offerAct({ icon: 'put', label: 'SET DOWN', run: setDown }); return; }
+  // Arms full: a tap sets it down, and a swipe or a hold throws it. While he is actually
+  // winding up, the offer stands down -- the label says THROW and the charge ring has the
+  // stick, and a SET DOWN prompt over the top of that would be describing the wrong gesture.
+  if (p.carry) {
+    ACT.force = p.throwAim ? 'THROW' : null;
+    if (!p.throwAim) offerAct({ icon: 'put', label: 'SET DOWN', run: setDown });
+    return;
+  }
   if (p.armWant || p.carryCool > 0) return;          // both hands are on the blaster
   let best = null, bd = CARRY.reach;
   for (const o of world.creatures) {
@@ -7894,6 +7952,7 @@ function pickUp(o) {
   p.heading = Math.atan2(o.pos.x - p.pos.x, o.pos.z - p.pos.z);
   p.vx = p.vz = 0;
   logMsg('He stoops and gets his arms round it.');
+  logMsg('Swipe the right stick to throw it, or hold to wind up. A tap sets it down.');
 }
 function setDown() {
   const p = player;
@@ -7961,6 +8020,74 @@ function finishPlace() {
   c.rx = a.x; c.rz = a.z; c.px0 = a.x; c.pz0 = a.z; c.lastGood.set(a.x, 0, a.z);
   c.ghost = 1.2; c.stall = 0; c.stuck = 0; c.pinned = 0; c.roamT = 3;   // it wanders off rather than bolting
   world.effects.push(new Burst(a.x, c.pos.y + .5, a.z, '#cdbf9c', 7, .7));
+}
+
+// The wind-up ring on the right stick. Cheap enough to poke every frame -- it is two style
+// writes -- and it is only ever poked while something is actually being thrown.
+const chgRing = document.getElementById('stkRChg');
+function setChargeRing(k) {
+  if (!chgRing) return;
+  const on = k > 0;
+  if (chgRing._on !== on) { chgRing._on = on; chgRing.classList.toggle('on', on); }
+  if (!on) { if (chgRing._full) { chgRing._full = 0; chgRing.classList.remove('full'); } return; }
+  chgRing.style.setProperty('--k', k.toFixed(3));
+  const full = k >= .999 ? 1 : 0;
+  if (chgRing._full !== full) { chgRing._full = full; chgRing.classList.toggle('full', !!full); }
+}
+
+// The right stick belongs to the throw while his arms are full, the same way it belongs to
+// the aim while the blaster is out. Returns true while it does, so the caller knows not to
+// orbit the camera with it. A tap is still SET DOWN: a tap is under .3 of travel and this
+// does not wake up until .34, so the two cannot collide.
+function stepThrow(dt, rx, ry) {
+  const p = player;
+  if (!p.carry || p.liftT > 0 || p.placeT > 0 || p.aboard || p.free) {
+    if (p.throwAim) { p.throwAim = 0; p.throwK = 0; }
+    setChargeRing(0); return false;
+  }
+  const mag = Math.hypot(rx, ry);
+  if (mag > THROW.at) {
+    // Latch the frame the stick is read in, for the same reason the aim does: reading it off
+    // a camera that is at that moment swinging to follow the stick is a loop.
+    if (!p.throwAim) { p.throwAim = 1; p.throwAz = cam.az; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0; }
+    p.throwT += dt;
+    // Sampled only while the stick is still travelling outward, so a swipe that has already
+    // pinned against the rim does not average its own speed back down to nothing.
+    if (mag > p.throwPeak) {
+      p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
+      p.throwPeak = mag;
+    }
+    p.throwK = clamp(p.throwT / THROW.chargeT, 0, 1);
+    const sa = Math.sin(p.throwAz), ca = Math.cos(p.throwAz);
+    p.aimH = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
+    let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
+    cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
+    setChargeRing(Math.max(p.throwK, .06));       // a sliver from the first frame, so it reads as armed
+    return true;
+  }
+  if (p.throwAim) {                               // let go: it goes
+    p.throwAim = 0;
+    const quick = p.throwT < THROW.quickT && p.throwPeak > THROW.quickAt;
+    const power = quick
+      ? (p.throwRise - THROW.rise[0]) / (THROW.rise[1] - THROW.rise[0])
+      : p.throwK;
+    hurlCarried(clamp(power, THROW.min, 1), quick);
+    p.throwK = 0; setChargeRing(0);
+    return true;
+  }
+  setChargeRing(0);
+  return false;
+}
+function hurlCarried(power, quick) {
+  const p = player, c = p.carry;
+  if (!c) return;
+  const h = p.aimH;
+  p.carry = null; p.carryPend = null; p.carryK = 0; p.carryCool = THROW.cool;
+  c.carried = 0;
+  c.hurl(Math.sin(h), Math.cos(h), lerp(THROW.speed[0], THROW.speed[1], power), THROW.lift);
+  p.heading = h;
+  logMsg(power > .82 ? 'He winds all the way up and hurls it out across the slope.'
+    : quick ? 'He swings it away underarm.' : 'He lobs it clear.');
 }
 
 // Where the muzzle is, in chart coordinates. The bone's world position is on the sphere, so
@@ -8410,8 +8537,11 @@ function updatePlayer(dt) {
   if (keys.a || keys.arrowleft) lx -= 1; if (keys.d || keys.arrowright) lx += 1;
   if (keys.w || keys.arrowup) ly -= 1; if (keys.s || keys.arrowdown) ly += 1;
   lx = clamp(lx, -1, 1); ly = clamp(ly, -1, 1);
-  // While the blaster is out the right stick is the aim, not the orbit. stepWeapon says so.
-  if (!stepWeapon(dt, rx, ry) && (rx || ry)) { cam.az -= rx * dt * 2.2; cam.idle = 0; }
+  // While the blaster is out the right stick is the aim, and while his arms are full it is
+  // the throw. Neither can be true at once -- he cannot draw with something in his hands --
+  // but both are asked every frame so each gets to clear its own state on the way out.
+  const winding = stepThrow(dt, rx, ry);
+  if (!stepWeapon(dt, rx, ry) && !winding && (rx || ry)) { cam.az -= rx * dt * 2.2; cam.idle = 0; }
   const mag = Math.hypot(lx, ly);
   player.moving = lerp(player.moving, mag > .1 ? Math.min(1, mag) : 0, Math.min(1, dt * 9));
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
@@ -8443,6 +8573,8 @@ function updatePlayer(dt) {
   // moonwalk because the only armed gait was a forward walk; with the strafes and the
   // reversed walk in, travelling one way while facing another is the whole point of them.
   if (player.aiming) player.heading = player.aimH;
+  // Winding up a throw turns him to face it too -- you throw where you are looking.
+  if (player.throwAim) player.heading = player.aimH;
   // The dodge takes the wheel: its own heading, its own speed curve, no steering. The rest of
   // the frame -- gravity, the ground, the collider -- runs exactly as it does otherwise.
   player.rollCool = Math.max(0, player.rollCool - dt);
@@ -9145,15 +9277,18 @@ isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap; isle.way = W
 // What a tap on the right stick would do right now, if anything. Whatever is within reach
 // writes itself here each frame and the stick reads it, so adding the next interaction —
 // picking a mudlark up, say — is one more writer and nothing else has to change.
-const ACT = { now: null, shown: null };
+// `force` is for a state that owns the stick outright rather than offering itself: winding up
+// a throw, where the prompt would be lying about what letting go does. It takes the label and
+// suppresses the pulsing ring, which would fight the charge ring for the same pixels.
+const ACT = { now: null, shown: null, force: null };
 function offerAct(a) { ACT.now = a; }
 function showAct() {
-  const a = ACT.now, key = a ? a.icon + '|' + a.label : '';
+  const a = ACT.now, key = (ACT.force || '') + '|' + (a ? a.icon + '|' + a.label : '');
   if (key === ACT.shown) return;
   ACT.shown = key;
   const st = document.getElementById('stkR'), lbl = st.querySelector('.lbl');
-  st.classList.toggle('hot', !!a);
-  lbl.textContent = a ? a.label : 'LOOK';
+  st.classList.toggle('hot', !!a && !ACT.force);
+  lbl.textContent = ACT.force || (a ? a.label : 'LOOK');
 }
 
 const perf = { ms: 16.7, worst: 0, acc: 0, n: 0 };
