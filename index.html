@@ -1040,7 +1040,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c44';
+const BUILD = 'c45';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2113,7 +2113,7 @@ const skyUni = {
   // a whole horizon. A stopgap by his own description, until an HDRI that matches exists,
   // and it is the only thing that puts the title screen's sky over the island today.
   uPlate: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([12, 10, 26, 255]), 1, 1); t.needsUpdate = true; return t; })() },
-  uPlateK: { value: 0 }, uPlateRep: { value: 3 }
+  uPlateK: { value: 0 }, uPlateRep: { value: 3 }, uPlateH: { value: .34 }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
@@ -2122,7 +2122,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
     uniform vec3 uTop,uMid,uLow,uSunCol; uniform vec3 uSun; uniform float uSunI;
     uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh,uNeb,uEnvK; uniform vec2 uWind; varying vec3 vD;
     uniform vec3 uOrbA,uOrbB; uniform sampler2D uEnv;
-    uniform sampler2D uPlate; uniform float uPlateK, uPlateRep;
+    uniform sampler2D uPlate; uniform float uPlateK, uPlateRep, uPlateH;
     // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -2170,11 +2170,16 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
                         asin(clamp(d.y, -1.0, 1.0)) * 0.31830988 + 0.5);
         vec3 pl = pow(texture2D(uPlate, puv).rgb, vec3(2.2));
         pl *= mix(vec3(0.66, 0.70, 0.92), vec3(1.02, 0.99, 0.96), dayL);
-        // The horizon cut is a GROUND rule: down there the band above the sea belongs to
-        // distant land and a galaxy in it looks wrong. From the air there is no horizon band
-        // -- the whole sphere is sky, most of it BELOW you -- and keeping the cut is why the
-        // opening shot came up black. It opens out with height.
-        c = mix(c, pl, uPlateK * mix(smoothstep(-0.01, 0.34, h), 1.0, uHigh));
+        // WHERE THE PLATE STOPS, and .34 was far too high. On a phone held upright, the sky
+        // you actually see over the sea runs from the horizon to about a third of the way up
+        // -- so a plate that only reached full at .34 was excluded from the whole of it, and
+        // what was left showing there was the HDRI: a blurred photograph of an overcast day
+        // somewhere on Earth, which is the grey. It comes down to the waterline now.
+        // (The band above the sea belongs to distant land, went the argument. There is no
+        // distant land out over an open ocean; there is a galaxy.)
+        // From the air there is no horizon band at all -- the whole sphere is sky and most of
+        // it is BELOW you -- so the cut still opens right out with height.
+        c = mix(c, pl, uPlateK * mix(smoothstep(-0.03, uPlateH, h), 1.0, uHigh));
       }
       // The HDRI, on the dome, under everything else. Sampled as an equirectangular map --
       // the same projection three uses for one -- and tinted by the hour so the day still
@@ -2424,12 +2429,12 @@ function buildSkyBodies() {
 // terrain's own shader rather than in the baked vertex colour, so they are live: gsat 1 and
 // gmul 1 is the ground exactly as it was.
 const LOOKS = {
-  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0, gsat: 1, gmul: 1, fogSky: 0, fogSat: 1, gpatch: 0 },
+  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0, gsat: 1, gmul: 1, fogSky: 0, fogSat: 1, gpatch: 0, plateH: .34 },
   // `fogSky` pulls the haze colour toward the sky it is standing in front of and `fogSat`
   // takes the grey back out of it. Distance should dissolve into the sky, which on this
   // world is a deep blue-violet -- not into a separate flat grey that only the far ground
   // is painted with, which is what a fog colour of its own always looks like.
-  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .30, plate: .55, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1 },
+  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .10, plate: .72, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1, plateH: .07 },
 };
 const LOOK = Object.assign({ mode: 'title' }, LOOKS.title);
 function setLook(m) { if (LOOKS[m]) { LOOK.mode = m; Object.assign(LOOK, LOOKS[m]); } return LOOK.mode; }
@@ -8573,7 +8578,11 @@ const SKY = {
 // eighteen -- so darkening `top`, which is what the first attempt at an alien sky did, changed
 // nothing whatsoever on a phone. All three have to carry it, and `low` most of all.
 SKY.dusk = { top: new THREE.Color(0x160f3e), mid: new THREE.Color(0x6d3a6b), low: new THREE.Color(0xc07a5c), fog: new THREE.Color(0x8e5f52), hs: new THREE.Color(0xe09a70), hg: new THREE.Color(0x3a2442), sun: new THREE.Color(0xff9c4a) };
-SKY.day  = { top: new THREE.Color(0x070a24), mid: new THREE.Color(0x14224e), low: new THREE.Color(0x486a86), fog: new THREE.Color(0x44607e), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x31453f), sun: new THREE.Color(0xfff2d8) };
+// `low` is the horizon, and it is the band you spend the whole game looking at over the sea.
+// 0x486a86 is a grey with a little blue in it -- against water that saturated it reads as the
+// colour of an overcast afternoon, which is the one thing this sky is not supposed to be.
+// Deeper and bluer, and `fog` with it, since the haze is now tuned to sit in the same band.
+SKY.day  = { top: new THREE.Color(0x070a24), mid: new THREE.Color(0x142a60), low: new THREE.Color(0x2f6d9c), fog: new THREE.Color(0x2f5f88), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x31453f), sun: new THREE.Color(0xfff2d8) };
 // How much of the HDRI shows on the dome. 0 is the procedural sky alone; 1 is the photograph
 // with only the sun, the clouds and the bodies drawn over it. It is tinted by the time of day
 // either way, so the cycle survives.
@@ -8703,6 +8712,7 @@ function updateSky() {
   // The plate stays out at altitude the way the panorama does not: out there it IS the sky,
   // and it is what the title screen has behind the planet.
   skyUni.uPlateK.value = LOOK.plate * PLATE.on * (1 + spaceK * .5);
+  skyUni.uPlateH.value = LOOK.plateH;
   // The bodies dim at noon and never leave. Same reasoning as the stars, which keep a third
   // of themselves through the day: thin air, and it is the cheapest thing in the file that
   // says this is not Earth. Cloud takes them, because cloud is between you and them.
