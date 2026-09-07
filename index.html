@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c15';
+const BUILD = 'c16';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -7472,6 +7472,23 @@ function scatterDecor() {
 // sphere space at merge time and the group opts out of the per-frame projection, exactly the
 // way the boulder field does.
 const ZONES = [
+  // OUTPOSTS FIRST, and the order is the point. layZones walks this list in sequence and
+  // zAnchor rejects any spot inside the gap of something already placed, so whatever is at the
+  // top gets the pick of the ground and everything below arranges itself around it. A base is
+  // the one thing here that is somewhere rather than something, so it chooses first and the
+  // groves, beds and outcrops settle around it -- which is what "build the zones around those
+  // areas" actually means in a system that has no author standing over it.
+  { fn: 'outpost', biome: 'pasture',  n: 2, maxSl: .26, base: ['space_base'],
+    hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone01', 'sp_stone02'] },
+  { fn: 'outpost', biome: 'scrub',    n: 1, maxSl: .26, base: ['space_base'],
+    hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone01'] },
+  { fn: 'outpost', biome: 'highland', n: 1, maxSl: .34, base: ['space_base'],
+    hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
+  // THE BIG CAPS. Their own formation rather than another entry in a bed, because they are
+  // three to six units tall -- you walk under these, and a stand of them is a landmark.
+  { fn: 'caps', biome: 'fungal',  n: 6, maxSl: .5, cap: ['fantasy_mushroom_colorful'], floor: ['sp_plant04', 'sp_plant05'] },
+  { fn: 'caps', biome: 'jungle',  n: 3, maxSl: .5, cap: ['fantasy_mushroom_colorful'], floor: ['sp_plant07'] },
+  { fn: 'caps', biome: 'wetland', n: 3, maxSl: .45, cap: ['fantasy_mushroom_colorful'], floor: ['sp_plant02'] },
   // THE JUNGLE: tall stands with a clear floor. The floor plants are inside the ring, so the
   // clearing reads as somewhere you walk into rather than a hole in the trees.
   { fn: 'grove', biome: 'jungle',   n: 8, maxSl: .55, tall: ['sp_tree03', 'sp_tree04'], broad: ['sp_tree01'], floor: ['sp_plant07'] },
@@ -7514,7 +7531,7 @@ function buildZones() {
   // and no zones are built at all -- which is the right failure: a half-laid grove is worse
   // than none, and everything else in the world is untouched either way.
   const want = new Set();
-  for (const z of ZONES) for (const k of ['tall', 'broad', 'floor', 'rock', 'plant', 'slab', 'peak'])
+  for (const z of ZONES) for (const k of ['tall', 'broad', 'floor', 'rock', 'plant', 'slab', 'peak', 'base', 'hut', 'cap'])
     if (z[k]) for (const nm of z[k]) want.add(nm);
   for (const z of ZONES) for (const k of ['hub', 'shard', 'mast']) if (z[k]) want.add(z[k]);
   const names = [...want], M = {};
@@ -7561,6 +7578,49 @@ function zPut(bin, m, x, z, span, yaw, tilt, obK, opt) {
 }
 
 const ZFN = {
+  // A base, its huts, its mast, and a few slabs of apron between them. The slabs are what make
+  // it read as inhabited rather than as three models parked in a field -- somebody laid those.
+  outpost(B, M, cx, cz, z0) {
+    if (!obClear(cx, cz, 7)) return;
+    const face = rnd(6.3);
+    zPut(B.big, M[pick(z0.base)], cx, cz, rnd(8.5, 11), face, .10, .34, { sink: .04 });
+    // huts set back and off to one side, turned to look at the base
+    for (let i = 0, n = 1 + (Math.random() * 2 | 0); i < n; i++) {
+      const a = face + rnd(1.9, 2.9) * (i ? -1 : 1), r = rnd(9, 14);
+      const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
+      if (isLand(x, zz) && obClear(x, zz, 3.4)) zPut(B.big, M[pick(z0.hut)], x, zz, rnd(4.2, 5.8), a + Math.PI, .12, .38);
+    }
+    {
+      const a = face + rnd(-.7, .7), r = rnd(7, 11);
+      const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
+      if (isLand(x, zz) && obClear(x, zz, 2.2)) zPut(B.big, M[z0.mast], x, zz, rnd(8, 12), rnd(6.3), .05, .3);
+    }
+    // the apron, wandering out from the door the way a worn path does
+    let x = cx, zz = cz, dir = face;
+    for (let i = 0; i < 9; i++) {
+      dir += rnd(-.28, .28);
+      x += Math.sin(dir) * rnd(2.4, 3.6); zz += Math.cos(dir) * rnd(2.4, 3.6);
+      if (!isLand(x, zz)) break;
+      zPut(B.small, M[pick(z0.slab)], x, zz, rnd(2.4, 3.8), rnd(6.3), .9, 0, { sink: .3 });
+    }
+  },
+  // A stand of the big caps, tallest in the middle, with cover under them.
+  caps(B, M, cx, cz, z0) {
+    const R = rnd(5, 10), n = 4 + (Math.random() * 5 | 0);
+    for (let i = 0; i < n; i++) {
+      const a = rnd(6.3), r = R * Math.sqrt(Math.random());
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (!isLand(x, zz)) continue;
+      // .22 of the footprint is the STALK, and it has to clear OB_PLAYER.minOb or the field
+      // discards it and you walk through a mushroom the size of a tree.
+      zPut(B.big, M[pick(z0.cap)], x, zz, rnd(3.2, 6.4) * (1 - r / (R + 3) * .35), rnd(6.3), .16, .22);
+    }
+    for (let i = 0, k = 5 + (Math.random() * 6 | 0); i < k; i++) {
+      const a = rnd(6.3), r = R * rnd(.2, 1.1);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (isLand(x, zz)) zPut(B.small, M[pick(z0.floor)], x, zz, rnd(1.0, 2.2), rnd(6.3), .6, 0);
+    }
+  },
   // A ring of trunks about a clear middle. The heights are drawn wide on purpose -- 16 to 34
   // against a 2.8-unit body -- so the canopy has floors in it rather than one ceiling.
   grove(B, M, cx, cz, z0) {
@@ -7656,7 +7716,8 @@ const ZFN = {
 // which is very nearly the same spot every time it is asked, so eight groves asked for that
 // way arrive stacked on each other. Anchors here are random within the region's core instead,
 // and rejected if anything already placed is inside the gap.
-const ZGAP = { grove: 40, burst: 24, ridge: 30, bed: 18, track: 26, peak: 58, mast: 16 };
+const ZGAP = { grove: 40, burst: 24, ridge: 30, bed: 18, track: 26, peak: 58, mast: 16,
+  outpost: 90, caps: 26 };   // an outpost wants a lot of room, and gets it by going first
 function zAnchor(biome, maxSl, used, gap) {
   for (let i = 0; i < 700; i++) {
     const p = randomLand(1.6, 20, maxSl, 1, 4); if (!p) continue;
