@@ -990,7 +990,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b99';
+const BUILD = 'c00';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3639,6 +3639,22 @@ function attachRig(parent, cfg, done) {
     // placeholder it already built, and a species that still walks is a better failure than
     // one that does not. CINEMA_4D_Main and mixamo.com are the two exporters' names for
     // "here is the object's transform", which is not a cycle however many channels it has.
+    // Bioluminescence, sampled off the texture rather than painted on. The same key the
+    // plants and the drone use: `warm` is min(r-b, g-b), so it picks the yellows and oranges
+    // and ignores everything else -- which on these three is exactly the right set. A
+    // mossback's body is purple (blue is high, warm goes negative, nothing happens) while its
+    // cream spots and teeth light up; a mudlark's green flanks sit at warm ~ 0 and only its
+    // orange markings catch; a tucann's beak and belly go and the rest does not.
+    // `keep: 1` with a white tint is what leaves the creature's own colour alone -- the plants
+    // use this to stain themselves toward the biome, and an animal should not be stained.
+    // The uK on each of these is already driven by the clock in updateSky, so they come up at
+    // dusk with everything else without a line here.
+    if (cfg.glow) inst.traverse(o => {
+      if (!o.isMesh) return;
+      for (const m of [].concat(o.material)) if (m && !m.userData.rigGlow) {
+        m.userData.rigGlow = 1; worldTint(m, Object.assign({ keep: 1, col: col('#ffffff') }, cfg.glow));
+      }
+    });
     let skinned = false;
     inst.traverse(o => { if (o.isSkinnedMesh) skinned = true; });
     const usable = e.anims.filter(a => !/^(CINEMA_4D|mixamo\.com)/i.test(a.name));
@@ -4237,12 +4253,16 @@ const CREATURE_RIGS = {
     // half again as big plants its foot half again as far and the clip runs that much slower
     // for the same ground speed. This is a ceiling, so it simply stops being reached.
     rateMax: 4.2,
+    // beak, belly and the warm banding down its back
+    glow: { lo: .13, hi: .40, k: 1.5, lum: [.40, .84] },
   },
   Grazer: {
     url: 'models/purple_horny.glb',
     height: 2.4,          // a mossback stands about this tall at the shoulder
     idle: 'idle', walk: 'walk',
     yaw: 0,               // checked in game: modelled facing +Z, which is already forward
+    // the cream spots and the teeth. Its purple hide has blue in it and stays dark.
+    glow: { lo: .15, hi: .42, k: 1.7, lum: [.46, .88] },
   },
   Burrower: {
     url: 'models/creature_green.glb',
@@ -4250,6 +4270,8 @@ const CREATURE_RIGS = {
     idle: 'idle', walk: 'walk_fwd',
     blinkL: 'eye_L_close', blinkR: 'eye_R_close',
     yaw: 0,               // this one was modelled facing +Z, which is already forward
+    // its orange markings. The green flanks sit at warm ~ 0 and stay unlit.
+    glow: { lo: .12, hi: .38, k: 1.6, lum: [.38, .82] },
   },
 };
 
@@ -7438,9 +7460,10 @@ const blurMat = new THREE.ShaderMaterial({ uniforms: { tD: { value: null }, uDir
     c += (texture2D(tD,vUv+t*3.2308).rgb+texture2D(tD,vUv-t*3.2308).rgb)*0.0702;
     gl_FragColor=vec4(c,1.0); }` });
 const compMat = new THREE.ShaderMaterial({ uniforms: {
-    tD: { value: null }, tB: { value: null }, uStr: { value: .85 }, uVig: { value: .5 }, uNight: { value: 0 }, uT: { value: 0 }
+    tD: { value: null }, tB: { value: null }, uStr: { value: .85 }, uVig: { value: .5 }, uNight: { value: 0 }, uT: { value: 0 },
+    uLift: { value: new THREE.Color(0, 0, 0) }
   }, vertexShader: VS, fragmentShader: `
-  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT; varying vec2 vUv;
+  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT; uniform vec3 uLift; varying vec2 vUv;
   float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
   void main(){
     vec3 c = texture2D(tD,vUv).rgb;
@@ -7460,6 +7483,13 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
     c = mix(vec3(l), c, 1.2 + uNight*0.14);               // saturation
     vec2 q = vUv-0.5; float v = 1.0 - dot(q,q)*(0.85+uVig*0.9);
     c *= clamp(v,0.0,1.0);
+    // THE BLACK POINT. Unlit ground was resolving to actual zero, and a screen full of pure
+    // black reads as a hole in the image rather than as somewhere dark -- there is nothing in
+    // it for the eye to hold. This lifts the floor to a colour instead: at c = 0 the frame
+    // sits on uLift, at c = 1 nothing has moved, and everything between is compressed by that
+    // much. A print black rather than a void. Deep violet-blue, because that is what the sky
+    // is doing overhead, and it comes up with the night -- daylight shadow keeps its depth.
+    c = c * (1.0 - uLift) + uLift;
     c += (h(vUv*vec2(1920.0,1080.0)+uT)-0.5)*0.012;        // dither / faint grain
     gl_FragColor = vec4(pow(max(c,0.0), vec3(1.0/2.2)), 1.0);
   }` });
@@ -7479,6 +7509,19 @@ function renderPost() {
   quad.material = compMat;
   compMat.uniforms.tD.value = rtScene.texture; compMat.uniforms.tB.value = rtA.texture;
   compMat.uniforms.uNight.value = world.night; compMat.uniforms.uT.value = world.clock % 100;
+  // Reserved for the open air. The cave is the one place true black IS the point, so the
+  // floor drops away as he goes under -- measured off the mouth rather than off a flag,
+  // because there is no flag and inventing one to read here would be inventing state to make
+  // a comment true.
+  {
+    let cave = 0;
+    if (world.cave) {
+      const d = Math.hypot(player.pos.x - world.cave.pos.x, player.pos.z - world.cave.pos.z);
+      cave = clamp(1 - (d - 3) / 5, 0, 1);
+    }
+    const k = (.34 + .66 * world.night) * (1 - cave * .88);
+    compMat.uniforms.uLift.value.setRGB(.016 * k, .019 * k, .040 * k);
+  }
   renderer.setRenderTarget(null); renderer.render(quadScene, quadCam);
 }
 
