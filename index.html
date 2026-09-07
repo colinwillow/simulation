@@ -1048,7 +1048,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c50';
+const BUILD = 'c51';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4751,6 +4751,7 @@ const CREATURE_RIGS = {
 // frightened. That is the interaction that was asked for and it is also the honest one --
 // there are no death clips and no ragdoll, and a tumbling rigid body reads better than a
 // walk cycle playing while something slides backwards.
+const _kbAx = new THREE.Vector3();
 const _kbA = new THREE.Vector3(), _kbB = new THREE.Vector3();
 // Put ?knock on the URL and every thrown animal reports itself to the on-screen log three
 // times a second: how far it has actually travelled, how high it is, whether it is being
@@ -4761,9 +4762,22 @@ const KNOCK = {
   // tinker went thirty-four units and a mossback went one, off numbers only 1.8x apart. The
   // lift divides by the root of it instead, which keeps the arc reading the same for both
   // and leaves size deciding how far, not whether.
-  push: 14,        // horizontal speed a full hit imparts, before the animal's own size
-  lift: 9,         // and how much of it goes upward (divided by the root of the size)
-  spin: 8,         // tumble rate, radians a second
+  // These were set when the flight did not work. Every step of the arc was being tested with
+  // terrainOK -- a walking test -- so on any slope, in the highland, or one step from the
+  // water, the creature never translated at all: it went up and came down on the spot. The
+  // numbers were then tuned against THAT, and they had to be enormous to move anything.
+  // Now that a thrown body actually travels, 14 and 9 put a hopper twenty-odd units out in
+  // under a second, which does not read as flying -- it reads as vanishing. Two thirds of it
+  // is an arc you can follow and land next to.
+  push: 8.5,       // horizontal speed a full hit imparts, before the animal's own size
+  lift: 6.5,       // and how much of it goes upward (divided by the root of the size)
+  // ONE AXIS, AND SLOWER. Eight radians a second about X *and* Z at once is one and a third
+  // revolutions a second about a diagonal that keeps moving -- and the pivot correction that
+  // holds the hips still then swings the body a body-length round that diagonal every frame.
+  // Which is precisely "rotating about something that is not their axis". A thrown body goes
+  // end over end about ONE horizontal line, at right angles to the way it is going.
+  spin: 3.4,       // tumble rate, radians a second, about the travel-perpendicular
+  spinDrag: .55,   // and the air takes it back off, so the tumble settles as it flies
   g: 26,           // it falls faster than a real thing would; a slow arc reads as floaty
   bounce: .4, friction: .52, hops: 3, stop: 3.2,
   rest: 1.0,       // how long it lies there before it gathers itself up
@@ -5041,8 +5055,11 @@ class Creature {
     this.fling = {
       x: this.pos.x, y: this.pos.y, z: this.pos.z,
       vx: dx / d * f, vz: dz / d * f, vy: KNOCK.lift * force / Math.sqrt(heft),
-      sx: rnd(-KNOCK.spin, KNOCK.spin), sz: rnd(-KNOCK.spin, KNOCK.spin),
-      rx: 0, rz: 0, hops: 0, rest: 0,
+      // The tumble axis: horizontal and at right angles to the way it is going, so it turns
+      // end over end along its own arc. Stored once at the hit; nothing about it changes in
+      // flight except how fast it is being turned.
+      ax: -dz / d, az: dx / d, ang: 0, spin: rnd(.55, 1) * KNOCK.spin,
+      hops: 0, rest: 0,
     };
     this.holeOff(1); this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
     world.effects.push(new Burst(this.pos.x, this.pos.y + this.rad, this.pos.z, '#ffe0a8', 8, .7));
@@ -5057,8 +5074,8 @@ class Creature {
     this.fling = {
       x: this.pos.x, y: this.pos.y, z: this.pos.z,
       vx: hx * f, vz: hz * f, vy: f * lift,
-      sx: rnd(-THROW.spin, THROW.spin), sz: rnd(-THROW.spin, THROW.spin),
-      rx: 0, rz: 0, hops: 0, rest: 0,
+      ax: -hz, az: hx, ang: 0, spin: rnd(.55, 1) * THROW.spin,
+      hops: 0, rest: 0,
     };
     this.holeOff(1); this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
     world.effects.push(new Burst(this.pos.x, this.pos.y + this.rad * .5, this.pos.z, '#cfe9ff', 9, .8));
@@ -5069,9 +5086,10 @@ class Creature {
     const K = KNOCK, k = this.fling;
     if (k.rest > 0) {                              // down, gathering itself up
       k.rest -= dt;
-      k.rx = lerp(k.rx, 0, Math.min(1, dt * 7));
-      k.sz = lerp(k.sz, 0, Math.min(1, dt * 7));
-      k.rz = lerp(k.rz, 0, Math.min(1, dt * 7));
+      // Unwind to the nearest whole turn, not to zero: an animal that has gone round three
+      // times should get up from where it is lying, not spin backwards to its launch pose.
+      k.ang = lerp(k.ang, Math.round(k.ang / 6.2831853) * 6.2831853, Math.min(1, dt * 7));
+      k.spin = lerp(k.spin, 0, Math.min(1, dt * 7));
       if (k.rest <= 0) { this.fling = null; this.holeOff(0); this.spook(this.pos, 0); return false; }
     } else {
       k.vy -= K.g * dt;
@@ -5100,7 +5118,7 @@ class Creature {
       // thrown nowhere was pinned against something, which is a real thing to be.
       else { k.vx = k.vz = 0; if (!k.thud) { k.thud = 1; world.effects.push(new Burst(k.x, k.y + .5, k.z, '#cdbf9c', 7, .6)); } }
       k.y += k.vy * dt;
-      k.rx += k.sx * dt; k.rz += k.sz * dt;
+      k.ang += k.spin * dt; k.spin *= Math.max(0, 1 - K.spinDrag * dt);
       let g = this.flingFloor(k.x, k.z);
       if (k.y <= g && k.vy < 0) {
         const wet = !this.aquatic && groundY(k.x, k.z) < SEA;
@@ -5118,7 +5136,7 @@ class Creature {
         if (wet && !k.splash) { k.splash = 1; world.effects.push(new Burst(k.x, SEA + .3, k.z, '#bfe8ff', 9, .8)); }
         if (++k.hops < K.hops && -k.vy > K.stop) {
           k.y = g; k.vy = -k.vy * K.bounce; k.vx *= K.friction; k.vz *= K.friction;
-          k.sx *= K.friction; k.sz *= K.friction;
+          k.spin *= K.friction;
           world.effects.push(new Burst(k.x, g + .3, k.z, '#cdbf9c', 6, .55));
         } else {
           k.y = g; k.vy = 0; k.vx = k.vz = 0; k.rest = K.rest;
@@ -5149,7 +5167,11 @@ class Creature {
       hy = (this.rad || 1) * .8;
     }
     _kbA.set(0, hy, 0).applyQuaternion(this.g.quaternion);
-    this.g.rotateX(k.rx); this.g.rotateZ(k.rz);
+    // rotateOnWorldAxis, not rotateX/rotateZ: the axis is a fixed horizontal line in CHART
+    // space, which is this object's parent frame, and it must not follow the body round as
+    // the body turns. Two successive LOCAL turns about X and then Z is a rotation about a
+    // diagonal that moves every frame, which is the thing that looked like an orbit.
+    this.g.rotateOnWorldAxis(_kbAx.set(k.ax, 0, k.az).normalize(), k.ang);
     _kbB.set(0, hy, 0).applyQuaternion(this.g.quaternion);
     this.g.position.add(_kbA).sub(_kbB);
     if (this.g.position.y < gy) this.g.position.y = gy;    // and never let the shift bury it
