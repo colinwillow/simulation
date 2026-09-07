@@ -1040,7 +1040,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c47';
+const BUILD = 'c48';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2113,7 +2113,7 @@ const skyUni = {
   // a whole horizon. A stopgap by his own description, until an HDRI that matches exists,
   // and it is the only thing that puts the title screen's sky over the island today.
   uPlate: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([12, 10, 26, 255]), 1, 1); t.needsUpdate = true; return t; })() },
-  uPlateK: { value: 0 }, uPlateRep: { value: 3 }, uPlateH: { value: .34 }
+  uPlateK: { value: 0 }, uPlateRep: { value: 3 }, uPlateH: { value: .34 }, uSpace: { value: 0 }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
@@ -2122,7 +2122,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
     uniform vec3 uTop,uMid,uLow,uSunCol; uniform vec3 uSun; uniform float uSunI;
     uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh,uNeb,uEnvK; uniform vec2 uWind; varying vec3 vD;
     uniform vec3 uOrbA,uOrbB; uniform sampler2D uEnv;
-    uniform sampler2D uPlate; uniform float uPlateK, uPlateRep, uPlateH;
+    uniform sampler2D uPlate; uniform float uPlateK, uPlateRep, uPlateH, uSpace;
     // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -2179,7 +2179,17 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         // distant land out over an open ocean; there is a galaxy.)
         // From the air there is no horizon band at all -- the whole sphere is sky and most of
         // it is BELOW you -- so the cut still opens right out with height.
-        c = mix(c, pl, uPlateK * mix(smoothstep(-0.03, uPlateH, h), 1.0, uHigh));
+        // WHICH TERM OPENS THE ROLL-OFF, and uHigh was the wrong one twice over.
+        // Geometry first: from six hundred units up, looking straight DOWN at the target,
+        // every direction in the frame is perpendicular to local up -- so the whole ring of
+        // background around the planet sits at h near zero, which is the bottom of the
+        // roll-off. That is why the opening shot is black and gets lighter as you fly in and
+        // the camera pitches over: the sky is not changing, the elevation of the pixels is.
+        // And uHigh is a lerped haze term (six per cent a frame, off camS.y) that is not even
+        // caught up during a descent that fast. uSpace is spaceK -- the same number that turns
+        // the dome into SKY.space -- read straight off the camera's distance, exact and
+        // instant. When the sky is space, the plate covers all of it.
+        c = mix(c, pl, uPlateK * mix(smoothstep(-0.03, uPlateH, h), 1.0, max(uHigh, uSpace)));
       }
       // The HDRI, on the dome, under everything else. Sampled as an equirectangular map --
       // the same projection three uses for one -- and tinted by the hour so the day still
@@ -8769,8 +8779,10 @@ function updateSky() {
   skyUni.uEnvK.value = SKY.envK * LOOK.env * (1 - spaceK) * (ENV.map ? 1 : 0);
   // The plate stays out at altitude the way the panorama does not: out there it IS the sky,
   // and it is what the title screen has behind the planet.
-  skyUni.uPlateK.value = LOOK.plate * PLATE.on * (1 + spaceK * .5);
-  skyUni.uPlateH.value = LOOK.plateH;
+  // No boost past 1: a mix weight over one EXTRAPOLATES away from the sky underneath rather
+  // than covering more of it, which is a different picture and never the one wanted.
+  skyUni.uPlateK.value = Math.min(1, LOOK.plate * PLATE.on);
+  skyUni.uPlateH.value = LOOK.plateH; skyUni.uSpace.value = spaceK;
   // The bodies dim at noon and never leave. Same reasoning as the stars, which keep a third
   // of themselves through the day: thin air, and it is the cheapest thing in the file that
   // says this is not Earth. Cloud takes them, because cloud is between you and them.
