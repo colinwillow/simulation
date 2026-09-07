@@ -1003,7 +1003,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c06';
+const BUILD = 'c07';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -7792,17 +7792,26 @@ const blurMat = new THREE.ShaderMaterial({ uniforms: { tD: { value: null }, uDir
     c += (texture2D(tD,vUv+t*1.3846).rgb+texture2D(tD,vUv-t*1.3846).rgb)*0.3162;
     c += (texture2D(tD,vUv+t*3.2308).rgb+texture2D(tD,vUv-t*3.2308).rgb)*0.0702;
     gl_FragColor=vec4(c,1.0); }` });
-// WHAT COLOUR THE DARK IS. Now that the lift only reaches the shadows it can carry a real
-// hue without milking the picture, so this is a genuine choice rather than a fudge factor.
-// Violet by default, because it is what the sky is already doing overhead and the shadows
-// agreeing with the sky is how a night frame holds together. Swap the triple for another
-// mood -- they are linear RGB, so they look more saturated on screen than they read here:
-//   amber   [.052, .026, .008]      a warm dark, campfire and desert
-//   teal    [.008, .034, .042]      cold and wet, good over the swamp
-//   rose    [.048, .012, .032]      the crystal flats, pushed
-// `k` is the whole effect's volume: halve it if the blacks still read as too open, and
-// `knee` is how far up the picture it is allowed to climb before it stops.
-const DARK = { col: [.030, .012, .052], k: 1.0, knee: .17 };
+// WHAT COLOUR THE DARK IS -- and BOTH NUMBERS HERE ARE LINEAR, which is the thing to hold on
+// to, because it is what made the first two attempts read as grey haze.
+//
+// `knee` is where the shadow mask gives out, in linear luminance. It was .17, and .17 of
+// linear is 114 out of 255 on the screen -- the mask was still at half strength around 83,
+// which is the middle of the picture. "Shadows only" was reaching halfway up the image. At
+// .028 it is gone by 50/255 and half gone by 37, which is actually the shadows.
+//
+// `col` is added at the black end, and the encode below flattens its saturation on the way
+// out: [.030, .012, .052] looks like a strong violet written down and lands on screen as
+// rgb(52, 34, 67), whose red and green are eighteen levels apart. That is a grey. To read as
+// a colour after the curve, the channels have to be far apart HERE -- green near zero -- so
+// this set lands on rgb(33, 7, 54): darker than before and unmistakably violet.
+//
+// Other moods, same rule (green crushed, one channel dominant):
+//   amber  [.0400, .0120, .0004]    warm dark -- campfire, desert
+//   teal   [.0004, .0180, .0290]    cold and wet -- over the swamp
+//   rose   [.0330, .0010, .0180]    the crystal flats, pushed
+// `k` is the volume. Toward 0 is true black, 1.6 is about where it was when it hazed.
+const DARK = { col: [.0113, .0004, .0333], k: 1.0, knee: .028 };
 const compMat = new THREE.ShaderMaterial({ uniforms: {
     tD: { value: null }, tB: { value: null }, uStr: { value: .85 }, uVig: { value: .5 }, uNight: { value: 0 }, uT: { value: 0 },
     uLift: { value: new THREE.Color(0, 0, 0) }, uKnee: { value: .17 }
