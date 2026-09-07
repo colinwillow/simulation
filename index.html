@@ -958,7 +958,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b90';
+const BUILD = 'b91';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -6135,7 +6135,8 @@ class FloatingIsle {
       for (let i = 0; i <= FS; i++) {
         const sx = (i / FS - .5) * w, bulge = Math.cos((i / FS - .5) * Math.PI) * (1.1 + t * 1.4);
         const uu = (lipR + o + bulge) , vv = sx;
-        fp.push(cN * uu - sN * vv, y, sN * uu + cN * vv);
+        // ABSOLUTE chart coordinates, not the isle's local frame. See the note on fallMesh.
+        fp.push(x + cN * uu - sN * vv, alt + y, z + sN * uu + cN * vv);
         fuv.push(i / FS, t);
       }
     }
@@ -6190,7 +6191,20 @@ class FloatingIsle {
       'gl_FragColor = vec4(col + rim, clamp(a,0.0,1.0)*0.95); }',
       'gl_FragColor = vec4((col + rim)*0.42, clamp(a,0.0,1.0)*0.34); }');
     fallMat.needsUpdate = true;
-    const fallMesh = new THREE.Mesh(fg, fallMat); fallMesh.renderOrder = 2; this.g.add(fallMesh);
+    // THE TWO WATERFALLS. The sheet was a child of the isle's group, so it got ONE rigid
+    // transform onto the sphere -- while the spray is a particle system that projects each
+    // particle individually. Over a sheet ninety units wide and two hundred long those two
+    // mappings diverge by metres, and the result was the sheet standing beside its own spray
+    // like a second, older fall. The sheet is built in absolute chart coordinates now and
+    // runs planetPos per vertex, exactly as the spray does, so they are one waterfall again.
+    fallMat.vertexShader = PLANET_GLSL + `varying vec2 vUv; varying vec3 vN;
+      void main(){ vUv=uv; vN=normalize(normalMatrix*normal);
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(planetPos(position),1.0); }`;
+    fallMat.needsUpdate = true;
+    const fallMesh = new THREE.Mesh(fg, fallMat);
+    fallMesh.renderOrder = 2; fallMesh.frustumCulled = false;
+    fallMesh.userData.flat = true;                 // the shader does the projection, not the matrix
+    scene.add(fallMesh); this.fallMesh = fallMesh;
     // stream along the channel, laid on the actual surface
     const sp2 = [], su = [], si = [];
     for (let j = 0; j <= 20; j++) {
@@ -6266,7 +6280,7 @@ class FloatingIsle {
     this.foam.material.opacity = .28 + Math.sin(world.clock * 2.1) * .07 + world.night * .12;
     this.foam.scale.setScalar(1 + Math.sin(world.clock * 1.3) * .04);
   }
-  dispose() { scene.remove(this.g); scene.remove(this.foam); }
+  dispose() { scene.remove(this.g); scene.remove(this.foam); if (this.fallMesh) scene.remove(this.fallMesh); }
 }
 
 // ---------- the cave in the massif ----------
@@ -7281,7 +7295,7 @@ function renderPost() {
 
 // ---------- sky / time of day ----------
 const SKY = {
-  night: { top: new THREE.Color(0x05070f), mid: new THREE.Color(0x0b1330), low: new THREE.Color(0x161f3c), fog: new THREE.Color(0x0b1224), hs: new THREE.Color(0x2a3766), hg: new THREE.Color(0x120c1c), sun: new THREE.Color(0x93a8ff) }
+  night: { top: new THREE.Color(0x05070f), mid: new THREE.Color(0x0b1330), low: new THREE.Color(0x161f3c), fog: new THREE.Color(0x0b1224), hs: new THREE.Color(0x41598f), hg: new THREE.Color(0x231d40), sun: new THREE.Color(0x93a8ff) }
 };
 // Day is not noon on a beach. It is a deep, cool, high overcast -- the light a forest floor
 // gets -- so that a lantern fruit reads as a light source at three in the afternoon and not
@@ -7319,22 +7333,32 @@ const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new T
 // (the same trick the weather particles use), because a fourteen-hundred-point cloud spread
 // over three hundred units cannot ride on one group transform: half of it would be buried and
 // the other half would float.
-const SPORE = { n: 1400, lift: [.1, 1.6], size: [.09, .3],
+const SPORE = { n: 2600, clumps: 220, spread: 7, lift: [.05, 1.9], size: [.2, .62],
   cols: ['#6ff0ff', '#ff7be0', '#b78cff', '#9dff8a', '#ffcf6e', '#5fffc4', '#ff8f8f'] };
 let spores = null;
 function buildSpores() {
   const N = SPORE.n;
   const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N), ph = new Float32Array(N);
   const c = new THREE.Color();
+  // In COLONIES, not scattered. Spread evenly over three hundred units, two thousand points
+  // is a dust you cannot see; gathered into a couple of hundred patches of a dozen, each
+  // patch reads as something growing there. One colour per patch, for the same reason.
   let i = 0, guard = 0;
-  while (i < N && guard++ < N * 40) {
+  while (i < N && guard++ < N * 30) {
     const a = rnd(Math.PI * 2), r = Math.sqrt(Math.random()) * PLANET.wander;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r, h = height(x, z);
-    if (h < SEA + .6 || h > 26) continue;               // not in the sea, not up the mountains
-    pos[i * 3] = x; pos[i * 3 + 1] = h + rnd(SPORE.lift[0], SPORE.lift[1]); pos[i * 3 + 2] = z;
-    c.set(pick(SPORE.cols)); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-    sz[i] = rnd(SPORE.size[0], SPORE.size[1]); ph[i] = Math.random();
-    i++;
+    const cxp = Math.cos(a) * r, czp = Math.sin(a) * r;
+    if (height(cxp, czp) < SEA + .6 || height(cxp, czp) > 26) continue;
+    c.set(pick(SPORE.cols));
+    const per = Math.max(1, Math.round(N / SPORE.clumps));
+    for (let k = 0; k < per && i < N; k++) {
+      const x = cxp + rnd(-SPORE.spread, SPORE.spread), z = czp + rnd(-SPORE.spread, SPORE.spread);
+      const h = height(x, z);
+      if (h < SEA + .4 || h > 28) continue;
+      pos[i * 3] = x; pos[i * 3 + 1] = h + rnd(SPORE.lift[0], SPORE.lift[1]); pos[i * 3 + 2] = z;
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      sz[i] = rnd(SPORE.size[0], SPORE.size[1]); ph[i] = Math.random();
+      i++;
+    }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -7351,8 +7375,8 @@ function buildSpores() {
       void main(){
         vC = color;
         // Each one keeps its own slow beat, so the field breathes instead of blinking as one.
-        float tw = 0.42 + 0.58 * sin(uT * 1.35 + ph * 62.83);
-        vA = uNight * tw * tw;
+        float tw = 0.55 + 0.45 * sin(uT * 1.35 + ph * 62.83);
+        vA = uNight * tw;
         vec3 p = position;
         p.y += sin(uT * 0.5 + ph * 40.0) * 0.24;        // they drift; nothing here is nailed down
         p.x += sin(uT * 0.31 + ph * 27.0) * 0.16;
@@ -7374,7 +7398,7 @@ function updateSky() {
   const f = (world.t / DAY) % 1, a = f * Math.PI * 2 - Math.PI / 2, e = Math.sin(a);
   world.sunE = e; world.night = smooth(.12, -.18, e);
   if (!spores) spores = buildSpores();
-  spores.mat.uniforms.uNight.value = world.night * .92;
+  spores.mat.uniforms.uNight.value = world.night;
   spores.mat.uniforms.uT.value = world.clock;
   // reflections dim with the daylight they are pretending to be
   if (ENV.mats.length) {
@@ -7436,7 +7460,7 @@ function updateSky() {
   // for a glow to sit against.
   // Less fill than it had, because the old rig lit every face of everything and left no dark
   // side for anything to be read against -- but not so little that the island goes gloomy.
-  hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.26, .58, dayK) * (1 - oc * .3) + WX.flash * 1.5;
+  hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.44, .58, dayK)   // the night floor: below this the ground is a silhouette * (1 - oc * .3) + WX.flash * 1.5;
   sun.intensity *= 1 - oc * .8; sun.castShadow = sun.castShadow && sun.intensity > .2;
   fitShadow(camS.r);
   sun.color.copy(tmpC.sun); bounce.intensity = lerp(.04, .17, dayK); fill.intensity = lerp(.08, .34, dayK);
@@ -8065,6 +8089,7 @@ const WEAPON = {
   hold: .34,                       // how long the shot clip owns the arms
   camEase: 2.6,                    // how briskly the camera swings in behind the aim
   aimTurn: 2.3,                    // and the ceiling on that, in radians a second: the aim is a turn stick
+  fireArc: 1.05,                   // how far off straight-up the stick may be and still be a trigger (60 deg)
   out: 1.6, high: .62,             // where the bolt actually leaves him: clear of the body, chest high
   // `ride` is the whole of "it should follow the topology of the ground": the bolt holds a
   // height above the *ground under it* rather than flying a straight line, so it goes over a
@@ -8234,7 +8259,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null,
   throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
-  wpn: 'blaster', drag: null, approach: null, approachT: 0 });
+  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0 });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -8741,7 +8766,21 @@ function stepWeapon(dt, rx, ry) {
   p.charge = clamp(p.charge + (filling ? dt / CH.chargeT : -dt / .18), 0, 1);
   stepChargeFx(p.aiming && spins ? p.charge : 0, dt);
 
-  if (Math.hypot(rx, ry) > WEAPON.aimAt) {
+  const mag = Math.hypot(rx, ry);
+  const live = mag > WEAPON.aimAt;
+  // THE TRIGGER LIVES AT THE TOP OF THE PAD, and nowhere else. Any direction past the
+  // threshold turns him -- that is how you look around with the gun out -- but only a push
+  // within `fireArc` of straight up arms a shot. `upK` is 1 for straight up and 0 for dead
+  // sideways, so the test is one dot product.
+  //
+  // And it has to still be up when you let go. Sliding the thumb out of the arc STANDS THE
+  // SHOT DOWN rather than firing it off in whatever direction the thumb happened to leave by:
+  // bringing it back to centre is how you change your mind, which is the only way to have a
+  // charge you can abandon.
+  const upK = live ? -ry / mag : -1;
+  const armed = live && upK >= Math.cos(WEAPON.fireArc);
+  p.turning = live ? 1 : 0;
+  if (live) {
     // The stick is read in the camera's LIVE frame, not in one latched when the aim began.
     //
     // Latched, the frame was whatever he happened to be facing when he raised the gun, and it
@@ -8754,15 +8793,14 @@ function stepWeapon(dt, rx, ry) {
     // rate set by how far off centre it is -- and returning the stick to centre stops the
     // sweep and leaves him facing the new direction. `aimTurn` is the ceiling on that rate,
     // because uncapped the feedback runs at four radians a second and is unsteerable.
-    if (!p.aiming) { p.aiming = 1; p.aimAdj = 0; }
     p.aimAz = cam.az;
     const sa = Math.sin(p.aimAz), ca = Math.cos(p.aimAz);
     const raw = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
     // Chosen from the TRUE stick heading, not from the corrected one. Feeding the corrected
     // heading back in was a loop: once the aim had swung onto an animal, the test for what to
     // aim at was being made from a bearing already glued to it, so pointing the stick
-    // somewhere else could not shake it off.
-    p.lock = pickTarget(raw);
+    // somewhere else could not shake it off. And nothing is locked unless the shot is armed.
+    p.lock = armed ? pickTarget(raw) : null;
     // The ease is a correction that accumulates while the aim is held, not a fraction
     // reapplied to a fresh stick reading every frame -- which is what it was, and which meant
     // holding an aim for a second still left it a good five degrees off the animal. It
@@ -8775,14 +8813,15 @@ function stepWeapon(dt, rx, ry) {
     p.aimH = raw + p.aimAdj;
     let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
     cam.az += clamp(cd * WEAPON.camEase, -WEAPON.aimTurn, WEAPON.aimTurn) * dt; cam.idle = 0;
-  } else if (p.aiming) {
-    p.aiming = 0;
-    // Locked: the shot leaves on the animal's exact bearing, taken this frame rather than
-    // from wherever the eased heading had got to. The muzzle sits a metre or two down that
-    // same line, so the ray still passes through the animal.
-    if (p.lock && p.lock.alive) { p.aimH = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z); p.heading = p.aimH; }
-    if (p.wpn === 'net') fireNet(); else fireBolt(p.charge);
-    p.charge = 0; p.lock = null;
+    p.aiming = armed ? 1 : 0;
+    if (!armed) p.charge = 0;                      // out of the arc: whatever was spun up is let go
+  } else {
+    if (p.aiming) {
+      // Released from inside the arc: it goes.
+      if (p.lock && p.lock.alive) { p.aimH = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z); p.heading = p.aimH; }
+      if (p.wpn === 'net') fireNet(); else fireBolt(p.charge);
+    }
+    p.aiming = 0; p.charge = 0; p.lock = null; p.aimAdj = 0;
   }
   return true;
 }
@@ -9650,6 +9689,9 @@ function updatePlayer(dt) {
   // to the walk on the very frame the shot left, so a locked shot was fired by a man already
   // turning away from it.
   if (player.aiming || player.shootT > 0) player.heading = player.aimH;
+  // Turning the camera with the gun out turns HIM, so he stays square to the lens instead of
+  // pivoting only when the shot is armed.
+  else if (player.turning && player.armed > .5) player.heading = cam.az + Math.PI;
   // Winding up a throw turns him to face it too -- you throw where you are looking.
   if (player.throwAim) player.heading = player.aimH;
   // Walking himself in to pick something up: he steers, not the stick.
