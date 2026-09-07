@@ -1091,7 +1091,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c60';
+const BUILD = 'c61';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -3300,15 +3300,23 @@ function alignTo(obj, x, z, blend = .55) { const n = normalAt(x, z); const up = 
 // ahead of them, and to get pushed back out if they end up inside one anyway.
 const OB = { cell: 14, map: new Map() };
 let obStamp = 0;
-function obRad(o) { return o.owner && o.owner.growth !== undefined ? o.r * (.12 + .88 * o.owner.growth) : o.r; }
+function obRad(o) { return o.air ? 0 : o.owner && o.owner.growth !== undefined ? o.r * (.12 + .88 * o.owner.growth) : o.r; }
+// the player's radius for a collider: a platform has one, everything else is what it has grown to
+function obRadP(o) { return o.air ? o.r : obRad(o); }
 // `top` is the world Y of the highest point of the thing. Default Infinity: a trunk, a
 // cliff, a cairn — something you go round. Anything that gives a real number is a shape
 // you can be above, and once your feet clear it the collider stops existing for you.
 // `tag` is what put it here, and it exists for one reason: a collider with no visible thing
 // on it is impossible to argue about from a phone. With a tag, ?obs can say "sp_rock03, ridge
 // / desert, r 4.3" the moment you walk into it, which turns a phantom wall into a filename.
-function obAdd(x, z, r, owner, top = Infinity, tag) {
-  const o = { x, z, r, owner, top, tag, _cells: [], _s: -1 }, c = OB.cell;
+// `bot` and `air` are what verticality needed and did not have. A collider was a cylinder from
+// the ground to `top`: a platform fifty units up blocked you at ground level as a pillar, so a
+// spiral of steps round a trunk would have been a solid ring you could never reach the trunk
+// through. With `bot`, a body wholly beneath a thing is not touching it. `air` says this is a
+// PLATFORM rather than an obstacle -- the creatures, the bolt, the net and the zone planner
+// see it as nothing (obRad returns 0), and only the player, who can jump, reads it at all.
+function obAdd(x, z, r, owner, top = Infinity, tag, bot = -Infinity, air = false) {
+  const o = { x, z, r, owner, top, tag, bot, air, _cells: [], _s: -1 }, c = OB.cell;
   for (let cx = Math.floor((x - r) / c); cx <= Math.floor((x + r) / c); cx++)
     for (let cz = Math.floor((z - r) / c); cz <= Math.floor((z + r) / c); cz++) {
       const k = cx + ',' + cz; let a = OB.map.get(k); if (!a) { a = []; OB.map.set(k, a); }
@@ -6084,6 +6092,119 @@ class Spout {
   }
   dispose() { scene.remove(this.g); scene.remove(this.gl); this.geo.dispose(); this.pts.material.dispose(); this.gl.material.dispose(); }
 }
+// ---------- the mother tree ----------
+// THE FIRST VERTICAL THING. One tree, built to be climbed: a sixty-unit trunk with a spiral of
+// leaf-shelves up it that you jump between, a railed fort ring at the top, a second platform out
+// on a limb, and a rope bridge across the gap. Everything here is a placeholder primitive --
+// the owner will model the real shelves, deck and rope -- but the PLAY is real, and it rides
+// on machinery the island already had: a collider with a `top` is something you can stand on
+// (standOn), a jump clears 9.8 units, and c61's `bot`/`air` make a thing overhead stop being a
+// wall at ground level. The whole tree is one merged mesh.
+//
+// The shelves are 5.5 apart and 35 degrees round, so from any one the next is a jump that
+// reads as a jump: too easy and it is a staircase, too hard and it is a puzzle. Up is the
+// only direction that is difficult, which is the point of a tree fort.
+const MTREE = { H: 62, fort: 50, r0: 5.4, r1: 3.4, step: 5.5, turn: .62, shelf: 3.2 };
+class MotherTree {
+  constructor(x, z) {
+    this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z);
+    this.g = new THREE.Group(); this.g.position.copy(this.pos);
+    alignTo(this.g, x, z, 0);                       // dead upright: the colliders are placed in chart space
+    this.obs = [];
+    const T = MTREE, H = T.H, bark = M.elderBark, bark2 = M.elderBark2, y0 = this.pos.y;
+    // A straight bole, not a tapered one, and the reason is the collider: a collider is a
+    // cylinder of one radius, and a trunk that tapers from 5.4 to 3.4 would leave two units of
+    // invisible trunk round the bark at the top -- a phantom wall on every high shelf, which
+    // is the exact bug just spent a week on. The visible trunk and the thing you bump into
+    // are the same cylinder, at every height.
+    const trunkR = () => T.r0;
+    const put = (mesh_, cast = true) => { mesh_.castShadow = cast; mesh_.receiveShadow = true; this.g.add(mesh_); return mesh_; };
+    // a platform collider: air, with an underside, tagged
+    const deck = (lx, lz, r, ly, thick, tag) => this.obs.push(obAdd(x + lx, z + lz, r, null, y0 + ly + thick * .5 + .05, 'tree:' + tag, y0 + ly - thick * .5 - .6, true));
+    // buttress roots, the great tree's trick
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * Math.PI * 2 + rnd(-.15, .15), out = rnd(11, 18), up = rnd(7, 13);
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(Math.cos(a) * 2.2, up, Math.sin(a) * 2.2),
+        new THREE.Vector3(Math.cos(a) * out * .45, up * .4, Math.sin(a) * out * .45),
+        new THREE.Vector3(Math.cos(a) * out, -1.5, Math.sin(a) * out)]);
+      put(new THREE.Mesh(new THREE.TubeGeometry(curve, 12, rnd(1.0, 1.6), 7, false), i % 2 ? bark : bark2));
+    }
+    put(mesh(G.cyl, bark, T.r0 * 1.04, H, T.r0 * 1.04, 0, H / 2, 0));
+    // THE SHELVES. Each is a leaf-shaped shelf growing out of the bark, and the spiral starts
+    // low enough to step onto from the ground.
+    const a0 = rnd(6.283), n = Math.floor((T.fort - 3.5) / T.step);
+    this.shelves = [];
+    for (let i = 0; i < n; i++) {
+      const ly = 3.5 + i * T.step, a = a0 + i * T.turn, d = trunkR(ly) + T.shelf * .55;
+      const lx = Math.cos(a) * d, lz = Math.sin(a) * d;
+      const m = put(mesh(G.cyl, pick(M.elderLeaf), T.shelf * 1.15, .34, T.shelf * .8, lx, ly, lz));
+      m.rotation.y = -a;
+      put(mesh(G.cylT, bark2, .9, 2.2, .9, Math.cos(a) * (d - 1.2), ly - 1.2, Math.sin(a) * (d - 1.2))).rotation.z = 0;
+      deck(lx, lz, T.shelf * .82, ly, .34, 'shelf' + i);
+      this.shelves.push({ x: x + lx, z: z + lz, y: y0 + ly });
+    }
+    // THE FORT: a ring round the trunk with a rail, wide enough to walk round and look down.
+    const F = T.fort, FR = 11;
+    put(mesh(G.cyl, bark2, FR, .55, FR, 0, F, 0));
+    for (let i = 0; i < 20; i++) { const a = i / 20 * Math.PI * 2; put(mesh(G.cyl, bark, .15, 1.5, .15, Math.cos(a) * (FR - .5), F + .95, Math.sin(a) * (FR - .5)), false); }
+    { const ring = new THREE.Mesh(new THREE.TorusGeometry(FR - .5, .11, 6, 56), bark); ring.rotation.x = Math.PI / 2; ring.position.y = F + 1.68; put(ring, false); }
+    deck(0, 0, FR, F, .55, 'fort');
+    // THE SECOND PLATFORM, out on a limb, six lower -- so the bridge goes down and away.
+    const ab = a0 + n * T.turn + 1.1, D = 30, F2 = F - 6, PR = 6;
+    { const p0 = new THREE.Vector3(Math.cos(ab) * 3.4, F2 - 4, Math.sin(ab) * 3.4), p1 = new THREE.Vector3(Math.cos(ab) * D, F2 - 1, Math.sin(ab) * D);
+      const dir = p1.clone().sub(p0), L = dir.length(); dir.normalize();
+      const limb = put(mesh(G.cylT, bark, 1.5, L, 1.5, 0, 0, 0));
+      limb.position.copy(p0).lerp(p1, .5); limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); }
+    const px = Math.cos(ab) * D, pz = Math.sin(ab) * D;
+    put(mesh(G.cyl, bark2, PR, .45, PR, px, F2, pz));
+    for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; put(mesh(G.cyl, bark, .13, 1.4, .13, px + Math.cos(a) * (PR - .45), F2 + .9, pz + Math.sin(a) * (PR - .45)), false); }
+    deck(px, pz, PR, F2, .45, 'lookout');
+    // THE ROPE BRIDGE. Planks along a sagging line from the fort's rail to the lookout's edge,
+    // two handrails and two deck ropes as tubes, and one small air collider per plank so the
+    // deck is walkable end to end. It is a placeholder for a modelled one; the numbers -- sag,
+    // spacing, rail height -- are the ones that model will want to keep.
+    const A = new THREE.Vector3(Math.cos(ab) * (FR - .2), F + .3, Math.sin(ab) * (FR - .2));
+    const B = new THREE.Vector3(Math.cos(ab) * (D - PR + .2), F2 + .25, Math.sin(ab) * (D - PR + .2));
+    const sag = 2.4, span = A.distanceTo(B), nP = Math.max(6, Math.round(span / 1.05));
+    const at = (t, lift) => new THREE.Vector3().lerpVectors(A, B, t).add(new THREE.Vector3(0, lift - sag * 4 * t * (1 - t), 0));
+    const side = new THREE.Vector3(-Math.sin(ab), 0, Math.cos(ab));
+    for (let i = 0; i < nP; i++) {
+      const t = (i + .5) / nP, q = at(t, 0);
+      const pl = put(mesh(G.box, M.wood, 1.8, .13, .62, q.x, q.y, q.z), false);
+      pl.rotation.y = -ab - Math.PI / 2;
+      this.obs.push(obAdd(x + q.x, z + q.z, 1.05, null, y0 + q.y + .1, 'tree:bridge', y0 + q.y - .7, true));
+    }
+    for (const [off, lift] of [[.9, 1.1], [-.9, 1.1], [.95, -.05], [-.95, -.05]]) {
+      const pts = []; for (let i = 0; i <= 10; i++) pts.push(at(i / 10, lift).addScaledVector(side, off));
+      put(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 20, .07, 5, false), bark), false);
+    }
+    for (let i = 1; i < 10; i += 2) for (const off of [.9, -.9]) {   // the drops between rail and deck
+      const top = at(i / 10, 1.1).addScaledVector(side, off), bot = at(i / 10, -.05).addScaledVector(side, off);
+      const m = put(mesh(G.cyl, bark, .05, top.y - bot.y, .05, top.x, (top.y + bot.y) / 2, top.z), false);
+    }
+    // THE CANOPY, well above the fort so the fort is IN the tree rather than on top of it.
+    for (let i = 0; i < 4; i++) {
+      const a = i / 4 * Math.PI * 2 + rnd(-.3, .3), p0 = new THREE.Vector3(0, H - 4, 0), p1 = new THREE.Vector3(Math.cos(a) * 14, H + 6, Math.sin(a) * 14);
+      const dir = p1.clone().sub(p0), L = dir.length(); dir.normalize();
+      const limb = put(mesh(G.cylT, bark, 1.6, L, 1.6, 0, 0, 0));
+      limb.position.copy(p0).lerp(p1, .5); limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    }
+    for (let i = 0; i < 7; i++) {
+      const a = rnd(6.283), r = rnd(10, 16), d = i ? rnd(6, 16) : 0;
+      const b = put(mesh(pick(G.blob), pick(M.elderLeaf), r, r * .6, r, Math.cos(a) * d, H + rnd(0, 8), Math.sin(a) * d));
+      b.rotation.set(rnd(3), rnd(3), rnd(3));
+    }
+    flatten(this.g, () => false);
+    scene.add(this.g);
+    this.obs.push(this.ob = obAdd(x, z, T.r0 + .3, this));    // the trunk itself, a thing you go round
+    this.top = { x: x, z: z, y: y0 + F };
+    this.lookout = { x: x + px, z: z + pz, y: y0 + F2 };
+  }
+  update(dt) {}
+  dispose() { for (const o of this.obs) obRemove(o); scene.remove(this.g); }
+}
+
 // Leviathan — a long body that follows its own wake, so the humps travel down it
 class Leviathan extends Creature {
   constructor(x, z) {
@@ -8402,6 +8523,7 @@ function zKeepOut() {
   add(world.berth, 36);
   add(world.ship, 36);
   add(world.greatTree && world.greatTree.pos, 26);
+  add(world.motherTree && world.motherTree.pos, 44);
   add(world.cave && world.cave.pos, 24);
   add(world.lander && world.lander.pos, 26);
   if (typeof SPIRE !== 'undefined' && SPIRE) add(SPIRE, 30);
@@ -8527,13 +8649,13 @@ function showObstacles() {
   for (const arr of OB.map.values()) for (const o of arr) {
     if (seen.has(o)) continue;
     seen.add(o);
-    const gy = groundY(o.x, o.z);
+    const gy = isFinite(o.bot) ? o.bot : groundY(o.x, o.z);
     const inf = !isFinite(o.top);
     const h = inf ? 14 : Math.max(.35, o.top - gy);
     // The LIVE radius, so the ring is the thing that actually stops you rather than the
     // thing it will one day be. A drawer that shows the adult circle round a sprout is a
     // drawer that agrees with the bug.
-    const rr = obRad(o);
+    const rr = obRadP(o);
     const m = new THREE.Mesh(new THREE.CylinderGeometry(rr, rr, h, 20, 1, true), inf ? cap : mat);
     m.position.set(o.x, gy + h * .5, o.z);
     scene.add(m); out.push(m);
@@ -8634,6 +8756,16 @@ function populate() {
   }
   if (!gp) gp = randomLand(2.5, 10, .45, 400, 0);
   if (gp) { world.greatTree = new GreatTree(gp.x, gp.z); world.plants.push(world.greatTree); }
+  // The mother tree, in the jungle -- the region whose stands were always meant to be the
+  // substrate for platforms and bridges -- and clear of the berth and the elderwillow.
+  {
+    let mp = null;
+    for (let i = 0; i < 6 && !mp; i++) {
+      const c = randomBiome('jungle', 2, 12, .45, 400, 6, .25) || randomLand(2, 12, .45, 300, 6);
+      if (c && (!bp || Math.hypot(c.x - bp.x, c.z - bp.z) > 64) && (!gp || Math.hypot(c.x - gp.x, c.z - gp.z) > 52)) mp = c;
+    }
+    if (mp) { world.motherTree = new MotherTree(mp.x, mp.z); world.structures.push(world.motherTree); clearGrass(mp.x, mp.z, 9); }
+  }
   for (let i = 0; i < 104; i++) { const p = randomFor(FLORA.tree, 1.6, 12, .8); if (p) world.plants.push(new LanternTree(p.x, p.z, rnd(.35, 1))); }
   for (let i = 0; i < 124; i++) { const p = randomFor(FLORA.moss, 1.2, 11, .9); if (p) world.plants.push(new MossTuft(p.x, p.z, rnd(.6, 1))); }
   for (let i = 0; i < 24; i++) { const p = randomFor(FLORA.bloom, 1.6, 10, .7); if (p) world.plants.push(new Bloom(p.x, p.z, rnd(.5, 1))); }
@@ -10668,7 +10800,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -12669,7 +12801,7 @@ function obSay(o, d) {
   if (world.clock - t < 5) return;
   OBSAY.set(key, world.clock);
   logMsg('blocked by ' + (o.tag || (o.owner ? o.owner.constructor.name : 'unknown'))
-    + '  r ' + obRad(o).toFixed(1) + (Math.abs(obRad(o) - o.r) > .05 ? ' of ' + o.r.toFixed(1) + ' grown' : '') + '  top ' + (o.top === Infinity ? 'inf' : o.top.toFixed(1))
+    + '  r ' + obRadP(o).toFixed(1) + (Math.abs(obRadP(o) - o.r) > .05 ? ' of ' + o.r.toFixed(1) + ' grown' : '') + '  top ' + (o.top === Infinity ? 'inf' : o.top.toFixed(1))
     + '  at ' + o.x.toFixed(0) + ',' + o.z.toFixed(0)
     + '  you are ' + d.toFixed(1) + ' from its centre');
 }
@@ -12687,9 +12819,10 @@ function resolvePlayer(x, z, feetY) {
       // wall in open ground every few minutes, in a different place each time, which is
       // exactly "random invisible geometry". The minOb filter had it too, so a sapling whose
       // ADULT radius clears .9 was being collided with at 12% of its size.
-      const rr = obRad(o);
+      const rr = obRadP(o);
       if (rr < OB_PLAYER.minOb) return;
       if (feetY + OB_PLAYER.climb > o.top) return;   // low enough to walk up onto: nothing to hit
+      if (feetY + 2.6 < o.bot) return;              // wholly beneath it: a platform overhead
       const r = rr + player.rad;
       let dx = x - o.x, dz = z - o.z, d = Math.hypot(dx, dz);
       if (d < r) {
@@ -12711,7 +12844,7 @@ function standOn(x, z, feetY) {
   let top = -1e9;
   obNear(x, z, player.rad + 3, o => {
     if (!isFinite(o.top) || o.top <= top || o.top > feetY + OB_PLAYER.climb) return;
-    const r = obRad(o) + player.rad * .5;        // his feet, not his shoulders
+    const r = obRadP(o) + player.rad * .5;       // his feet, not his shoulders
     if (Math.hypot(x - o.x, z - o.z) < r) top = o.top;
   });
   return top;
@@ -13554,6 +13687,7 @@ function updateHUD() {
 }
 setInterval(updateHUD, 600); updateHUD();
 setTimeout(() => logMsg('Nothing here yet but moss, motes and a few lantern trees.'), 1400);
+setTimeout(() => { if (world.motherTree) logMsg('Something has built steps up the oldest tree in the jungle.'); }, 5200);
 
 // ---------- loop ----------
 let last = performance.now(), booted = false;
