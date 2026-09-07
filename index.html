@@ -1006,7 +1006,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c08';
+const BUILD = 'c09';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4449,7 +4449,37 @@ class Creature {
   build() {}
   // Its centre of mass, above its own feet, in world units. Everything that turns the whole
   // body -- the tumble, the carry -- turns about this and not about the group origin.
-  pivotY() { return this.rig ? this.rig.pivotY : (this.rad || 1) * .8; }
+  // WHERE ITS MASS IS. A rigged animal has this measured off its hips at load. One built out
+  // of primitives had no such number and fell back to `rad * .8` -- its COLLISION radius,
+  // which has nothing whatever to do with how high its body sits. On a low, wide creature
+  // that lands near the floor, so the thing swung about its feet: tumbling about the root,
+  // which is exactly what it looked like. Measure the body it actually built instead.
+  pivotY() {
+    if (this.rig) return this.rig.pivotY;
+    if (this._pv === undefined) this._pv = this.measurePivot();
+    return this._pv;
+  }
+  // The box of everything under `g`, in g's OWN frame. Box3.setFromObject cannot be used for
+  // this: it reads matrixWorld, and a creature's group carries the planet projection, so its
+  // world box is on the sphere while everything here is on the chart.
+  measurePivot() {
+    const box = new THREE.Box3(), v = new THREE.Vector3(), stack = [];
+    const walk = (o, par) => {
+      o.updateMatrix();
+      const w = new THREE.Matrix4().multiplyMatrices(par, o.matrix);
+      if (o.isMesh && o.geometry) {
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        const bb = o.geometry.boundingBox;
+        for (let i = 0; i < 8; i++) box.expandByPoint(v.set(
+          i & 1 ? bb.max.x : bb.min.x, i & 2 ? bb.max.y : bb.min.y, i & 4 ? bb.max.z : bb.min.z).applyMatrix4(w));
+      }
+      for (const c of o.children) walk(c, w);
+    };
+    const I = new THREE.Matrix4();
+    for (const c of this.g.children) walk(c, I);
+    if (!isFinite(box.min.y) || !isFinite(box.max.y)) return (this.rad || 1) * .8;
+    return clamp((box.min.y + box.max.y) * .5, .15, 8);
+  }
   addLeg(x, z, len, mat, r = .17) {
     const hip = new THREE.Group(); hip.position.set(x, len, z);
     const upper = mesh(G.cylT, mat, r, len * .55, r, 0, -len * .27, 0); hip.add(upper);
@@ -7490,7 +7520,13 @@ function buildZones() {
     e.root.updateMatrixWorld(true);
     e.root.traverse(o => { if (o.isMesh) parts.push({ geo: o.geometry, mat: o.material, m: o.matrixWorld.clone() }); });
     const sz = e.box.getSize(new THREE.Vector3());
-    M[nm] = { parts, box: e.box, sz, big: Math.max(sz.x, sz.y, sz.z), wide: Math.max(sz.x, sz.z) };
+    // `foot` is the MEAN of the two horizontal extents, not the larger of them, and that is
+    // the whole of the invisible-wall bug. A collider is a circle; an elongated model is not.
+    // Taking the wider axis circumscribes the silhouette, so sp_rock03 -- 7.8 units long and
+    // 1.4 deep once scaled -- got a radius drawn round its LENGTH, and with the 1.1 the
+    // player's own test adds on top you were stopped 5.0 units out by 4.3 units of thin air.
+    // The mean inscribes far closer: same 5.0 for a round boulder, 3.4 for that slab.
+    M[nm] = { parts, box: e.box, sz, big: Math.max(sz.x, sz.y, sz.z), foot: (sz.x + sz.z) * .5 };
     if (++got === names.length) layZones(M);
   });
 }
@@ -7500,8 +7536,8 @@ function buildZones() {
 // slab twenty-one times wider than it is thick to a tree three times taller than it is wide,
 // and asking for a HEIGHT turns the first of those into a twenty-metre pebble.
 // `tilt` is how far it lies down with the ground (0 stands upright, 1 lies flat on the slope);
-// `obK` is its collision radius as a fraction of its own width, so a trunk can block while its
-// canopy does not, and a flower can block nothing at all.
+// `obK` is its collision radius as a fraction of its own FOOTPRINT (see the note where that is
+// measured), so a trunk can block while its canopy does not, and a flower blocks nothing.
 function zPut(bin, m, x, z, span, yaw, tilt, obK, opt) {
   if (!m) return;
   const s = span / Math.max(1e-4, m.big), gy = groundY(x, z);
@@ -7516,7 +7552,7 @@ function zPut(bin, m, x, z, span, yaw, tilt, obK, opt) {
   _zm.compose(_zp, _zq, _zsc.setScalar(s));
   const reg = biomeAt(x, z).name;
   for (const pt of m.parts) bin.push({ geo: pt.geo, mat: tintFor(pt.mat, reg, { keep: .38, k: .7 }), matrix: _zm.clone().multiply(pt.m) });
-  const r = m.wide * s * obK;
+  const r = m.foot * s * obK;
   if (r > .4) obAdd(x, z, r, null, gy - sink + m.sz.y * s * .94);
 }
 
@@ -7683,6 +7719,40 @@ function findBerth() {
     if (score > best) { best = score; sp = { x, z }; }
   }
   return sp;
+}
+
+// A LOOK AT THE COLLISION FIELD. Put ?obs on the URL, or call isle.showObs() from a console.
+// Every obstacle is drawn where it actually is, at its own radius, and as tall as its `top`
+// says it is -- an infinite one (a trunk, a cliff) gets a tall column so it reads differently
+// from something you can step over.
+//
+// This exists because "an invisible thing is stopping me" is not a question that can be
+// answered by reading: the collider and the model that should explain it are computed in
+// different places from different numbers, and the only way to see the gap between them is to
+// draw one on top of the other. Guessing at it cost a build.
+let obsShown = null;
+function showObstacles() {
+  if (obsShown) { for (const m of obsShown) scene.remove(m); obsShown = null; return 0; }
+  const mat = new THREE.MeshBasicMaterial({ color: 0x3cffd2, transparent: true, opacity: .20,
+    depthWrite: false, side: THREE.DoubleSide });
+  mat.userData.noHole = true;
+  const cap = new THREE.MeshBasicMaterial({ color: 0xff5ea8, transparent: true, opacity: .28,
+    depthWrite: false, side: THREE.DoubleSide });
+  cap.userData.noHole = true;
+  const seen = new Set(), out = [];
+  for (const arr of OB.map.values()) for (const o of arr) {
+    if (seen.has(o)) continue;
+    seen.add(o);
+    const gy = groundY(o.x, o.z);
+    const inf = !isFinite(o.top);
+    const h = inf ? 14 : Math.max(.35, o.top - gy);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(o.r, o.r, h, 20, 1, true), inf ? cap : mat);
+    m.position.set(o.x, gy + h * .5, o.z);
+    scene.add(m); out.push(m);
+  }
+  obsShown = out;
+  logMsg(seen.size + ' colliders drawn. Pink ones have no top: you go round those.');
+  return seen.size;
 }
 
 function populate() {
@@ -8652,6 +8722,7 @@ function startGame() {
     DIO.scene = null; DIO.spin = null; DIO.sky = null; DIO.mix = null;
   }
   if (weap.ready) wdock.hidden = false;
+  if (/[?&]obs\b/.test(location.search)) setTimeout(showObstacles, 400);
   introEl.classList.add('go');
   setTimeout(() => introEl.remove(), 1000);
   document.body.classList.remove('intro');
@@ -9161,7 +9232,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
