@@ -990,7 +990,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b98';
+const BUILD = 'b99';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3417,6 +3417,7 @@ function loadModel(url, cb) {
   loader.load(url, gltf => {
     e.root = gltf.scene; e.anims = gltf.animations;
     prepModel(e.root);
+    jointDrift(e.root, e.anims, url);
     // Measure in the idle pose, not the bind pose. Mixamo exports keep the bind pose hips
     // at the origin and the clips a hip-height above it, so a model normalised to its bind
     // pose stands a hip-height in the air the moment it starts to idle.
@@ -3426,6 +3427,44 @@ function loadModel(url, cb) {
     for (const f of e.waiting) f(e);
     e.waiting.length = 0;
   }, undefined, err => { e.failed = true; e.waiting.length = 0; console.warn('model failed, keeping placeholder:', url, err); });
+}
+
+// THE WRIST. Measured out of the file, not guessed at: in alien_orange.glb, EVERY clip carries
+// a translation track for mixamorig_RightHand that puts the bone 0.11 world units away from
+// where the skin was bound -- about eighteen centimetres on a body scaled to 2.8. The rest
+// pose agrees with the bind matrix exactly, to 0.00; it is the animation that walks off. So
+// the hand is dragged out of its own wrist the moment any clip plays, in idle, in the walk, in
+// every rifle pose, always by the same amount.
+//
+// Which is why it never showed up in the DCC. There the rig and the deformation agree with
+// each other; only the exported inverse bind matrices know the hand has moved.
+//
+// The rule this enforces is the one every skeletal rig already obeys: a bone's translation IS
+// its offset from its parent -- its length -- and only the ROOT is allowed to travel. Anything
+// else translating is a retarget artefact. Dropping the track leaves the bone at its bind
+// offset, which is the whole fix.
+//
+// Nulls that are not skin joints keep theirs: `weapon` and `weapon_direction` are carried 81
+// and 104 units off their rest position deliberately -- that is where the blaster and the
+// carry socket were authored to sit, and stripping those would put the gun back inside his
+// hip.
+function jointDrift(root, anims, url) {
+  const joints = new Set();
+  root.traverse(o => { if (o.isSkinnedMesh && o.skeleton) for (const b of o.skeleton.bones) joints.add(b.name); });
+  if (!joints.size || !anims || !anims.length) return;
+  const isRoot = /(^|[_:.])(hips?|pelvis|root|armature)$/i;
+  const hit = new Set();
+  for (const clip of anims) {
+    const keep = [];
+    for (const t of clip.tracks) {
+      const m = /^(.+)\.position$/.exec(t.name);
+      if (m && joints.has(m[1]) && !isRoot.test(m[1])) { hit.add(m[1]); continue; }
+      keep.push(t);
+    }
+    clip.tracks = keep;
+  }
+  if (hit.size) console.info('[rig] ' + url.split('/').pop() + ': dropped the translation tracks on '
+    + [...hit].join(', ') + ' -- a joint that is not the root cannot move without leaving its own skin.');
 }
 
 // A 4096 square texture is 67 MB of RGBA on the GPU, 89 with its mipmaps, and these models
@@ -8123,7 +8162,7 @@ const RIG = {
   // alien arm with a wide hand on the end. `k` is how much of the authored turn survives:
   // 1 plays the clip untouched, 0 pins the wrists to the bind pose. Dial it, do not delete it
   // -- a wrist that never moves at all reads as a mannequin.
-  calmWrists: { bones: /Hand$/, k: .45 },
+  calmWrists: { bones: /Hand$/, k: .85 },
   // Two poses rather than two animations, and they are used differently. `pickUp` is played
   // as a one-shot whose BLEND is the movement -- fading a standing body into a bent-over pose
   // over a third of a second IS bending over, and needs no keys. `hold` is shoulders and arms
