@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c16';
+const BUILD = 'c17';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -9636,6 +9636,16 @@ const WEAPON = {
   drop: [0, 0, 0],                 // and a nudge, in joint units, if the grip sits proud
   drawRate: 3.6,                   // how fast `armed` crosses 0..1
   aimAt: .32,                      // stick magnitude that counts as an aim rather than a nudge
+  // THE TRIGGER IS A FULL PULL, HELD. Three separate things have to be true, and each one
+  // rules out a different way of firing by accident:
+  //   fireAt  how far up the pad it arms -- a long way, so a nudge cannot reach it
+  //   keepAt  and how far back down it has to slide to stand down again. The gap between the
+  //           two is hysteresis: a thumb rolling inward as it lifts off must not cancel the
+  //           shot you meant, and without it a full pull only fires if you let go at exactly
+  //           full stretch, which nobody does
+  //   armT    and how long it has to be up there. A flick to the top and straight back is not
+  //           a shot however far it went
+  fireAt: .80, keepAt: .50, armT: .10,
   cool: .5,                        // seconds before he can shoot again
   hold: .34,                       // how long the shot clip owns the arms
   camEase: 2.6,                    // how briskly the camera swings in behind the aim
@@ -10323,7 +10333,7 @@ function stepWeapon(dt, rx, ry) {
   if (!canHold && p.armed < .02) p.armed = 0;
   if (weap.model) weap.model.visible = p.armed > .05;
   armB.classList.toggle('on', !!p.armWant);
-  if (!(canHold && p.armed > .5)) { p.aiming = 0; p.lock = null; p.charge = 0; stepChargeFx(0, dt); return false; }
+  if (!(canHold && p.armed > .5)) { p.aiming = 0; p.lock = null; p.charge = 0; p.armT = 0; stepChargeFx(0, dt); return false; }
   // The charge fills while he is holding the aim and drains when he is not, so a tap fires a
   // small one and a hold fires a big one. It cannot start filling until the cooldown is up,
   // or a mash would show a full ball a frame after the last shot.
@@ -10346,7 +10356,12 @@ function stepWeapon(dt, rx, ry) {
   // bringing it back to centre is how you change your mind, which is the only way to have a
   // charge you can abandon.
   const upK = live ? -ry / mag : -1;
-  const armed = live && upK >= Math.cos(WEAPON.fireArc);
+  const inArc = live && upK >= Math.cos(WEAPON.fireArc);
+  // Held at full stretch inside the arc it counts up; slid back past keepAt, or out of the
+  // arc at all, it resets; and in between it simply holds, which is the hysteresis.
+  if (inArc && mag >= WEAPON.fireAt) p.armT = (p.armT || 0) + dt;
+  else if (!inArc || mag < WEAPON.keepAt) p.armT = 0;
+  const armed = p.armT >= WEAPON.armT;
   p.turning = live ? 1 : 0;
   if (live) {
     // The stick is read in the camera's LIVE frame, not in one latched when the aim began.
@@ -10389,7 +10404,7 @@ function stepWeapon(dt, rx, ry) {
       if (p.lock && p.lock.alive) { p.aimH = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z); p.heading = p.aimH; }
       if (p.wpn === 'net') fireNet(); else fireBolt(p.charge);
     }
-    p.aiming = 0; p.charge = 0; p.lock = null; p.aimAdj = 0;
+    p.aiming = 0; p.charge = 0; p.lock = null; p.aimAdj = 0; p.armT = 0;
   }
   return true;
 }
@@ -11046,21 +11061,40 @@ const stick = { L: { x: 0, y: 0 }, R: { x: 0, y: 0 } };
 // anything that fires on the outward motion fires every time you set off at a sprint. Holding
 // is what makes it a walk; letting go straight away is what makes it a flick. `onTap` cannot
 // collide with it: a tap is under .3 of travel and a flick is over .7.
-function bindStick(el, out, onTap, onFlick) {
-  const knob = el.querySelector('.knob'); let id = null, t0 = 0, far = 0, lx = 0, ly = 0; const RAD = 52;
+// `rel` measures the stick FROM WHERE THE THUMB LANDED instead of from the middle of the pad,
+// and that is the whole of "tapping should never shoot".
+//
+// Absolute, pointerdown calls set() straight away, so touching the pad anywhere but its exact
+// centre reports a deflection on the very first frame -- touch near the top and the stick
+// reads a FULL push upward before you have moved a pixel. The weapon armed on that, and the
+// tap test still passed because `far` was only ever updated by pointermove and a tap does not
+// move. So one tap jumped AND fired, every time, which is exactly what was reported.
+//
+// Relative, a touch is worth zero however far off centre it lands, and a push is a push. It is
+// also just a better thumbstick: you never have to find the middle of the pad first.
+function bindStick(el, out, onTap, onFlick, rel) {
+  const knob = el.querySelector('.knob');
+  let id = null, t0 = 0, far = 0, lx = 0, ly = 0, ox = 0, oy = 0; const RAD = 52;
   const set = (cx, cy) => {
-    const r = el.getBoundingClientRect();
-    let dx = cx - (r.left + r.width / 2), dy = cy - (r.top + r.height / 2);
+    let dx, dy;
+    if (rel) { dx = cx - ox; dy = cy - oy; }
+    else { const r = el.getBoundingClientRect(); dx = cx - (r.left + r.width / 2); dy = cy - (r.top + r.height / 2); }
     const d = Math.hypot(dx, dy); if (d > RAD) { dx *= RAD / d; dy *= RAD / d; }
     out.x = lx = dx / RAD; out.y = ly = dy / RAD; knob.style.transform = `translate(${dx}px,${dy}px)`;
   };
-  el.addEventListener('pointerdown', e => { id = e.pointerId; t0 = performance.now(); far = 0; el.setPointerCapture(id); el.classList.add('act'); set(e.clientX, e.clientY); e.stopPropagation(); e.preventDefault(); });
+  el.addEventListener('pointerdown', e => { id = e.pointerId; t0 = performance.now();
+    ox = e.clientX; oy = e.clientY;
+    el.setPointerCapture(id); el.classList.add('act'); set(e.clientX, e.clientY);
+    far = Math.hypot(out.x, out.y);     // counted from the first frame, not only from the first MOVE
+    e.stopPropagation(); e.preventDefault(); });
   el.addEventListener('pointermove', e => { if (e.pointerId !== id) return; set(e.clientX, e.clientY); far = Math.max(far, Math.hypot(out.x, out.y)); e.stopPropagation(); });
   const end = e => {
     if (e.pointerId !== id) return;
     const held = performance.now() - t0;
     if (onFlick && far > FLICK.at && held < FLICK.within * 1000 && Math.hypot(lx, ly) > .35) onFlick(lx, ly);
-    if (onTap && far < .3 && held < 240) onTap();
+    // A tap can be a little sloppy now, because nothing else lives down here: the trigger is
+    // at .80 and needs holding, so there is a wide dead band between a tap and a shot.
+    if (onTap && far < .42 && held < 260) onTap();
     id = null; out.x = out.y = 0; knob.style.transform = 'translate(0,0)'; el.classList.remove('act'); e.stopPropagation();
   };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
@@ -11071,7 +11105,7 @@ bindStick(document.getElementById('stkL'), stick.L, null, flickRoll);
 bindStick(document.getElementById('stkR'), stick.R, () => {
   if (ACT.now) { const a = ACT.now; ACT.now = null; showAct(); a.run(); }
   else if (!player.aboard) player.jump = 1;
-});
+}, null, 1);          // relative: a tap on it is a tap, wherever on the pad it lands
 const keys = {};
 addEventListener('keydown', e => {
   // On the title screen every key is the start key, and none of them is a movement key --
@@ -11114,7 +11148,7 @@ function toggleArm() {
   player.armWant = player.armWant ? 0 : 1;
   paintWeapon();
   logMsg(player.armWant
-    ? 'He unclips the ' + WEAPONS[player.wpn].label + '. Hold the right stick to aim; let go to fire.'
+    ? 'He unclips the ' + WEAPONS[player.wpn].label + '. Push the right stick all the way UP to aim; let go to fire.'
     : 'It goes away.');
 }
 // One gesture, two outcomes. Press and let go and it draws or puts away. Press, keep holding
