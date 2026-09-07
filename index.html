@@ -287,6 +287,9 @@
      which is worse than useless when a bug report and a fix are crossing in the air. */
   #bld{font-size:11px;opacity:.5;letter-spacing:.1em;margin-top:2px;
     font-family:ui-monospace,Menlo,Consolas,monospace}
+  #stale{position:fixed;left:50%;transform:translateX(-50%);z-index:9;pointer-events:auto;
+    top:calc(12px + env(safe-area-inset-top));font-size:12px;letter-spacing:.06em;
+    background:rgba(255,190,110,.24);border-color:rgba(255,200,130,.7)}
   #log{bottom:46px}
   @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:206px}#mini{width:92px;height:92px}}
   /* The title screen is the game, seen from a long way off, so the interface has to get
@@ -1048,7 +1051,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c52';
+const BUILD = 'c53';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -12991,6 +12994,28 @@ const statsEl = document.getElementById('stats'), eraEl = document.getElementByI
 // and the build, where it can be read without opening anything. `+ knock` when the throw
 // readout is armed, so a flag that did not take is visible rather than silently absent.
 { const b = document.getElementById('bld'); if (b) b.textContent = BUILD + (KDBG ? ' + knock' : '') + '  ·  tap the title for stats'; }
+// AND IT ASKS WHETHER IT IS THE CURRENT ONE. Pages caches index.html and a phone caches it
+// harder; three times now a report and its fix have crossed in the air because the build on
+// screen was two behind the build on the server, and there is no way to tell by looking.
+// One range request for the first 96 kB of the file it was itself served from -- the BUILD
+// line is 83 kB in, out of 855 -- with cache: no-store and a unique query, so it goes past
+// every cache between here and the origin. Nothing reloads by itself: he is usually mid-test
+// when the answer lands. It puts a chip on screen and waits to be tapped.
+(() => {
+  if (!window.fetch) return;
+  fetch(location.pathname + '?cb=' + Date.now(), { cache: 'no-store', headers: { Range: 'bytes=0-98303' } })
+    .then(r => r.text())
+    .then(t => {
+      const m = /const BUILD = '([a-z0-9]+)'/.exec(t);
+      if (!m || m[1] === BUILD) return;
+      const chip = document.createElement('button');
+      chip.className = 'tog icon'; chip.id = 'stale';
+      chip.textContent = m[1] + ' is out \u2014 tap to load';
+      chip.addEventListener('click', e => { e.stopPropagation(); location.replace(location.pathname + '?v=' + m[1]); });
+      document.body.appendChild(chip);
+    })
+    .catch(() => {});     // offline, or a server with no Range: not worth a word about it
+})();
 // ---------- waypoints ----------
 // A mark you drop on the map and then walk to. It has to be findable from the ground, so it
 // is a beam you can see over a ridge, a bobbing pulse at its foot, a ring on the grass, and
