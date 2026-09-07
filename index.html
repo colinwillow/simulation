@@ -33,7 +33,10 @@
      and offset from visualViewport in syncSize, in one place. translate(0,0) is what it is
      nearly all the time; it is not a no-op, it is what creates the containing block. */
   body{width:var(--vvw,100%);height:var(--vvh,100%);
-    transform:translate(var(--vvl,0px),var(--vvt,0px))}
+    transform:translate(var(--vvl,0px),var(--vvt,0px));
+    /* visible, not hidden: the canvas below is deliberately bigger than this box and has to
+       be allowed to paint past it. html still clips, so nothing can be scrolled to. */
+    overflow:visible}
   </style>
   <script>
   // BEFORE THE FIRST PAINT, not on the first animation frame. syncSize sets these, and it
@@ -48,6 +51,15 @@
       d.setProperty('--vvh', Math.round(vv ? vv.height : innerHeight) + 'px');
       d.setProperty('--vvl', (vv ? vv.offsetLeft : 0) + 'px');
       d.setProperty('--vvt', (vv ? vv.offsetTop : 0) + 'px');
+      // AND THE CANVAS IS NOT THE INTERFACE. --vv* is the box you can SEE, which is what the
+      // panels want. The lens wants the whole SCREEN: sized to the visual viewport it leaves
+      // a strip of html showing under it whenever the two disagree, which on iOS is most of
+      // the time and is the black rectangle along the bottom that keeps coming back. The
+      // largest of the three candidates is the layout viewport however the browser is
+      // currently reporting it.
+      var lw = Math.max(innerWidth, vv ? vv.width : 0, document.documentElement.clientWidth || 0);
+      var lh = Math.max(innerHeight, vv ? vv.height : 0, document.documentElement.clientHeight || 0);
+      d.setProperty('--cvw', Math.round(lw) + 'px'); d.setProperty('--cvh', Math.round(lh) + 'px');
     };
     set();
     addEventListener('resize', set);
@@ -69,7 +81,8 @@
      screen, over the clock, since the day this rule got `fixed` in it, instead of sitting in
      #ui with the buttons where it is written to. The renderer's canvas is the only direct
      child of body, so the child combinator says exactly what was meant all along. */
-  body > canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
+  body > canvas{position:fixed;left:calc(-1 * var(--vvl,0px));top:calc(-1 * var(--vvt,0px));
+    width:var(--cvw,100vw);height:var(--cvh,100vh);display:block;z-index:0;touch-action:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -1078,7 +1091,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c59';
+const BUILD = 'c60';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -2351,26 +2364,15 @@ const DEEP = (() => {
   // title screen is composed from -- and they hang where you can see them from the ground.
   // See SKY_BODIES / buildSkyBodies below; what is left in this group is the SPACE framing:
   // the near lumps and the nebula, which are a wide-shot device and stay gated on altitude.
-  // NEAR ROCKS. The reference frames the whole picture with a big, close, unlit lump in two
-  // corners, and that one trick is most of what makes a wide shot read as deep instead of
-  // flat -- there is something in front of the subject as well as behind it. They sit at a
-  // third of the shell radius and are dark on purpose: foreground, not scenery.
-  const near = (yaw, pit, rad, hex) => {
-    const geo = new THREE.IcosahedronGeometry(rad, 1);
-    const pa = geo.attributes.position;
-    for (let i = 0; i < pa.count; i++) {
-      const k = .74 + hash(pa.getX(i) * .21, pa.getZ(i) * .19 + pa.getY(i) * .13) * .5;
-      pa.setXYZ(i, pa.getX(i) * k, pa.getY(i) * k, pa.getZ(i) * k);
-    }
-    geo.computeVertexNormals();
-    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-      color: new THREE.Color(hex), transparent: true, opacity: 0, fog: false }));
-    m.position.copy(at(yaw, pit, R * .34)); m.rotation.set(rnd(3), rnd(3), rnd(3));
-    m.renderOrder = -2; mats.push(m.material); g.add(m);
-  };
-  near(1.05, -.46, 40, '#4a4640');
-  near(5.05, -.52, 34, '#3e3a44');
-  near(2.15, .58, 22, '#464251');
+  // THE NEAR ROCKS ARE GONE, and they are the black shape across the sky in the fly-in.
+  // Three dark icosahedrons at a third of the shell radius -- #4a4640, #3e3a44, #464251 --
+  // unlit MeshBasicMaterial, so in space they are not "dark grey", they are BLACK, and the
+  // biggest is forty units across at two hundred and fifty out: eighteen degrees of faceted
+  // silhouette with hard straight edges. They fade with spaceK squared, which is why they
+  // thin out as you descend and why it read as something un-occluding rather than something
+  // disappearing. They were a framing device for the title composition -- a near thing and a
+  // far thing in one picture -- and the title screen has had its own bodies and its own plate
+  // since c38. Here they are three black holes punched in the owner's galaxy.
   // Nebula: a few big soft additive cards, drifting apart in colour so it does not read as
   // one stain. They are the cheapest possible depth cue and the most effective.
   for (let i = 0; i < 7; i++) {
@@ -13142,15 +13144,21 @@ function syncSize() {
   // on a phone the two part company every time the URL bar slides. Reading the wrong one gives
   // a camera whose aspect does not match the box its picture is shown in.
   const vv = window.visualViewport;
-  const w = Math.round(vv ? vv.width : innerWidth), h = Math.round(vv ? vv.height : innerHeight);
+  // The size of the CANVAS, which is now the whole screen rather than the visible box -- the
+  // buffer and the element it is shown in have to be the same shape or the picture stretches,
+  // and that was the whole point of reading visualViewport here in the first place.
+  const w = Math.max(innerWidth, vv ? vv.width : 0, document.documentElement.clientWidth || 0) | 0;
+  const h = Math.max(innerHeight, vv ? vv.height : 0, document.documentElement.clientHeight || 0) | 0;
   // The page's own box first, and every frame rather than only when the size changes: the
   // offset moves on its own while the bar slides, without the height ever differing. Body is
   // the containing block for every fixed panel here (see the CSS), so these four properties
   // are the whole of what keeps the interface over the part of the screen you can see.
   const ds = document.documentElement.style;
-  ds.setProperty('--vvw', w + 'px'); ds.setProperty('--vvh', h + 'px');
+  ds.setProperty('--vvw', Math.round(vv ? vv.width : innerWidth) + 'px');
+  ds.setProperty('--vvh', Math.round(vv ? vv.height : innerHeight) + 'px');
   ds.setProperty('--vvl', (vv ? vv.offsetLeft : 0) + 'px');
   ds.setProperty('--vvt', (vv ? vv.offsetTop : 0) + 'px');
+  ds.setProperty('--cvw', w + 'px'); ds.setProperty('--cvh', h + 'px');
   if (w === _vw && h === _vh) return;
   _vw = w; _vh = h;
   camera.aspect = w / h; camera.updateProjectionMatrix();
