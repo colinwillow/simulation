@@ -18,7 +18,14 @@
   html,body{margin:0;height:100%;overflow:hidden;background:#070a13;font-family:Georgia,"Iowan Old Style",serif;color:#f0e7d4;
     touch-action:none;overscroll-behavior:none;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
     -webkit-user-select:none;user-select:none}
-  canvas{display:block;touch-action:none}
+  /* FIXED AND FILLING, rather than a block in flow that three.js sizes in pixels. In flow, the
+     canvas is exactly as tall as the number syncSize last handed it -- and on iOS innerHeight
+     and the actually-visible viewport disagree whenever the URL bar moves, so a stale number
+     leaves the page showing through underneath. That is the grey rectangle along the bottom,
+     and it is also why things looked shifted up: the buffer and the box it is displayed in
+     were different shapes. Every panel in this file is fixed with a z-index of 1 or more, so
+     the lens can sit under all of them at 0. */
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -1010,7 +1017,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c32';
+const BUILD = 'c33';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8783,11 +8790,11 @@ const DIO_BODIES = [
   // this is guessing again, and this screen has cost several rounds of exactly that.
   //
   //                                        measured from                     was
-  { sx:  1.04, sy:  .29, d: 235, rf: .55,  model: 'models/saturn.glb', tilt: [.16, .0, .12] },   // (960, 590) r260
-  { sx:  -.95, sy:  .34, d: 285, rf: .36,  model: 'models/earth_planet.glb' },                   // ( 25, 545) r170
+  { sx:  1.02, sy:  .29, d: 235, rf: .70,  model: 'models/saturn.glb', tilt: [.16, .0, .12] },   // (960, 590) r260
+  { sx:  -.98, sy:  .34, d: 285, rf: .28,  model: 'models/earth_planet.glb' },                   // ( 25, 545) r170
   { sx:   .49, sy:  .55, d: 320, rf: .08,  model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },  // (700, 375) r38
-  { sx:  -.80, sy: -.81, d:  64, rf: .44,  model: 'models/cratered_asteroid.glb', tint: '#b09678' },  // ( 95,1500) r205
-  { sx:   .89, sy: -.84, d:  76, rf: .37,  model: 'models/purple_moon.glb' },                    // (890,1530) r175
+  { sx:  -.82, sy: -.81, d:  64, rf: .58,  model: 'models/cratered_asteroid.glb', tint: '#b09678' },  // ( 95,1500) r205
+  { sx:   .91, sy: -.84, d:  76, rf: .52,  model: 'models/purple_moon.glb' },                    // (890,1530) r175
   { sx:  -.80, sy: -.52, d: 170, rf: .074, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },  // ( 95,1258) r35
   { sx:   .82, sy: -.62, d: 185, rf: .06,  model: 'models/purple_moon.glb' },                    // (855,1345) r28
   { sx:   .62, sy: -.51, d: 210, rf: .05,  model: 'models/cratered_asteroid.glb', tint: '#8d867c' },
@@ -8923,18 +8930,27 @@ function dioDress(g) {
   // ---- the base, on the left shoulder ----
   // Brought round toward the front and made properly big. At lon 2.46 the base was half off
   // the left limb, showing the camera its own side; the reference has the whole of it.
-  put('models/space_base.glb', .58, 2.22, 12.5, .34, 0, .80);
+  put('models/space_base.glb', .62, 2.34, 12.5, .34, 0, .80);
   put('models/sp_sci_fi_antenna.glb', .52, 2.62, 7.6, 0, 0, .30);      // a mast is a pole
 
   // ---- THREE big caps, in the three places the reference puts them ----
   // .35 of footprint: what a mushroom stands on is its stalk, and standing under a cap is
   // something the reference does deliberately.
-  put('models/fantasy_mushroom_colorful.glb', .56, 0.90, 6.6, rnd(6.3), 0, .35);   // beside the alien
-  put('models/fantasy_mushroom_colorful.glb', .24, 0.28, 7.4, rnd(6.3), 0, .35);   // the right limb
-  put('models/fantasy_mushroom_colorful.glb', .34, 1.98, 8.2, rnd(6.3), 0, .35);   // front left, biggest
+  // Measured against the reference: its big cap is about a quarter of the planet's diameter
+  // and mine were nearly two fifths. Two thirds the span, and the front-left one moved down
+  // and round so its canopy stops hanging over the base's shoulder -- a claim is what a thing
+  // stands on, so it cannot know that a cap overhangs a neighbour it is technically clear of.
+  put('models/fantasy_mushroom_colorful.glb', .56, 0.92, 4.6, rnd(6.3), 0, .35);   // beside the alien
+  put('models/fantasy_mushroom_colorful.glb', .22, 0.34, 5.2, rnd(6.3), 0, .35);   // the right limb
+  put('models/fantasy_mushroom_colorful.glb', .26, 1.74, 5.6, rnd(6.3), 0, .35);   // front left
 
   // ---- the fall, which is a model and no longer six boxes and a scrolling canvas ----
   put('models/waterfall_rock.glb', .26, 1.15, 7.4, .5, 0, .78);       // a rock mass is all footprint
+  // AND THE HUT, which I was wrong to take out. c28 gated the whole bay works behind the
+  // procedural planet because the PIER needs water to stand over -- but the hut does not. It
+  // is a building, it stands on ground like the base does, and it is one of the first things
+  // you modelled for this screen. Only the pier and the mill actually needed the bay.
+  put('models/dome_hut.glb', .17, 0.72, 6.2, 2.5, 0, .85);
 
   // ---- one spray of crystals, not five scattered ones ----
   for (let i = 0; i < 5; i++)
@@ -9257,7 +9273,7 @@ function dioramaFrame(dt, k) {
     // reference's saucer exactly. It was too HIGH: at sy .56 its top reached .637 and the
     // wordmark's underside was at .572, so they shared a band. With the mark lifted to a
     // bottom edge of .63 and the ship at .50, its top lands at .577 and they just clear.
-    place(DIO.ship, -.48, .50 + Math.sin(DIO.t * .5) * .02, 70, .50);
+    place(DIO.ship, -.54, .45 + Math.sin(DIO.t * .5) * .02, 70, .50);
     DIO.ship.quaternion.copy(cam3.quaternion);
     DIO.ship.rotateY(.55); DIO.ship.rotateZ(.14 + Math.sin(DIO.t * .37) * .04); DIO.ship.rotateX(-.12);
   }
@@ -12363,11 +12379,17 @@ function tap(cx, cy) {
 // frame loop calls it too: whatever the events do, the next frame puts it right.
 let _vw = 0, _vh = 0;
 function syncSize() {
-  const w = innerWidth, h = innerHeight;
+  // visualViewport is what is ACTUALLY on screen; innerHeight is what the layout thinks, and
+  // on a phone the two part company every time the URL bar slides. Reading the wrong one gives
+  // a camera whose aspect does not match the box its picture is shown in.
+  const vv = window.visualViewport;
+  const w = Math.round(vv ? vv.width : innerWidth), h = Math.round(vv ? vv.height : innerHeight);
   if (w === _vw && h === _vh) return;
   _vw = w; _vh = h;
   camera.aspect = w / h; camera.updateProjectionMatrix();
-  renderer.setSize(w, h);
+  // updateStyle false: the CSS above already has it filling the viewport, and letting three
+  // write pixel sizes back onto it is what re-introduces the mismatch.
+  renderer.setSize(w, h, false);
   rtScene.setSize(w * Q.dpr, h * Q.dpr);
   rtA.setSize(w * Q.dpr / Q.bloomDiv, h * Q.dpr / Q.bloomDiv);
   rtB.setSize(w * Q.dpr / Q.bloomDiv, h * Q.dpr / Q.bloomDiv);
