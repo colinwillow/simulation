@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c12';
+const BUILD = 'c13';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8255,11 +8255,16 @@ function titleMark(host) {
   const g = new THREE.Group(); g.userData.flat = true;
   (host || scene).add(g);
   TCARD.g = g;
-  // Its own light, travelling with it. Lit by the scene's key instead, the name would go dark
-  // whenever the shot drifted, which is not a thing a title is allowed to do.
-  const lamp = new THREE.DirectionalLight(0xffffff, 2.6); lamp.position.set(-.4, .7, 1.4);
-  g.add(lamp); g.add(lamp.target);
-  g.add(new THREE.AmbientLight(0x9fb4ff, 1.5));
+  // NO LIGHTS HERE. The first version gave the mark its own lamp and its own ambient so the
+  // name would never go dark as the shot drifted -- and that is what blew the whole picture
+  // out. A light in three.js lights the SCENE; parenting it to an object scopes nothing. Those
+  // two added 2.6 of directional and 1.5 of ambient to a diorama built for 1.85 and 0.46, so
+  // every surface in frame was past white before the key was counted, and cutting the key
+  // afterwards could not touch it.
+  //
+  // The name is unlit instead, straight off its own texture. It is a title: it should read at
+  // exactly one brightness whatever the lighting is doing, which is what it was reaching for
+  // in the first place, and toneMapped:false keeps the exposure ramp off it too.
   loadModel(TITLE_MARK, e => {
     const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
     const k = 1 / Math.max(1e-4, sz.x);                 // normalised to one unit WIDE
@@ -8269,8 +8274,12 @@ function titleMark(host) {
       if (!o.isMesh) return;
       // Cloned materials, because cloneModel shares them with the cache and this one needs to
       // be transparent to fade -- which is not a property to hand to anything else.
-      const one = m => { const c = m.clone(); c.userData = Object.assign({}, m.userData, { noHole: 1 });
-        c.transparent = true; c.depthWrite = true; return c; };
+      const one = m => {
+        const c = new THREE.MeshBasicMaterial({ map: m.map || null, color: 0xffffff,
+          transparent: true, depthWrite: true, toneMapped: false });
+        c.userData.noHole = 1;
+        return c;
+      };
       o.material = Array.isArray(o.material) ? o.material.map(one) : one(o.material);
       for (const m of [].concat(o.material)) TCARD.mats.push(m);
     });
@@ -8368,6 +8377,7 @@ function dioMat(o) {
 // Where a direction meets the surface, and the turn that stands a thing up on it.
 const _dqA = new THREE.Vector3(), _dqB = new THREE.Quaternion(), _dqC = new THREE.Quaternion();
 const _dfF = new THREE.Vector3(), _dfR = new THREE.Vector3(), _dfU = new THREE.Vector3();
+const _dfCam = new THREE.Vector3();
 function dioStand(o, dir, r, spin) {
   o.position.copy(dir).multiplyScalar(r);
   _dqB.setFromUnitVectors(_plY, _dqA.copy(dir).normalize());
@@ -8391,8 +8401,8 @@ function dioPlanet() {
   const pa = geo.attributes.position;
   const cols = new Float32Array(pa.count * 3);
   const C = {
-    grass: new THREE.Color('#5fb63f'), grass2: new THREE.Color('#84cf58'),
-    sand: new THREE.Color('#e7d6a6'), surf: new THREE.Color('#bfeee4'),
+    grass: new THREE.Color('#4c9c31'), grass2: new THREE.Color('#6bbb45'),
+    sand: new THREE.Color('#d8c391'), surf: new THREE.Color('#a5ded2'),
     sea: new THREE.Color('#27bdb8'), deep: new THREE.Color('#12798f'),
     rock: new THREE.Color('#8f867a'), rock2: new THREE.Color('#6b6359'),
   };
@@ -8439,7 +8449,9 @@ function dioPlanet() {
 // Solid, sculpted clouds rather than sprites: the reference's are objects with a silhouette,
 // and a soft additive card cannot do a silhouette. Clumps of spheres, sat off the limb.
 function dioClouds(g) {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xf2f6ff, roughness: 1, metalness: 0 });
+  // Not white. A cloud at #f2f6ff under any lamp at all is over the bloom threshold, and a
+  // ring of them round the limb is then a halo rather than weather.
+  const mat = new THREE.MeshStandardMaterial({ color: 0xdae3f2, roughness: 1, metalness: 0 });
   mat.userData.noHole = true;
   // Smaller and more of them, sat just off the limb rather than piled on it. The first cut
   // used two-unit puffs on a fourteen-unit planet in clumps six across -- a quarter of the
@@ -8469,7 +8481,10 @@ function dioClouds(g) {
 // everything holds its share of the picture on any screen. dioramaFrame places them each
 // frame off the live camera basis.
 const DIO_BODIES = [
-  { sx:  1.12, sy:  .14, d: 235, rf: .62, c: '#d0824f', ring: '#e6c6a2' },  // the ringed giant, off the right edge
+  // Its DISC is about a fifth of the frame wide once the edge has cut it, which is what the
+  // reference shows. At rf .62 with a ring reaching 2.18 radii the ring alone was 1.35 frame
+  // widths across and swept the whole picture -- that is the big arc behind everything.
+  { sx:  1.10, sy:  .34, d: 235, rf: .52, c: '#c87a45', ring: '#d9b083' },       // the ringed giant, off the right edge
   { sx: -1.08, sy:  .36, d: 285, rf: .50, c: '#4c7f93' },                   // the blue-green one, off the left
   { sx:   .50, sy:  .66, d: 320, rf: .13, c: '#a9a6ae' },                   // a small moon, upper right
   { sx:  -.90, sy: -.98, d:  64, rf: .60, c: '#7c6b57', rock: 1 },          // the big brown lump, bottom left
@@ -8502,10 +8517,10 @@ function dioSky(g) {
     m.rotation.set(rnd(3), rnd(3), rnd(3));
     m.frustumCulled = false;
     if (b.ring) {
-      const rg = new THREE.Mesh(dioOwn(new THREE.RingGeometry(1.42, 2.18, 72)),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(b.ring), transparent: true, opacity: .8,
-          side: THREE.DoubleSide, depthWrite: false }));
-      rg.rotation.set(1.22, .35, .22); m.add(rg);
+      const rg = new THREE.Mesh(dioOwn(new THREE.RingGeometry(1.34, 1.86, 80)),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(b.ring), transparent: true, opacity: .62,
+          side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
+      rg.rotation.set(1.30, .28, .16); m.add(rg);
     }
     g.add(m);
     DIO.bodies.push({ m, spec: b });
@@ -8787,7 +8802,7 @@ function buildDiorama() {
   // a clipped ball is by definition over the bright threshold. None of the vertex colour
   // survived to be seen. One key, and everything else only enough to keep the dark side
   // readable.
-  const key = new THREE.DirectionalLight(0xfff2e0, 1.45);
+  const key = new THREE.DirectionalLight(0xfff2e0, 1.22);
   key.position.set(-38, 44, 40);
   // It casts. A ball this size with no shadow on it reads as a sticker, and the alien's own
   // shadow on the grass is most of what sells him as standing there.
@@ -8819,7 +8834,11 @@ function buildDiorama() {
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.traverse(o => { if (o.isMesh) { o.castShadow = true; dioMat(o); } });
     const holder = new THREE.Group(); holder.add(inst);
-    dioStand(holder, dioDir(.985, 1.9), DIO.R * 1.012, 2.5);
+    const dir = dioDir(.985, 1.9);
+    dioStand(holder, dir, DIO.R * 1.012, 0);
+    // Turned to face the lens rather than left on an arbitrary yaw. The camera sits out along
+    // +Z, and this rig's forward is +Z -- the same convention the whole game uses.
+    dioFace(holder, dir, _dfCam.set(0, 0, 1));
     DIO.spin.add(holder); DIO.alien = inst;
     const idle = pickClip(e.anims || [], 'idle', 'idle', 'walk|run|rifle');
     if (idle) { DIO.mix = new THREE.AnimationMixer(inst); DIO.mix.clipAction(idle).play(); }
@@ -8873,7 +8892,9 @@ function dioramaFrame(dt, k) {
   dioMeteorStep(dt, place);
   if (DIO.mill) DIO.mill.rotation.z -= dt * 1.15;
   if (DIO.fallTex) for (const f of DIO.fallTex) f.t.offset.y = (-DIO.t * f.sp) % 1;
-  if (DIO.spin) DIO.spin.rotation.y = DIO.t * .035;
+  // IT DOES NOT TURN. A spinning planet swings the base, the bay and the grove out of the
+  // frame they were composed for, and takes the alien's facing with it. The shot is a fixed
+  // composition; the camera's drift, the mill, the fall and the meteors are what move.
   if (DIO.mix) DIO.mix.update(dt);
   if (DIO.ship) {
     // Up on the left, under the name and clear of the world -- where the reference puts its
