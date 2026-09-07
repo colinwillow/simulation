@@ -59,6 +59,13 @@
       // currently reporting it.
       var lw = Math.max(innerWidth, vv ? vv.width : 0, document.documentElement.clientWidth || 0);
       var lh = Math.max(innerHeight, vv ? vv.height : 0, document.documentElement.clientHeight || 0);
+      // AND THE SCREEN ITSELF, when the browser's own chrome is what the other three are
+      // short by. Every one of them describes a viewport; none of them describes the glass.
+      // Guarded to a third, so a desktop window a quarter the height of a monitor does not
+      // start rendering a monitor.
+      var sc = typeof screen !== 'undefined' ? screen : null;
+      if (sc && sc.height > lh && sc.height < lh * 1.34) lh = sc.height;
+      if (sc && sc.width > lw && sc.width < lw * 1.34) lw = sc.width;
       d.setProperty('--cvw', Math.round(lw) + 'px'); d.setProperty('--cvh', Math.round(lh) + 'px');
     };
     set();
@@ -1091,7 +1098,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c61';
+const BUILD = 'c63';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -3818,9 +3825,21 @@ class Cairn {
       const s = mesh(pick(G.rock), M.stone2, rnd(.6, 1), rnd(.35, .6), rnd(.6, 1), Math.cos(a) * r, .1, Math.sin(a) * r);
       s.rotation.set(rnd(1), rnd(3), rnd(1)); s.castShadow = true; s.receiveShadow = true; this.g.add(s);
     }
-    this.ob = obAdd(x, z, 3.5, this);
+    // A CAIRN AT LEVEL 0 IS TEN ANKLE-HIGH STONES IN A RING, and it was registering a
+    // 3.5-unit collider with top = Infinity. Infinity means "you go round this, forever" --
+    // so a knee-high plinth stopped you 4.7 units out (3.5 plus the player's own 1.2) with
+    // nothing visible anywhere near you. And the tinkers BUILD these while you play, in
+    // whatever spot they choose, which is exactly what "random invisible geometry that keeps
+    // coming back" is a description of: it is not coming back, it is being built.
+    // A real top instead, tracked as it grows. Under OB_PLAYER.climb (1.5) above his feet the
+    // resolve skips it entirely and standOn puts him on top -- so a low cairn is a thing you
+    // step onto and a finished tower is a thing you climb, which is what it should always
+    // have been. 3.0 is where the stones actually end.
+    this.ob = obAdd(x, z, 3.0, this, this.pos.y + .75, 'cairn');
   }
   get complete() { return this.level >= TOWER_MAX; }
+  // the collider's top follows the stack: called from every path that changes this.y
+  fitOb() { if (this.ob) this.ob.top = this.pos.y + Math.max(.7, this.y + .55); }
   addLog() {
     this.level++;
     if (this.beacon) return this.raise();
@@ -3833,6 +3852,7 @@ class Cairn {
       b.rotation.set(rnd(-.35, .35), rnd(3), rnd(.15, .38)); b.castShadow = true; this.g.add(b);
     }
     if (this.level >= BEACON_LVL && !this.beacon) this.ignite();
+    this.fitOb();
   }
   // past the beacon the tinkers keep going up: drums, braces, a walkway, lantern on top
   raise() {
@@ -13280,8 +13300,12 @@ function syncSize() {
   // The size of the CANVAS, which is now the whole screen rather than the visible box -- the
   // buffer and the element it is shown in have to be the same shape or the picture stretches,
   // and that was the whole point of reading visualViewport here in the first place.
-  const w = Math.max(innerWidth, vv ? vv.width : 0, document.documentElement.clientWidth || 0) | 0;
-  const h = Math.max(innerHeight, vv ? vv.height : 0, document.documentElement.clientHeight || 0) | 0;
+  let w = Math.max(innerWidth, vv ? vv.width : 0, document.documentElement.clientWidth || 0);
+  let h = Math.max(innerHeight, vv ? vv.height : 0, document.documentElement.clientHeight || 0);
+  const sc = typeof screen !== 'undefined' ? screen : null;
+  if (sc && sc.height > h && sc.height < h * 1.34) h = sc.height;
+  if (sc && sc.width > w && sc.width < w * 1.34) w = sc.width;
+  w |= 0; h |= 0;
   // The page's own box first, and every frame rather than only when the size changes: the
   // offset moves on its own while the bar slides, without the height ever differing. Body is
   // the containing block for every fixed panel here (see the CSS), so these four properties
@@ -13682,7 +13706,13 @@ function updateHUD() {
     // WHERE HE IS STANDING, so "I hit another invisible one" can come with a grid reference
     // and be looked at directly instead of hunted for. Same numbers every zone, prop and
     // collider in the file is placed in.
-    `at ${player.pos.x.toFixed(0)}, ${player.pos.z.toFixed(0)} \u00b7 ${biomeAt(player.pos.x, player.pos.z).name}`;
+    `at ${player.pos.x.toFixed(0)}, ${player.pos.z.toFixed(0)} \u00b7 ${biomeAt(player.pos.x, player.pos.z).name}<br>` +
+    // EVERY VIEWPORT NUMBER THE BROWSER WILL GIVE, because four rounds have been spent
+    // guessing which of them is the one that is short. win / vis / doc / scr, then the size
+    // the lens is actually being drawn at. Whichever of the first four is smaller than the
+    // last is the browser's own chrome, and the last one is what has to cover the glass.
+    `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}<br>` +
+    `doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight} scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'} lens ${_vw}x${_vh}`;
   const era = eraName(); if (era !== world.lastEra) { world.lastEra = era; eraEl.textContent = era; }
 }
 setInterval(updateHUD, 600); updateHUD();

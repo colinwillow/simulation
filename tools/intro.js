@@ -30,6 +30,7 @@ global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,ge
   // syncSize writes the visual viewport onto :root as custom properties -- body is the
   // containing block for every fixed panel and this is what sizes it.
   documentElement:{style:{setProperty(){},removeProperty(){}}} };
+global.screen={width:390,height:844};   // the lens is sized against the glass, not only the viewport
 let cbs=[]; global.requestAnimationFrame=f=>cbs.push(f); global.addEventListener=()=>{}; global.setInterval=()=>{}; global.setTimeout=()=>{};
 global.window=global; global.location={search:''};
 global.__t=0; global.performance={now:()=>global.__t};
