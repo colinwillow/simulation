@@ -280,6 +280,13 @@
     box-shadow:0 5px 20px rgba(0,0,0,.5),inset 0 0 24px rgba(0,0,0,.4);background:rgba(8,14,24,.5)}
   #btns{display:flex;flex-direction:column;align-items:flex-end;gap:7px}
   #hudHead{pointer-events:auto;cursor:pointer;display:inline-block}
+  /* ALWAYS ON. The build number is the whole reason it gets bumped on every push -- with
+     Pages caching index.html it is the only way to know whether what you are looking at is
+     what was just shipped -- and it was living in #perf, inside a panel that starts folded
+     behind a tap on the title. So there was no way to tell a fixed build from a stale one,
+     which is worse than useless when a bug report and a fix are crossing in the air. */
+  #bld{font-size:11px;opacity:.5;letter-spacing:.1em;margin-top:2px;
+    font-family:ui-monospace,Menlo,Consolas,monospace}
   #log{bottom:46px}
   @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:206px}#mini{width:92px;height:92px}}
   /* The title screen is the game, seen from a long way off, so the interface has to get
@@ -945,6 +952,7 @@
 </div></div>
 <div id="scrim"></div><div id="scrimB"></div>
 <div id="hud"><div id="hudHead"><h1>Plutopia</h1><div class="era" id="era">The Quiet</div></div>
+  <div id="bld"></div>
   <div id="hudBody" hidden><div id="stats"></div><div id="perf"></div></div></div>
 <div id="log"></div>
 <div id="hint">left stick walks · right stick looks · scroll or pinch to zoom<br>WASD / arrows also work · tap the ground to drop a spark</div>
@@ -1040,7 +1048,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c49';
+const BUILD = 'c50';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -12938,6 +12946,9 @@ if (window.visualViewport) {
 
 // ---------- HUD ----------
 const statsEl = document.getElementById('stats'), eraEl = document.getElementById('era'), perfEl = document.getElementById('perf');
+// and the build, where it can be read without opening anything. `+ knock` when the throw
+// readout is armed, so a flag that did not take is visible rather than silently absent.
+{ const b = document.getElementById('bld'); if (b) b.textContent = BUILD + (KDBG ? ' + knock' : '') + '  ·  tap the title for stats'; }
 // ---------- waypoints ----------
 // A mark you drop on the map and then walk to. It has to be findable from the ground, so it
 // is a beam you can see over a ridge, a bobbing pulse at its foot, a ring on the grass, and
