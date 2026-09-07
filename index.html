@@ -948,7 +948,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b84';
+const BUILD = 'b85';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2105,8 +2105,10 @@ function fitShadow(r) {
 sun.shadow.bias = -0.0004;
 sun.target.userData.flat = true; scene.add(sun, sun.target);
 const moon = new THREE.DirectionalLight(0x9db0ff, 0); moon.target = sun.target; scene.add(moon);
-const hemi = new THREE.HemisphereLight(0x9bc5ee, 0x3f3a2a, .6); scene.add(hemi);
-const bounce = new THREE.DirectionalLight(0xffd9a8, .18); const BOUNCE_D = new THREE.Vector3(-1, .3, -1); scene.add(bounce);
+// The ground colour here is the light the WHOLE WORLD gets from below, and it was 0x3f3a2a
+// -- mud. Everything on the island was being under-lit brown, whatever its own colour was.
+const hemi = new THREE.HemisphereLight(0x9bc5ee, 0x31453f, .6); scene.add(hemi);
+const bounce = new THREE.DirectionalLight(0xffc2b8, .18);   // rose rather than amber, for the same reason const BOUNCE_D = new THREE.Vector3(-1, .3, -1); scene.add(bounce);
 // up-light off the sea, so undersides and bellies aren't pure black
 const fill = new THREE.DirectionalLight(0x9fd4e8, .42); const FILL_D = new THREE.Vector3(.2, -1, .35); scene.add(fill);
 bounce.target = fill.target = sun.target;   // every light aims at the ground under the camera
@@ -2311,7 +2313,7 @@ waterMat.onBeforeCompile = sh => {
       }
       return c / max(wsum, 0.001);        // normalised: -1 trough, +1 crest
     }`;
-  sh.vertexShader = PLANET_GLSL + waves + '\nattribute float dep;\nattribute vec2 chart;\nvarying float vFoam; varying float vDep; varying vec2 vXZ;\n' + sh.vertexShader
+  sh.vertexShader = PLANET_GLSL + waves + '\nattribute float dep;\nattribute vec2 chart;\nvarying float vFoam; varying float vDep; varying vec2 vXZ; varying float vFar;\n' + sh.vertexShader
     .replace('#include <defaultnormal_vertex>', `
       {
         float e = 1.4;
@@ -2320,6 +2322,18 @@ waterMat.onBeforeCompile = sh => {
         vec3 PX = planetPos(vec3(p0.x + e, 0.0, p0.y) + waveDisp(p0 + vec2(e, 0.0)));
         vec3 PZ = planetPos(vec3(p0.x, 0.0, p0.y + e) + waveDisp(p0 + vec2(0.0, e)));
         objectNormal = normalize(cross(PZ - P0, PX - P0));
+        // THE STRIPES. The sea is a polar mesh -- concentric rings of quads -- and the wave
+        // normal is computed per VERTEX and interpolated across them. Up close a ring is a
+        // couple of metres and nothing shows. Seen from the title screen, six hundred units
+        // out, a whole ring is a few pixels tall and the interpolated normal facets into
+        // exactly the ring pattern, which a surface at roughness .08 turns into hard bands of
+        // specular. It is the mesh, not the shader, and no amount of wave tuning would have
+        // found it. So: fade the wave normal back to the plain sphere normal with distance.
+        // At that range the waves are sub-pixel anyway -- there is nothing to lose and a
+        // banded ocean to gain.
+        vec3 up0 = planetRot(p0, vec3(0.0, 1.0, 0.0));
+        vFar = smoothstep(150.0, 470.0, distance((modelMatrix * vec4(P0, 1.0)).xyz, cameraPosition));
+        objectNormal = normalize(mix(objectNormal, up0, vFar));
       }
       #include <defaultnormal_vertex>
     `)
@@ -2336,7 +2350,7 @@ waterMat.onBeforeCompile = sh => {
     `);
   sh.fragmentShader = `
     uniform float uT; uniform vec4 uWk[4]; uniform vec3 uSky;
-    varying float vFoam; varying float vDep; varying vec2 vXZ;
+    varying float vFoam; varying float vDep; varying vec2 vXZ; varying float vFar;
     float gFoam;
     float fh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5); }
     float fn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -2376,7 +2390,7 @@ waterMat.onBeforeCompile = sh => {
       base = mix(base, shalC, smoothstep(0.55, 1.0, shallow));
       float tex = fn(vXZ * 0.28 + vec2(uT * 0.35, -uT * 0.22)) * 0.6
                 + fn(vXZ * 0.9 - vec2(uT * 0.6, uT * 0.3)) * 0.4;
-      float crest = smoothstep(0.55, 0.95, vFoam) * smoothstep(0.3, 0.78, tex);
+      float crest = smoothstep(0.55, 0.95, vFoam) * smoothstep(0.3, 0.78, tex) * (1.0 - vFar * 0.85);
       float wk = wakeAt(vXZ) * (0.55 + 0.45 * tex);
       float foam = clamp(crest * 0.85 + wk, 0.0, 1.0);
       gFoam = foam;
@@ -2386,6 +2400,9 @@ waterMat.onBeforeCompile = sh => {
     .replace('#include <roughnessmap_fragment>', `
       #include <roughnessmap_fragment>
       roughnessFactor = mix(0.05, 0.8, gFoam);   // foam scatters, open water glints
+      // and at range it goes matte, because a mirror-smooth sea a quarter of a mile off is
+      // one specular lobe wide and every mesh seam in it reads as a stripe
+      roughnessFactor = mix(roughnessFactor, 0.62, vFar);
     `)
     .replace('#include <tonemapping_fragment>', `
       {
@@ -7233,7 +7250,7 @@ function renderPost() {
 
 // ---------- sky / time of day ----------
 const SKY = {
-  night: { top: new THREE.Color(0x05070f), mid: new THREE.Color(0x0b1330), low: new THREE.Color(0x161f3c), fog: new THREE.Color(0x0b1224), hs: new THREE.Color(0x2a3766), hg: new THREE.Color(0x0a0c14), sun: new THREE.Color(0x93a8ff) }
+  night: { top: new THREE.Color(0x05070f), mid: new THREE.Color(0x0b1330), low: new THREE.Color(0x161f3c), fog: new THREE.Color(0x0b1224), hs: new THREE.Color(0x2a3766), hg: new THREE.Color(0x120c1c), sun: new THREE.Color(0x93a8ff) }
 };
 // Day is not noon on a beach. It is a deep, cool, high overcast -- the light a forest floor
 // gets -- so that a lantern fruit reads as a light source at three in the afternoon and not
@@ -7251,8 +7268,8 @@ const SKY = {
 // about twenty degrees above the horizon, and the dome only starts blending toward `top` at
 // eighteen -- so darkening `top`, which is what the first attempt at an alien sky did, changed
 // nothing whatsoever on a phone. All three have to carry it, and `low` most of all.
-SKY.dusk = { top: new THREE.Color(0x160f3e), mid: new THREE.Color(0x6d3a6b), low: new THREE.Color(0xc07a5c), fog: new THREE.Color(0x8e5f52), hs: new THREE.Color(0xe09a70), hg: new THREE.Color(0x342630), sun: new THREE.Color(0xff9c4a) };
-SKY.day  = { top: new THREE.Color(0x070a24), mid: new THREE.Color(0x14224e), low: new THREE.Color(0x486a86), fog: new THREE.Color(0x44607e), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x3d4436), sun: new THREE.Color(0xfff2d8) };
+SKY.dusk = { top: new THREE.Color(0x160f3e), mid: new THREE.Color(0x6d3a6b), low: new THREE.Color(0xc07a5c), fog: new THREE.Color(0x8e5f52), hs: new THREE.Color(0xe09a70), hg: new THREE.Color(0x3a2442), sun: new THREE.Color(0xff9c4a) };
+SKY.day  = { top: new THREE.Color(0x070a24), mid: new THREE.Color(0x14224e), low: new THREE.Color(0x486a86), fog: new THREE.Color(0x44607e), hs: new THREE.Color(0x8fbde8), hg: new THREE.Color(0x31453f), sun: new THREE.Color(0xfff2d8) };
 // How much of the HDRI shows on the dome. 0 is the procedural sky alone; 1 is the photograph
 // with only the sun, the clouds and the bodies drawn over it. It is tinted by the time of day
 // either way, so the cycle survives.
@@ -7261,9 +7278,73 @@ SKY.space = col('#04050e');       // what the dome fades to once you are outside
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
 const tmpG = new THREE.Color();
 const _skyQ = new THREE.Quaternion(), _skyP = new THREE.Vector3(), _skyV = new THREE.Vector3(), _skyV2 = new THREE.Vector3();
+// ---------- spore light ----------
+// After dark the ground was a brown floor with nothing living on it. This is what lives in
+// it: spores caught just above the moss, in the colours the PLANTS are rather than in the
+// colours the lamps are. Off entirely by day -- it is not a light, it is something that only
+// shows once there is nothing else to look at.
+//
+// One Points object for the lot, with the sphere projection done per vertex in its own shader
+// (the same trick the weather particles use), because a fourteen-hundred-point cloud spread
+// over three hundred units cannot ride on one group transform: half of it would be buried and
+// the other half would float.
+const SPORE = { n: 1400, lift: [.1, 1.6], size: [.09, .3],
+  cols: ['#6ff0ff', '#ff7be0', '#b78cff', '#9dff8a', '#ffcf6e', '#5fffc4', '#ff8f8f'] };
+let spores = null;
+function buildSpores() {
+  const N = SPORE.n;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N), ph = new Float32Array(N);
+  const c = new THREE.Color();
+  let i = 0, guard = 0;
+  while (i < N && guard++ < N * 40) {
+    const a = rnd(Math.PI * 2), r = Math.sqrt(Math.random()) * PLANET.wander;
+    const x = Math.cos(a) * r, z = Math.sin(a) * r, h = height(x, z);
+    if (h < SEA + .6 || h > 26) continue;               // not in the sea, not up the mountains
+    pos[i * 3] = x; pos[i * 3 + 1] = h + rnd(SPORE.lift[0], SPORE.lift[1]); pos[i * 3 + 2] = z;
+    c.set(pick(SPORE.cols)); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    sz[i] = rnd(SPORE.size[0], SPORE.size[1]); ph[i] = Math.random();
+    i++;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('sz', new THREE.BufferAttribute(sz, 1));
+  geo.setAttribute('ph', new THREE.BufferAttribute(ph, 1));
+  geo.setDrawRange(0, i);
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, vertexColors: true, blending: THREE.AdditiveBlending,
+    uniforms: { map: { value: glowTex }, uScale: { value: innerHeight * .5 }, uNight: { value: 0 }, uT: { value: 0 } },
+    vertexShader: PLANET_GLSL + `
+      attribute float sz; attribute float ph; varying vec3 vC; varying float vA;
+      uniform float uScale, uNight, uT;
+      void main(){
+        vC = color;
+        // Each one keeps its own slow beat, so the field breathes instead of blinking as one.
+        float tw = 0.42 + 0.58 * sin(uT * 1.35 + ph * 62.83);
+        vA = uNight * tw * tw;
+        vec3 p = position;
+        p.y += sin(uT * 0.5 + ph * 40.0) * 0.24;        // they drift; nothing here is nailed down
+        p.x += sin(uT * 0.31 + ph * 27.0) * 0.16;
+        vec4 mv = modelViewMatrix * vec4(planetPos(p), 1.0);
+        gl_PointSize = max(sz * uScale / max(-mv.z, 1.0), 1.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `uniform sampler2D map; varying vec3 vC; varying float vA;
+      void main(){ vec4 t = texture2D(map, gl_PointCoord); float a = t.a * vA;
+        if (a < 0.004) discard; gl_FragColor = vec4(vC * t.rgb, a); }`
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false; pts.userData.flat = true;   // the shader does the projection, not the matrix
+  scene.add(pts);
+  return { pts, mat };
+}
+
 function updateSky() {
   const f = (world.t / DAY) % 1, a = f * Math.PI * 2 - Math.PI / 2, e = Math.sin(a);
   world.sunE = e; world.night = smooth(.12, -.18, e);
+  if (!spores) spores = buildSpores();
+  spores.mat.uniforms.uNight.value = world.night * .92;
+  spores.mat.uniforms.uT.value = world.clock;
   // reflections dim with the daylight they are pretending to be
   if (ENV.mats.length) {
     const ei = ENV.k * (.16 + .84 * clamp(e * 1.5 + .3, 0, 1));
@@ -8010,8 +8091,19 @@ const NET = {
   hold: 16,                           // seconds an animal stays in it before it works free
   dragHold: 6,                        // and the floor that keeps while you are dragging it
   fade: 7,                            // an empty net on the ground lasts this long
-  cling: 3.2,                         // how hard the cords are drawn down onto whatever is inside
-  cord: '#cfe8d8', lit: '#8ff0d8', knot: .3, thick: .075,
+  cling: 5.5,                         // how hard the cords are drawn down onto whatever is inside
+  // THE CINCH. On a catch the cords are re-cut shorter over `cinchT` seconds, down to `cinch`
+  // of their flying length. That is the difference between a net lying ON an animal and a net
+  // AROUND one: the cords actively shorten, the body stops them, and what is left is a bag.
+  cinch: .52, cinchT: .55,
+  // And a leash. Nothing may sit further from the animal's middle than this much of its own
+  // size, so the sheet cannot spread out flat on the ground beside it -- which is what it was
+  // doing, and why it looked like it fell off rather than caught.
+  leash: 2.0,
+  // Rope, not plasma. The cords are a real material that takes the light; only the knots
+  // glow, and in a colour that is not the cord's, so it reads as fibre with something alien
+  // strung through it. In flight the whole thing runs hot and cools when it lands.
+  cord: '#8f7f5e', hot: '#9ff2ff', knot: '#ff86e0', knotHot: '#eaffff', knotSz: .26, thick: .085,
   drag: { reach: 5.2, rope: 3.4, pull: 30, slow: .42 },
 };
 // What he can carry. The rack is built from this, in this order, so adding a third weapon is
@@ -8343,7 +8435,7 @@ let dragRope = null, dragRopeG = null;
 function stepDrag() {
   const p = player, o = p.drag;
   if (!dragRope) {
-    dragRope = new Rope(3, DRAGROPE.thick, NET.cord, .92, DRAGROPE.seg);
+    dragRope = new Rope(3, DRAGROPE.thick, NET.cord, 1, DRAGROPE.seg);
     dragRopeG = new THREE.Group(); dragRopeG.add(dragRope.mesh); dragRopeG.visible = false;
     scene.add(dragRopeG);
   }
@@ -8834,8 +8926,10 @@ class Rope {
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
     this.geo.setIndex(new THREE.BufferAttribute(idx, 1));
-    this.mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(colour), transparent: true,
-      opacity, side: THREE.DoubleSide, depthWrite: false });
+    // Standard, not Basic: a rope that does not take the light is a glowing noodle, and that
+    // is exactly what it looked like. Rough, unlit-by-itself, and out of the see-through hole.
+    this.mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(colour), transparent: true,
+      opacity, side: THREE.DoubleSide, roughness: .92, metalness: 0, depthWrite: false });
     this.mat.userData.noHole = true;
     this.mesh = new THREE.Mesh(this.geo, this.mat);
     this.mesh.frustumCulled = false;                 // rebuilt every frame; its bounds are a lie
@@ -8907,12 +9001,12 @@ class NetShot {
     // sheet into a bag: the rim falls faster than the middle, swings under, and closes.
     this.heavy = new Uint8Array(n);
     for (let s = 0; s < S; s++) this.heavy[1 + (R - 1) * S + s] = 1;
-    this.rope = new Rope(la.length, NET.thick, NET.cord, .95);
+    this.rope = new Rope(la.length, NET.thick, NET.hot, .95);   // hot in flight, rope once it lands
     // A knot at every crossing. Additive points, so at distance the cords fade to a haze and
     // the knots stay as a constellation -- which is what keeps it legible on a phone.
     this.kgeo = new THREE.BufferGeometry();
     this.kgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-    this.kmat = new THREE.PointsMaterial({ map: glowTex, color: new THREE.Color(NET.lit), size: NET.knot,
+    this.kmat = new THREE.PointsMaterial({ map: glowTex, color: new THREE.Color(NET.knotHot), size: NET.knotSz,
       sizeAttenuation: true, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false });
     this.knots = new THREE.Points(this.kgeo, this.kmat); this.knots.frustumCulled = false;
     this.g = new THREE.Group(); this.g.add(this.rope.mesh, this.knots);
@@ -8987,7 +9081,8 @@ class NetShot {
     o.abandon(); o.wp = null; o.target = null; o.fling = null; o.alarm = 0; o.stall = 0;
     this.px = o.pos.x; this.py = o.pos.y; this.pz = o.pos.z;
     this.drape(o);
-    this.rope.mat.color.set(NET.lit);
+    this.cinch = 0;                                  // starts pulling closed from here
+    this.rope.mat.color.set(NET.cord); this.kmat.color.set(NET.knot);
     world.effects.push(new Burst(o.pos.x, o.pos.y + (o.rad || 1), o.pos.z, '#9ff0d8', 11, .9));
     logMsg('The net comes down over it. Walk up and take hold to drag it.');
   }
@@ -9008,7 +9103,8 @@ class NetShot {
       this.v[i3] = -a * rad * 1.9; this.v[i3 + 1] = -6.5; this.v[i3 + 2] = -b * rad * 1.9;
     }
   }
-  land() { if (this.state !== 'fly') return; this.state = 'ground'; this.place(1); }
+  land() { if (this.state !== 'fly') return; this.state = 'ground'; this.place(1);
+    this.rope.mat.color.set(NET.cord); this.kmat.color.set(NET.knot); }
   // Let whatever is in it out, and start the net itself fading.
   cut() {
     const o = this.prey;
@@ -9032,6 +9128,7 @@ class NetShot {
       v[i3 + 1] -= NET.grav * (this.heavy[i] ? NET.rim : 1) * h;
       p[i3] += v[i3] * h; p[i3 + 1] += v[i3 + 1] * h; p[i3 + 2] += v[i3 + 2] * h;
     }
+    if (this.prey) this.cinch = Math.min(1, (this.cinch || 0) + h / NET.cinchT);
     for (let it = 0; it < NET.iters; it++) this.relax();
     this.collide(h);
     const inv = h > 0 ? 1 / h : 0;
@@ -9046,13 +9143,18 @@ class NetShot {
   // half the error each. Four passes a frame is enough for sixty cords to read as rope.
   relax() {
     const p = this.p, la = this.la, lb = this.lb, rest = this.rest;
+    // While it is closing on an animal every cord is treated as shorter than it was cut, so
+    // the whole mesh is trying to shrink and only the body inside it is stopping it. That is
+    // what a net does; a net that merely falls on something is a tablecloth.
+    const c = this.prey ? lerp(1, NET.cinch, clamp(this.cinch, 0, 1)) : 1;
     for (let k = 0; k < la.length; k++) {
       const i = la[k] * 3, j = lb[k] * 3;
+      const r = rest[k] * c;
       const dx = p[j] - p[i], dy = p[j + 1] - p[i + 1], dz = p[j + 2] - p[i + 2];
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
       // A cord pulls hard and shoves barely at all. Shoving as hard as it pulls is a spring,
       // and a net of springs is a hoop that will not crumple onto anything.
-      const f = (d - rest[k]) / d * (d > rest[k] ? NET.give : NET.shove);
+      const f = (d - r) / d * (d > r ? NET.give : NET.shove);
       const ox = dx * f, oy = dy * f, oz = dz * f;
       p[i] += ox; p[i + 1] += oy; p[i + 2] += oz;
       p[j] -= ox; p[j + 1] -= oy; p[j + 2] -= oz;
@@ -9073,8 +9175,23 @@ class NetShot {
         if (d < R) { const k = R / d; p[i3] = cx + dx * k; p[i3 + 1] = cy + dy * k; p[i3 + 2] = cz + dz * k; }
         else { const k = Math.min(NET.cling * h / d, .5); p[i3] -= dx * k; p[i3 + 1] -= dy * k; p[i3 + 2] -= dz * k; }
       }
-      const gy = groundY(p[i3], p[i3 + 2]) + .05;
-      if (p[i3 + 1] < gy) {                          // on the ground it scuffs rather than skating
+      if (o) {
+        // The leash. Without it the sheet simply spread out and lay down beside the animal --
+        // gravity always wins over a cord that is allowed to be as long as it likes. Nothing
+        // gets further from the animal's middle than twice its own size, so the net has
+        // nowhere to go but around it.
+        const dx = p[i3] - cx, dy = p[i3 + 1] - cy, dz = p[i3 + 2] - cz;
+        const d2 = dx * dx + dy * dy + dz * dz, lim = R * NET.leash;
+        if (d2 > lim * lim) {
+          const k = lim / Math.sqrt(d2);
+          p[i3] = cx + dx * k; p[i3 + 1] = cy + dy * k; p[i3 + 2] = cz + dz * k;
+        }
+      }
+      // The floor stops a net lying on the ground. A net ON an animal is held clear by the
+      // animal's own feet, and clamping it to the height field as well flattened the underside
+      // through the body every frame.
+      const gy = groundY(p[i3], p[i3 + 2]) + (o ? -.4 : .05);
+      if (p[i3 + 1] < gy) {
         p[i3 + 1] = gy;
         p[i3] = lerp(p[i3], this.p0[i3], NET.gnd);
         p[i3 + 2] = lerp(p[i3 + 2], this.p0[i3 + 2], NET.gnd);
@@ -9097,7 +9214,8 @@ class NetShot {
       const i = la[k] * 3, j = lb[k] * 3;
       const dx = p[j] - p[i], dy = p[j + 1] - p[i + 1], dz = p[j + 2] - p[i + 2];
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      const sag = Math.min(Math.max(0, this.rest[k] - d) * ROPE.sag, this.rest[k] * .45);
+      const rk = this.rest[k] * (this.prey ? lerp(1, NET.cinch, clamp(this.cinch || 0, 0, 1)) : 1);
+      const sag = Math.min(Math.max(0, rk - d) * ROPE.sag, rk * .45);
       this.rope.strand(p[i] - cx, p[i + 1] - cy, p[i + 2] - cz,
                        p[j] - cx, p[j + 1] - cy, p[j + 2] - cz, sag);
     }
