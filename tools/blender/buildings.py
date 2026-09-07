@@ -1,11 +1,18 @@
 # Plutopia buildings — procedural alien structures and creature huts, built in Blender.
 #
-#   Blender > Scripting > Open > Run
-#   blender --background --python tools/blender/buildings.py
-#   blender --background --python tools/blender/buildings.py -- --only hut --seed 7
+# HOW TO RUN THIS. No terminal, nothing to install.
+#   1. Blender > Scripting tab > New
+#   2. Paste this whole file in
+#   3. Press Run (the play triangle)
+# It builds three buildings, leaves them standing side by side in the scene so you can look
+# at them, and writes three .glb files to ~/Desktop/Plutopia -- it prints that folder in the
+# console when it finishes.
 #
-# Writes one GLB per type into models/. Re-running with a different SEED gives a different
-# building of the same species, so a village is one loop rather than one model repeated.
+# Change SEED below and press Run again for a different building of each kind. A village is
+# one number changed a few times, not one model placed twenty times.
+#
+# To put one in the game: drop the .glb into the repo's models/ folder the way you added the
+# drone and the blaster, and tell me the filename. Placing it is my end.
 #
 # WHAT THE GAME DOES WITH THESE, so the proportions here are the only thing that matters:
 #   placeProp(url, x, z, yaw, H) loads the file, measures its bounding box, and scales it so
@@ -30,8 +37,8 @@ import bpy, bmesh, math, os, sys, random
 from mathutils import Vector
 
 # ---------------------------------------------------------------- config
-SEED = 3
-OUTDIR = None            # None -> <blend file dir>/../models, or ./models when headless
+SEED = 3                 # change and re-run for a different building of each kind
+OUTDIR = None            # None -> ~/Desktop/Plutopia. Set a path to write somewhere else.
 
 STONE = (0.486, 0.478, 0.471, 1.0)   # 7c7a78
 STONE2 = (0.337, 0.325, 0.322, 1.0)  # 565452
@@ -43,10 +50,10 @@ VIOL = (0.718, 0.549, 1.0, 1.0)      # b78cff
 
 
 def out_path(name):
-    d = OUTDIR
-    if d is None:
-        base = os.path.dirname(bpy.data.filepath)
-        d = os.path.join(base, "..", "models") if base else os.path.join(os.getcwd(), "models")
+    # Somewhere findable, every time. Run from the Scripting tab there is no .blend file and
+    # the working directory is wherever the app was launched from -- on a Mac, inside the
+    # application bundle. A file written there is a file that is gone.
+    d = OUTDIR or os.path.join(os.path.expanduser("~"), "Desktop", "Plutopia")
     d = os.path.abspath(d)
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, name + ".glb")
@@ -379,12 +386,23 @@ def main():
             only = argv[i + 1]
         if a == "--seed" and i + 1 < len(argv):
             seed = int(argv[i + 1])
+    wipe()
+    x = 0.0
     for name, fn in TYPES.items():
         if only and name != only:
             continue
-        wipe()
-        objs = fn(random.Random(seed + hash(name) % 1000))
+        objs = fn(random.Random(seed + abs(hash(name)) % 1000))
         export(name, objs)
+        # Shuffle each aside so all three end up standing side by side in the scene rather
+        # than the last one alone on top of the others.
+        for o in objs:
+            o.location.x += x
+        x += 9.0
+    for o in bpy.data.objects:
+        o.select_set(False)
+    print("=" * 60)
+    print("  DONE. Files are in:  " + os.path.dirname(out_path("x")))
+    print("=" * 60)
 
 
 main()
