@@ -1017,7 +1017,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c37';
+const BUILD = 'c38';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2079,7 +2079,14 @@ const skyUni = {
   // A one-pixel stand-in until the real one arrives, because a null sampler is a compile
   // error waiting to happen and the load is asynchronous.
   uEnv: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([90, 110, 140, 255]), 1, 1); t.needsUpdate = true; return t; })() },
-  uEnvK: { value: 0 }
+  uEnvK: { value: 0 },
+  // THE OWNER'S GALAXY, on the dome. The title screen hangs it flat behind the camera as a
+  // plate; from the ground there is no "behind", so it is sampled the same way the HDRI is --
+  // equirectangular, wrapped a few times round so a portrait image is not stretched across
+  // a whole horizon. A stopgap by his own description, until an HDRI that matches exists,
+  // and it is the only thing that puts the title screen's sky over the island today.
+  uPlate: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([12, 10, 26, 255]), 1, 1); t.needsUpdate = true; return t; })() },
+  uPlateK: { value: 0 }, uPlateRep: { value: 3 }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
@@ -2088,6 +2095,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
     uniform vec3 uTop,uMid,uLow,uSunCol; uniform vec3 uSun; uniform float uSunI;
     uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh,uNeb,uEnvK; uniform vec2 uWind; varying vec3 vD;
     uniform vec3 uOrbA,uOrbB; uniform sampler2D uEnv;
+    uniform sampler2D uPlate; uniform float uPlateK, uPlateRep;
     // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -2125,6 +2133,18 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
       float n = fbm(cuv * 1.25);
       float cl = smoothstep(0.64 - uCloud*0.44, 0.80 - uCloud*0.22, n) * smoothstep(0.02, 0.25, uCloud) * hm;
       float dayL = clamp(sn.y * 1.6 + 0.32, 0.14, 1.0);
+      // The plate goes UNDER the HDRI and under everything else, and is faded out of the
+      // horizon band rather than into it -- the opposite of the panorama above, on purpose.
+      // A galaxy belongs overhead; the band just above the sea belongs to distant land.
+      // No fract() on the u: wrapS repeats, and fracting it here would put a derivative
+      // cliff -- a bright seam a pixel wide -- at every wrap.
+      if (uPlateK > 0.002) {
+        vec2 puv = vec2((atan(d.z, d.x) * 0.15915494 + 0.5) * uPlateRep,
+                        asin(clamp(d.y, -1.0, 1.0)) * 0.31830988 + 0.5);
+        vec3 pl = pow(texture2D(uPlate, puv).rgb, vec3(2.2));
+        pl *= mix(vec3(0.66, 0.70, 0.92), vec3(1.02, 0.99, 0.96), dayL);
+        c = mix(c, pl, uPlateK * smoothstep(-0.01, 0.34, h));
+      }
       // The HDRI, on the dome, under everything else. Sampled as an equirectangular map --
       // the same projection three uses for one -- and tinted by the hour so the day still
       // runs across it. Above the horizon only: the bottom half of that image is the ground
@@ -2191,6 +2211,11 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
     }`
 }));
 sky.frustumCulled = false; skyRig.add(sky);
+const PLATE = { url: 'images/title_background_image.webp', on: 0 };
+new THREE.TextureLoader().load(PLATE.url, t => {
+  t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.ClampToEdgeWrapping;
+  skyUni.uPlate.value = t; PLATE.on = 1;
+}, undefined, () => console.warn('no background plate; the sky stays procedural'));
 
 // stars
 const stars = (() => {
@@ -2219,32 +2244,12 @@ const DEEP = (() => {
   const at = (yaw, pit, d) => new THREE.Vector3(
     Math.cos(pit) * Math.sin(yaw) * d, Math.sin(pit) * d, Math.cos(pit) * Math.cos(yaw) * d);
   const mats = [];
-  // The bodies. Basic materials with no lighting: a planet a light-hour away is lit by its
-  // own star, not by ours, and faking that with a real light would cost a shader variant.
-  const body = (yaw, pit, rad, hex, ring) => {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(rad, 26, 18),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(hex), transparent: true, opacity: 0, fog: false }));
-    m.position.copy(at(yaw, pit, R)); m.renderOrder = -3; mats.push(m.material); g.add(m);
-    // A night side: a hemisphere-and-a-bit of dark shell over each body, turned at random, so
-    // they read as lit spheres rather than as flat dots.
-    const sh = new THREE.Mesh(new THREE.SphereGeometry(rad * 1.006, 26, 18, 0, Math.PI * 1.06),
-      new THREE.MeshBasicMaterial({ color: 0x05060d, transparent: true, opacity: 0, fog: false }));
-    sh.rotation.set(rnd(-.5, .5), rnd(0, 6.283), 0);
-    mats.push(sh.material); m.add(sh);
-    if (ring) {
-      const rg = new THREE.Mesh(new THREE.RingGeometry(rad * 1.5, rad * 2.3, 48),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(ring), transparent: true, opacity: 0,
-          side: THREE.DoubleSide, fog: false, depthWrite: false }));
-      rg.rotation.set(1.15, .5, .3); mats.push(rg.material); m.add(rg);
-    }
-    return m;
-  };
-  body(0.6, .30, 44, '#d98a5e', '#c9a8e9');    // the banded giant with a ring, the anchor of the frame
-  body(2.5, .12, 18, '#5fd6c0');
-  body(4.4, .42, 26, '#7f93d8');
-  body(3.5, -.22, 9, '#9fb6e8');
-  body(1.7, .52, 12, '#b98cf0');
-  body(5.4, -.10, 7, '#cfd6e2');
+  // The banded giant, the ring, the tinted spheres and their painted-on night sides all used
+  // to be built here out of primitives, and they only ever came out at altitude. They are the
+  // owner's own models now -- the same saturn, purple moon, earth and cratered asteroid the
+  // title screen is composed from -- and they hang where you can see them from the ground.
+  // See SKY_BODIES / buildSkyBodies below; what is left in this group is the SPACE framing:
+  // the near lumps and the nebula, which are a wide-shot device and stay gated on altitude.
   // NEAR ROCKS. The reference frames the whole picture with a big, close, unlit lump in two
   // corners, and that one trick is most of what makes a wide shot read as deep instead of
   // flat -- there is something in front of the subject as well as behind it. They sit at a
@@ -2277,6 +2282,66 @@ const DEEP = (() => {
   return { g, mats, veils: g.children.filter(c => c.isSprite) };
 })();
 
+// ---------- the bodies in the sky ----------
+// THE SAME PLANETS THE TITLE SCREEN IS MADE OF, over the island. The title's sky is most of
+// why it reads as another world, and until c38 the game's sky had none of it: six untextured
+// spheres that only appeared once you were four hundred units up, which is nowhere anybody
+// stands. These are the owner's own models -- saturn, the purple moon, the blue planet, the
+// cratered asteroid -- hung on the sky rig where they can be seen from the ground.
+//
+// `ang` is an ANGULAR radius in radians, not a size: how much of the sky the body covers is
+// the only thing about it that matters, and stating it that way means the distance can move
+// without re-tuning anything. `yaw` is a bearing in the local frame and `pit` a height above
+// the horizon, so nothing here is below the sea or behind the world.
+const SKY_BODIES = [
+  { yaw: 0.62, pit: .30, ang: .150, model: 'models/saturn.glb', tilt: [.16, 0, .12] },  // the anchor, as it is up there
+  { yaw: 4.40, pit: .40, ang: .052, model: 'models/earth_planet.glb' },
+  { yaw: 2.45, pit: .17, ang: .068, model: 'models/purple_moon.glb' },
+  { yaw: 1.70, pit: .50, ang: .019, model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },
+  { yaw: 3.50, pit: .09, ang: .013, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },
+  { yaw: 5.35, pit: .22, ang: .028, model: 'models/purple_moon.glb' },
+];
+const SKYB = { g: null, mats: [] };
+function buildSkyBodies() {
+  if (SKYB.g) return;
+  const R = 720;                       // inside the 900-unit dome, outside the stars at 800
+  const g = new THREE.Group(); skyRig.add(g); SKYB.g = g;
+  for (const b of SKY_BODIES) {
+    const hold = new THREE.Group();
+    hold.position.set(Math.cos(b.pit) * Math.sin(b.yaw) * R, Math.sin(b.pit) * R, Math.cos(b.pit) * Math.cos(b.yaw) * R);
+    if (b.tilt) hold.rotation.set(b.tilt[0], b.tilt[1], b.tilt[2]);
+    else hold.rotation.set(rnd(3), rnd(3), rnd(3));
+    hold.frustumCulled = false; hold.renderOrder = -3;
+    g.add(hold);
+    loadModel(b.model, e => {
+      const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
+      const k = 2 * R * Math.tan(b.ang) / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));
+      inst.scale.setScalar(k);
+      inst.position.set(-(e.box.max.x + e.box.min.x) * .5 * k,
+        -(e.box.max.y + e.box.min.y) * .5 * k, -(e.box.max.z + e.box.min.z) * .5 * k);
+      inst.traverse(node => {
+        if (!node.isMesh) return;
+        node.castShadow = node.receiveShadow = false;
+        node.frustumCulled = false; node.renderOrder = -3;
+        // Its own materials, cloned: these are the same cached files the title screen uses
+        // and the diorama's copies must not go transparent when the island's night does.
+        // noHole for the obvious reason -- a body a light-hour away is not scenery between
+        // the lens and his chest -- and fog off, or the haze paints them out at any distance.
+        node.material = [].concat(node.material).map(m => {
+          const c = m.clone();
+          c.userData = Object.assign({}, m.userData, { noHole: 1 });
+          c.fog = false; c.transparent = true; c.depthWrite = false; c.opacity = 1;
+          if (b.tint) c.color.set(b.tint);
+          SKYB.mats.push(c);
+          return c;
+        });
+        if (node.material.length === 1) node.material = node.material[0];
+      });
+      hold.add(inst);
+    });
+  }
+}
+
 // ---------- the look ----------
 // c37, and the owner's call: the title screen looks like the game he wants and the island
 // looked like a photocopy of it. The two were never lit or graded the same, and every
@@ -2298,9 +2363,14 @@ const DEEP = (() => {
 // What 'title' costs: the regional stain was what made a swamp read as a different place
 // from a desert without re-authoring a single model. With it gone that difference has to
 // live in the terrain colour instead, which is where it should probably have been anyway.
+// `env` is how much of the HDRI panorama survives on the dome and `plate` how much of the
+// owner's galaxy goes under it. The HDRI is a photograph of somewhere on Earth, softened past
+// recognising -- which is exactly the wrong sky for the shot the title screen makes, and it is
+// the second thing after the tint that made the island look like a different game. It is
+// turned down rather than off: above the horizon it is also the only distant land there is.
 const LOOKS = {
-  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0 },
-  title: { vivid: 1, haze: .30, lift: .12, rig: 1 },
+  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0 },
+  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .30, plate: .55 },
 };
 const LOOK = Object.assign({ mode: 'title' }, LOOKS.title);
 function setLook(m) { if (LOOKS[m]) { LOOK.mode = m; Object.assign(LOOK, LOOKS[m]); } return LOOK.mode; }
@@ -8427,7 +8497,18 @@ function updateSky() {
   // the one thing that composition cannot survive.
   const spaceK = INTRO.on ? 1 : smooth(PLANET.R * .35, PLANET.R * 1.5, camUp);
   if (spaceK > .001) for (const k of ['top', 'mid', 'low']) tmpC[k].lerp(SKY.space, spaceK);
-  skyUni.uEnvK.value = SKY.envK * (1 - spaceK) * (ENV.map ? 1 : 0);
+  skyUni.uEnvK.value = SKY.envK * LOOK.env * (1 - spaceK) * (ENV.map ? 1 : 0);
+  // The plate stays out at altitude the way the panorama does not: out there it IS the sky,
+  // and it is what the title screen has behind the planet.
+  skyUni.uPlateK.value = LOOK.plate * PLATE.on * (1 + spaceK * .5);
+  // The bodies dim at noon and never leave. Same reasoning as the stars, which keep a third
+  // of themselves through the day: thin air, and it is the cheapest thing in the file that
+  // says this is not Earth. Cloud takes them, because cloud is between you and them.
+  if (SKYB.mats.length) {
+    const bo = Math.min(1, lerp(.46, 1, world.night) * (1 - WX.cloud * .8) + spaceK);
+    for (const m of SKYB.mats) m.opacity = bo;
+    SKYB.g.visible = bo > .01;
+  }
   skyUni.uTop.value.copy(tmpC.top); skyUni.uMid.value.copy(tmpC.mid); skyUni.uLow.value.copy(tmpC.low);
   mist.c0.copy(tmpC.fog); mist.c1.copy(tmpC.fog);
   rain.mat.uniforms.uC0.value.copy(tmpC.fog).lerp(tmpG.setRGB(1, 1, 1), .45); rain.mat.uniforms.uC1.value.copy(tmpC.low).lerp(tmpG, .6);
@@ -13031,6 +13112,7 @@ function frame(now) {
   }
   } catch (e) { bootFail(e); }
 }
+buildSkyBodies();
 requestAnimationFrame(frame);
 })();
 </script>
