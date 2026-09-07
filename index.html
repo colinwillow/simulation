@@ -1108,7 +1108,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c68';
+const BUILD = 'c69';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -2337,7 +2337,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
       gl_FragColor = vec4(c, 1.0);
     }`
 }));
-sky.frustumCulled = false; skyRig.add(sky);
+sky.frustumCulled = false; sky.userData.what = 'sky dome'; skyRig.add(sky);
 const PLATE = { url: 'images/title_background_image.webp', on: 0 };
 new THREE.TextureLoader().load(PLATE.url, t => {
   t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.ClampToEdgeWrapping;
@@ -2370,7 +2370,7 @@ const stars = (() => {
 // they are meant to be unreachably far, not scenery you could fly to. Invisible from the
 // ground and full strength out at the title, which is where the composition needs them.
 const DEEP = (() => {
-  const g = new THREE.Group(); g.visible = false; skyRig.add(g);
+  const g = new THREE.Group(); g.visible = false; g.userData.what = 'DEEP nebula'; skyRig.add(g);
   const R = 760;
   const at = (yaw, pit, d) => new THREE.Vector3(
     Math.cos(pit) * Math.sin(yaw) * d, Math.sin(pit) * d, Math.cos(pit) * Math.cos(yaw) * d);
@@ -2431,7 +2431,7 @@ const SKYB = { g: null, mats: [] };
 function buildSkyBodies() {
   if (SKYB.g) return;
   const R = 720;                       // inside the 900-unit dome, outside the stars at 800
-  const g = new THREE.Group(); skyRig.add(g); SKYB.g = g;
+  const g = new THREE.Group(); g.userData.what = 'sky body'; skyRig.add(g); SKYB.g = g;
   for (const b of SKY_BODIES) {
     const hold = new THREE.Group();
     hold.position.set(Math.cos(b.pit) * Math.sin(b.yaw) * R, Math.sin(b.pit) * R, Math.cos(b.pit) * Math.cos(b.yaw) * R);
@@ -2655,7 +2655,13 @@ function polarGeo(spokes, rings, rOf) {
 }
 // Chart radius of ring t: about two units apart under the island, widening to six by the
 // time it reaches the far pole. The whole globe for fewer vertices than the old flat square.
-const ringR = t => PLANET.rMax * (.62 * t + .38 * Math.pow(t, 2.6));
+// STOP WELL SHORT OF THE FAR POLE. The grid ran the whole 180 degrees to the antipode, and
+// no camera in the game can see past about 65 of them -- from six hundred units out the
+// horizon is at acos(R / 600), which is nowhere near the limb. Everything past 104 degrees was
+// terrain and ocean drawn every frame, on the far side of a solid planet, for nobody. It is
+// also the coarsest part of the grid, which makes it the part most likely to be the thing in
+// a screenshot that should not be there.
+const ringR = t => PLANET.rMax * .58 * (.62 * t + .38 * Math.pow(t, 2.6));
 const SEG = Q.seg;
 // Rings and spokes up with the world, though not all the way: at 240 the grid was about two
 // units a vertex under the island and this leaves it at about two and three quarters, which
@@ -2783,7 +2789,7 @@ terrainMat.userData.shaderTag = 'ground';
 terrainMat.onBeforeCompile = sh => { toonPatch(sh); groundPatch(sh, true); };
 const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 terrain.material.userData.noHole = true;
-terrain.receiveShadow = true; terrain.userData.flat = true; scene.add(terrain);   // built on the sphere already
+terrain.receiveShadow = true; terrain.userData.flat = true; terrain.userData.what = 'terrain'; scene.add(terrain);   // built on the sphere already
 
 // ---------- water + foam ----------
 // The sea is the whole globe: the same polar grid, coarser, with the chart point each vertex
@@ -13929,6 +13935,35 @@ const MAP_KEY = {
   beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'], lander: ['#c48cff', 'the lander'],
 };
 function drawMap() { drawMapTo(document.getElementById('mapc'), false); }
+// WHAT AM I LOOKING AT. One ray down the middle of the lens, every HUD tick, reported by
+// name. Four rounds have now gone on "there is a black thing in the sky" and every one of
+// them was me reading placement code and guessing at a silhouette from a photograph. The
+// renderer knows exactly which mesh is under that pixel and has always been willing to say.
+// userData.what is set on the handful of things big enough to be mistaken for scenery; for
+// anything else it falls back to the geometry and the material's own colour, which is enough
+// to recognise it by.
+const _lkR = new THREE.Raycaster();
+function lookingAt() {
+  try {
+    _lkR.setFromCamera({ x: 0, y: 0 }, camera);
+    _lkR.far = 4000;
+    const hits = _lkR.intersectObjects(scene.children, true);
+    for (const h of hits) {
+      const o = h.object;
+      if (!o.visible || !o.material) continue;
+      let p = o, what = null;
+      while (p && !what) { what = p.userData && p.userData.what; p = p.parent; }
+      if (!what) {
+        const m = [].concat(o.material)[0];
+        const c = m && m.color ? '#' + m.color.getHexString() : '?';
+        what = (o.geometry && o.geometry.type || 'mesh').replace('Geometry', '') + ' ' + c
+          + (m && m.transparent ? ' a' + (m.opacity !== undefined ? m.opacity.toFixed(2) : '?') : '');
+      }
+      return what + ' @' + h.distance.toFixed(0);
+    }
+    return 'nothing (sky)';
+  } catch (e) { return 'ray failed: ' + e.message; }
+}
 // The minimap is the same picture at a tenth the size, so it is the same code with the
 // labels dropped and the glyphs shrunk rather than a second thing to keep in step.
 let miniT = 0;
@@ -14074,7 +14109,8 @@ function updateHUD() {
     // how much plate is being asked for, whether the texture arrived, and the two terms that
     // open its roll-off. If plate reads 0.00 the image has not loaded; if space and high are
     // both near 0 while the camera is high, the altitude terms are what is wrong.
-    `plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}`;
+    `plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}<br>` +
+    `centre of frame: ${lookingAt()}`;
   const era = eraName(); if (era !== world.lastEra) { world.lastEra = era; eraEl.textContent = era; }
 }
 setInterval(updateHUD, 600); updateHUD();
