@@ -990,7 +990,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c02';
+const BUILD = 'c03';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -7428,54 +7428,8 @@ function populate() {
   }
   world.spawn = world.camp ? { x: world.camp.pos.x + 7, z: world.camp.pos.z + 5 } : (randomLand(1.5, 8, .5, 400, 3) || { x: 0, z: 0 });
   ferry = new Ferry(); initMotes(); scatterDecor(); world.sites = buildSites(); scatterRocks(); placeTitle();
-  testRow();
 }
 
-// ---------- the new pack, laid out where he lands ----------
-// TEMPORARY. One of each family in a line beside the spawn, so the whole batch can be walked
-// past and judged at once: scale against a 2.8-unit body, which way the fronts face, and how
-// a 256-pixel atlas holds up under this lighting at arm's length. Ugly on purpose -- it is a
-// contact sheet, not a place. Delete the call above and this block goes with it.
-//
-// H is the HEIGHT each is placed at, which is the only handle placeProp gives: a flat stone
-// 37 wide and 1.8 thick asked for at H=1 arrives twenty metres across, so the flat things get
-// small numbers and the tall things get large ones, and neither is a guess about the model.
-const TESTROW = [
-  ['sp_tree01', 9], ['sp_tree03', 11], ['sp_rock04', 2.6], ['sp_rock07', 4.2],
-  ['sp_plant01', 1.5], ['sp_plant06', 2.2], ['sp_crystal01', 3.4], ['sp_stone01', .18],
-  ['sp_sci_fi_antenna', 7], ['sp_mountain03', 20],
-];
-function testRow() {
-  const sp = world.spawn || { x: 0, z: 0 };
-  // Along a line running away from him, spaced so nothing overlaps its neighbour, and each
-  // turned to face back down the row -- placeProp yaws about the origin and the origin is the
-  // centre of the footprint, so a facing of 0 points +Z.
-  TESTROW.forEach(([name, H], i) => {
-    const t = i - (TESTROW.length - 1) / 2;
-    const x = sp.x + t * 7.5, z = sp.z - 13;
-    if (!terrainOK2(x, z)) return;
-    placeProp('models/' + name + '.glb', x, z, Math.PI, H);
-  });
-  // The ground patch laid OVER the terrain rather than beside it, and the planet hung in the
-  // air behind the row: the two the owner asked to see in place rather than in a list.
-  placeProp('models/sp_ground03.glb', sp.x, sp.z - 26, 0, 3.2);
-  loadModel('models/sp_planet.glb', e => {
-    const g = new THREE.Group();
-    g.position.set(sp.x, groundY(sp.x, sp.z - 34) + 16, sp.z - 34);
-    const inst = markBody(cloneModel(e.root)), sz = e.box.getSize(new THREE.Vector3());
-    inst.scale.setScalar(7 / Math.max(1e-4, sz.y));
-    inst.position.y = -(e.box.max.y + e.box.min.y) * .5 * (7 / Math.max(1e-4, sz.y));
-    g.add(inst); g.userData.spin = 1; scene.add(g);
-    world.structures.push({ alive: true, pos: g.position.clone(), g,
-      update: dt => { g.rotation.y += dt * .18; }, dispose: () => scene.remove(g) });
-  });
-  logMsg('A row of new shapes stands south of the camp.');
-}
-// The same test the creatures use, without needing one to ask it.
-function terrainOK2(x, z) {
-  const h = height(x, z);
-  return Math.hypot(x, z) < PLANET.wander && h > SEA + .6 && h < 22 && slope(x, z) < 1.1;
-}
 populate();
 
 // ---------- post: bright pass, gaussian bloom, grade ----------
