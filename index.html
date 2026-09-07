@@ -276,13 +276,22 @@
     pointer-events:auto;padding-bottom:calc(52px + env(safe-area-inset-bottom));
     animation:introUp 1.9s 1.1s both cubic-bezier(.2,.7,.2,1)}
   @keyframes introUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
-  #startB{font:inherit;font-size:15px;letter-spacing:.34em;text-transform:uppercase;
-    color:#fff3dc;background:rgba(255,214,150,.07);border:1px solid rgba(255,214,150,.5);
-    border-radius:999px;padding:13px 40px 13px 44px;cursor:pointer;
-    box-shadow:0 0 30px rgba(255,190,120,.18),inset 0 0 22px rgba(255,196,128,.09);
-    animation:startpulse 2.6s ease-in-out infinite}
-  @keyframes startpulse{0%,100%{box-shadow:0 0 26px rgba(255,190,120,.16),inset 0 0 20px rgba(255,196,128,.08)}
-    50%{box-shadow:0 0 44px rgba(255,205,140,.4),inset 0 0 26px rgba(255,196,128,.16)}}
+  /* The control is a line of cool type between two rules, not a pill. A bordered button in
+     the middle of a space shot reads as a dialog sitting on top of the picture; a lit word
+     with a rule running out either side of it reads as part of it. */
+  #startB{font:inherit;font-size:14px;letter-spacing:.44em;text-transform:uppercase;
+    color:#bdf4ff;background:none;border:0;padding:10px 4px;cursor:pointer;
+    display:flex;align-items:center;gap:18px;
+    text-shadow:0 0 18px rgba(80,232,255,.75),0 0 44px rgba(80,232,255,.35);
+    animation:startpulse 2.8s ease-in-out infinite}
+  #startB::before,#startB::after{content:'';width:34px;height:1px;
+    background:linear-gradient(to right,rgba(120,236,255,0),rgba(120,236,255,.85));
+    box-shadow:0 0 10px rgba(80,232,255,.6)}
+  #startB::after{transform:scaleX(-1)}
+  @keyframes startpulse{0%,100%{opacity:.78}50%{opacity:1}}
+  /* the little ringed planet under it, the same glyph the wordmark uses for its O */
+  #introMark{width:26px;height:26px;opacity:.72;margin-top:-2px;
+    filter:drop-shadow(0 0 8px rgba(80,232,255,.7))}
   #introHint{font-size:12.5px;font-style:italic;opacity:.6;letter-spacing:.04em;text-align:center;
     padding:0 24px}
 </style>
@@ -890,7 +899,11 @@
 })();
 </script>
 <div id="intro" hidden><div class="bar top"></div><div class="bar bot"></div><div id="introFoot">
-  <button id="startB">enter</button>
+  <button id="startB">press to start</button>
+  <svg id="introMark" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+    <circle cx="20" cy="20" r="8.5" stroke="#8ff2ff" stroke-width="2.4"/>
+    <ellipse cx="20" cy="20" rx="16" ry="5.4" stroke="#8ff2ff" stroke-width="2.2" transform="rotate(-18 20 20)"/>
+  </svg>
   <div id="introHint">it has been going without you &middot; tap anywhere to land</div>
 </div></div>
 <div id="scrim"></div><div id="scrimB"></div>
@@ -990,7 +1003,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c04';
+const BUILD = 'c05';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2147,10 +2160,32 @@ const DEEP = (() => {
     }
     return m;
   };
-  body(0.6, .30, 34, '#b98cf0', '#e9c9a0');    // a banded giant with a ring, the anchor of the frame
-  body(2.5, .12, 15, '#5fd6c0');
-  body(4.4, .42, 21, '#e0806a');
+  body(0.6, .30, 44, '#d98a5e', '#c9a8e9');    // the banded giant with a ring, the anchor of the frame
+  body(2.5, .12, 18, '#5fd6c0');
+  body(4.4, .42, 26, '#7f93d8');
   body(3.5, -.22, 9, '#9fb6e8');
+  body(1.7, .52, 12, '#b98cf0');
+  body(5.4, -.10, 7, '#cfd6e2');
+  // NEAR ROCKS. The reference frames the whole picture with a big, close, unlit lump in two
+  // corners, and that one trick is most of what makes a wide shot read as deep instead of
+  // flat -- there is something in front of the subject as well as behind it. They sit at a
+  // third of the shell radius and are dark on purpose: foreground, not scenery.
+  const near = (yaw, pit, rad, hex) => {
+    const geo = new THREE.IcosahedronGeometry(rad, 1);
+    const pa = geo.attributes.position;
+    for (let i = 0; i < pa.count; i++) {
+      const k = .74 + hash(pa.getX(i) * .21, pa.getZ(i) * .19 + pa.getY(i) * .13) * .5;
+      pa.setXYZ(i, pa.getX(i) * k, pa.getY(i) * k, pa.getZ(i) * k);
+    }
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: new THREE.Color(hex), transparent: true, opacity: 0, fog: false }));
+    m.position.copy(at(yaw, pit, R * .34)); m.rotation.set(rnd(3), rnd(3), rnd(3));
+    m.renderOrder = -2; mats.push(m.material); g.add(m);
+  };
+  near(1.05, -.46, 40, '#4a4640');
+  near(5.05, -.52, 34, '#3e3a44');
+  near(2.15, .58, 22, '#464251');
   // Nebula: a few big soft additive cards, drifting apart in colour so it does not read as
   // one stain. They are the cheapest possible depth cue and the most effective.
   for (let i = 0; i < 7; i++) {
@@ -6644,7 +6679,8 @@ const TITLE = { url: 'models/plutopia_title.glb', span: 30 };
 // are letters lying in the noise of the ground -- they need daylight round them, and a rock
 // hanging in the sky with water pouring off it gives them that AND says something about the
 // place. It stays after you land, which makes it somewhere to fly the ship.
-// It is a big island. The plaque holds its size on screen the whole way in (see INTRO.plaque),
+// It is a big island. The monument stands at its own size now; the title screen's name is a
+// separate mark carried in front of the lens (see titleMark),
 // so on a small rock the letters overhang it by a factor of four and read as floating letters
 // with a pebble under them. Sized so the monument sits ON something.
 const TITLE_ISLE = { alt: 205, R: 72, out: 22, clear: 46 };
@@ -8021,6 +8057,121 @@ function eraName() {
 // globe with weather on it, and comes down over most of a minute to the meadow with the
 // letters standing in it, then goes back up. Both ends are places worth being, and the whole
 // travel is one cosine so it never starts, stops or turns a corner.
+// ---------- the wordmark ----------
+// PLACEHOLDER, and built to be thrown away: the owner is modelling this properly. What it is
+// here for is the LAYOUT -- the name across the top of the frame, the world hanging under it,
+// space behind both -- because that is the part the rest of the screen is composed against,
+// and it cannot be judged while the title is a monument standing on a meadow four hundred
+// units below the camera.
+//
+// It is drawn rather than typed because the shape wanted is an arc, and canvas has no arced
+// text: each glyph is placed and turned on its own along a very shallow curve, middle highest.
+// Four passes per letter, outside in -- cyan bloom, dark rim, cream face, then rust patches
+// clipped inside the glyph -- which is the whole of that solid-colour poster look.
+//
+// SWAPPING IT FOR THE REAL THING is one line: build the mesh in titleMark() from a loaded GLB
+// instead of this plane. Everything else here is about where it sits, not what it is.
+function titleFace() {
+  const CW = 1600, CH = 460, c = document.createElement('canvas');
+  c.width = CW; c.height = CH;
+  const g = c.getContext('2d');
+  const word = 'PLUTOPIA', SZ = 200;
+  const font = w => '900 ' + SZ + 'px "Trebuchet MS","Gill Sans","Avenir Next",system-ui,sans-serif';
+  g.font = font();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  const adv = [...word].map(ch => g.measureText(ch).width * 1.04);
+  const total = adv.reduce((a, b) => a + b, 0);
+  const R = 2300;                       // arc radius. Big: the curve should be felt, not read.
+  const cx = CW / 2, cy = CH * .46;
+  let run = -total / 2;
+  const spots = [];
+  for (let i = 0; i < word.length; i++) {
+    const mid = run + adv[i] / 2; run += adv[i];
+    const a = mid / R;
+    const x = cx + Math.sin(a) * R, y = cy + (1 - Math.cos(a)) * R * .92;
+    spots.push({ ch: word[i], x, y, a, w: adv[i] });
+  }
+  const each = (fn) => { for (const p of spots) { g.save(); g.translate(p.x, p.y); g.rotate(p.a); fn(p); g.restore(); } };
+  g.font = font(); g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  // 1. the bloom. Twice, because one pass of shadowBlur on a stroke is a haze and two is a lamp.
+  for (let k = 0; k < 2; k++) each(p => {
+    g.shadowColor = '#41f2ff'; g.shadowBlur = 54;
+    g.strokeStyle = 'rgba(65,242,255,.95)'; g.lineWidth = 30 - k * 12;
+    g.strokeText(p.ch, 0, 0);
+  });
+  g.shadowBlur = 0;
+  // 2. the rim, 3. the face
+  each(p => { g.strokeStyle = '#0d1734'; g.lineWidth = 17; g.strokeText(p.ch, 0, 0); });
+  each(p => { g.fillStyle = '#f4ecda'; g.fillText(p.ch, 0, 0); });
+  // 4. rust, clipped inside each letter so the patches end where the letter does
+  each(p => {
+    g.beginPath(); g.rect(-p.w * .6, -SZ * .7, p.w * 1.2, SZ * 1.4); g.clip();
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = '#e0812c';
+    for (let i = 0; i < 5; i++) {
+      g.beginPath();
+      g.ellipse(rnd(-p.w * .4, p.w * .4), rnd(-SZ * .42, SZ * .42), rnd(7, 26), rnd(6, 20), rnd(3.14), 0, 6.283);
+      g.fill();
+    }
+  });
+  // and the planet standing in for the O of PLUT-O-PIA, which is the one flourish the
+  // reference has that type alone cannot do
+  {
+    const o = spots[4];
+    g.save(); g.translate(o.x, o.y); g.rotate(o.a);
+    g.globalCompositeOperation = 'source-over';
+    const r = SZ * .40;
+    const grd = g.createRadialGradient(-r * .3, -r * .35, r * .1, 0, 0, r);
+    grd.addColorStop(0, '#ffb066'); grd.addColorStop(1, '#c85f1e');
+    g.beginPath(); g.arc(0, 0, r, 0, 6.283); g.fillStyle = grd; g.fill();
+    g.strokeStyle = '#0d1734'; g.lineWidth = 11; g.stroke();
+    g.shadowColor = '#41f2ff'; g.shadowBlur = 26;
+    g.strokeStyle = '#6ef2ff'; g.lineWidth = 13;
+    g.beginPath(); g.ellipse(0, r * .12, r * 1.72, r * .46, -.30, 0, 6.283); g.stroke();
+    g.restore();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 4;
+  return { tex: t, aspect: CW / CH };
+}
+
+// The mark itself, and where it rides. It is NOT parented to the camera: this scene's add()
+// is wrapped to project everything onto the sphere, and putting the lens inside that graph is
+// not a thing worth risking for one frame of lag on a shot that drifts this slowly. It is a
+// loose object told where to be, once a frame, from the camera's own transform.
+const TCARD = { g: null, mat: null, w: 0, h: 0 };
+const _tcF = new THREE.Vector3(), _tcU = new THREE.Vector3(), _tcP = new THREE.Vector3();
+function titleMark() {
+  if (TCARD.g) return TCARD.g;
+  const f = titleFace();
+  const mat = new THREE.MeshBasicMaterial({ map: f.tex, transparent: true, opacity: 0,
+    depthTest: false, depthWrite: false, fog: false, toneMapped: false });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1 / f.aspect), mat);
+  m.frustumCulled = false; m.renderOrder = 9000;
+  const g = new THREE.Group(); g.userData.flat = true; g.add(m);
+  scene.add(g);
+  TCARD.g = g; TCARD.mat = mat; TCARD.mesh = m;
+  return g;
+}
+// Sized off the frustum rather than off a constant, so it holds the same share of the screen
+// on a phone held either way round: a fixed world size is a different composition on every
+// device, which is the one thing a title card cannot be.
+function titleMarkFrame(k) {
+  const g = titleMark();
+  TCARD.mat.opacity = k;
+  g.visible = k > .01;
+  if (!g.visible) return;
+  const D = 60, fh = 2 * D * Math.tan(camera.fov * Math.PI / 360), fw = fh * camera.aspect;
+  const w = fw * .86;
+  TCARD.mesh.scale.set(w, w, 1);
+  camera.getWorldDirection(_tcF);
+  _tcU.set(0, 1, 0).applyQuaternion(camera.quaternion);
+  _tcP.copy(camera.position).addScaledVector(_tcF, D).addScaledVector(_tcU, fh * .315);
+  g.position.copy(_tcP);
+  g.quaternion.copy(camera.quaternion);
+}
+
 const INTRO = {
   on: true,
   // The wide end is a long way out on purpose. At 224 the planet fills the frame and reads
@@ -8031,16 +8182,33 @@ const INTRO = {
   // island looking down, and what fills the frame is the half of the world the sun is not on.
   // Lower (a bigger polar angle is a lower camera) puts it side-on, so the lit limb and the
   // horizon are what you see, with the island hanging above them.
-  wide: { r: 660, pol: 1.26, up: 0 },      // the world, entire
-  near: { r:  74, pol: 1.24, up: 8 },      // the meadow
+  // HOW FAR OUT IS DECIDED BY ARITHMETIC, not taste, and the arithmetic has a ceiling. The
+  // lens is 46 degrees vertical and the far plane is at 1600. At r = 660 the camera sits
+  // about 1060 from the planet's centre, the planet's half-angle is asin(400/1060) = 22.2
+  // degrees against 23 degrees of half-frame, and it fills the picture edge to edge -- which
+  // is why the old title screen showed a hillside with its ends running off both sides.
+  // At 900 it is asin(400/1300) = 17.9 degrees, so the world takes about four fifths of the
+  // frame height and the name goes in the fifth above it. The far horizon at that boom is
+  // 1237 units out, still inside the far plane, so nothing gets sliced.
+  //
+  // Further is not available. Framing the whole disc with real space around it on a portrait
+  // phone -- 11 degrees of half-frame across -- needs about 3800 units of standoff, twice the
+  // far plane, and at that range the island is four hundred pixels of nothing. The reference
+  // is a DIORAMA, a small planet built to be looked at, not this one seen from further away.
+  wide: { r: 900, pol: 1.26, up: 0 },      // the world, as much of it as the lens can hold
   // And the plaque grows with the boom, so it holds its size on screen the whole way in: a
   // monument you could walk around at seventy units, and something the size of a mountain
   // range standing on the world at six hundred. Without this the title screen's own title is
   // four pixels tall. It eases back to 1 during the descent.
-  plaque: 3.2,
-  craneT: 62,                              // seconds from one end to the other and back
-  sweep: .46, rate: .055,                  // how far the shot swings across the letters
-  t: 0, dive: 0, diveT: 5.2, r0: 0, plaque0: 1
+  // IT DOES NOT CRANE ANY MORE. The shot used to run all the way in to seventy units and back
+  // out again on a sixty-second cycle, which meant the composition the title screen is FOR --
+  // the whole world in the frame, the name across the top of it, space behind both -- existed
+  // for about four seconds a minute and was the frame you were least likely to be looking at.
+  // It holds wide now and only breathes: a slow sway across, and a drift in and out of a few
+  // per cent so it is a held shot rather than a still.
+  breathe: .045, breatheT: 26,
+  sweep: .40, rate: .045,                  // how far the shot swings, and how lazily
+  t: 0, dive: 0, diveT: 7.0, r0: 0, plaque0: 1
 };
 const introEl = document.getElementById('intro'), startB = document.getElementById('startB');
 function introFrame(dt) {
@@ -8051,24 +8219,26 @@ function introFrame(dt) {
   // child of the floating island, so its own .position is local to it and no use here.
   const c = world.titleAt || (world.greatTree ? world.greatTree.pos : null);
   const tx = c ? c.x : 0, tz = c ? c.z : 0;
-  // eased all the way: cosine gives a still moment at the top and at the bottom
-  const k = .5 - .5 * Math.cos(INTRO.t / INTRO.craneT * Math.PI * 2);
-  const e = k * k * (3 - 2 * k), W1 = INTRO.wide, N1 = INTRO.near;
-  // Wide, it frames the island in the sky AND the world under it, so the shot is aimed half
-  // way down the waterfall rather than at the letters -- aimed at the letters, the world sits
-  // at the bottom of the frame and most of what is left is empty sky.
+  const W1 = INTRO.wide;
+  // Aimed at the island, held at the wide end. The world is four hundred units across and the
+  // lens a thousand off its centre, so what is in frame is the lit limb with the whole of the
+  // land on it -- and the mark rides above that rather than standing on it.
   const gy = groundY(tx, tz);
-  const hi = lerp(gy, c ? c.y : gy, .52) + W1.up, lo = gy + N1.up;
-  cam.tgt.set(tx, lerp(hi, lo, e), tz);
+  cam.tgt.set(tx, lerp(gy, c ? c.y : gy, .52) + W1.up, tz);
   // It does not orbit. placeTitle turns the monument's reading side toward the middle of
   // the island, so there is exactly one direction the letters are legible from -- a full
   // turn spends half of itself round the back of them. Sit in front and sway.
   const face = c ? Math.atan2(-tx, -tz) : 0;
   cam.az = face + Math.sin(INTRO.t * INTRO.rate) * INTRO.sweep;
-  cam.pol0 = lerp(W1.pol, N1.pol, e);
-  cam.r = lerp(W1.r, N1.r, e);
+  cam.pol0 = W1.pol;
+  cam.r = W1.r * (1 + Math.sin(INTRO.t / INTRO.breatheT * Math.PI * 2) * INTRO.breathe);
   cam.idle = 0;
-  if (world.title) world.title.scale.setScalar(INTRO.plaque0 = clamp(cam.r / N1.r, 1, INTRO.plaque));
+  INTRO.plaque0 = 1;
+  // The monument on the island stays the size it really is. It used to be swollen to three
+  // times itself so it could be read from orbit, and with a wordmark across the top of the
+  // frame that is simply a second title in the same shot.
+  if (world.title) world.title.scale.setScalar(1);
+  titleMarkFrame(smooth(0, 2.2, INTRO.t));
   // and send the ship round the island. This is the sortie it has always known how to fly
   // -- lift, one lap at altitude, land -- which is switched off in play because it is his
   // ship now, and is exactly the right thing for a title screen.
@@ -8093,6 +8263,9 @@ function diveFrame(dt) {
   INTRO.dive = Math.max(0, INTRO.dive - dt);
   const k = 1 - INTRO.dive / INTRO.diveT;
   const e = k * k * (3 - 2 * k);
+  // The mark goes first and fast: it is the one thing on screen that is not part of the
+  // world, so it should be gone well before you arrive in it.
+  titleMarkFrame(clamp(1 - k * 3, 0, 1));
   cam.r = lerp(INTRO.r0, 20, e);
   // The plaque comes back down to the size it is in the world as you arrive at it, so the
   // thing you were reading from orbit turns out to be a monument standing in a meadow.
