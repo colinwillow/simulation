@@ -1006,7 +1006,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c09';
+const BUILD = 'c10';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8294,7 +8294,7 @@ function titleMarkFrame(k, cam3) {
   }
   c3.getWorldDirection(_tcF);
   _tcU.set(0, 1, 0).applyQuaternion(c3.quaternion);
-  _tcP.copy(c3.position).addScaledVector(_tcF, D).addScaledVector(_tcU, fh * .335);
+  _tcP.copy(c3.position).addScaledVector(_tcF, D).addScaledVector(_tcU, fh * .385);
   TCARD.g.position.copy(_tcP);
   TCARD.g.quaternion.copy(c3.quaternion);
 }
@@ -8340,9 +8340,13 @@ function titleBackdropFrame(c3) {
 // whole card costs nothing at all once the game starts.
 const DIO = {
   R: 14,               // the planet
-  fill: .80,           // and how much of the frame's SHORT axis it is to take
+  // How wide the planet is as a fraction of the FULL FRAME WIDTH, and how far down the frame
+  // its centre sits (0 is the middle, -1 the bottom edge). Both read straight off the
+  // reference: the world takes about three quarters of the width and sits a little low, which
+  // is what leaves the top of the picture to the name and the ship.
+  fill: .74, drop: -.13,
   scene: null, cam: null, t: 0, built: false, mix: null,
-  ball: null, alien: null, ship: null, own: [],
+  ball: null, alien: null, ship: null, own: [], bodies: [],
 };
 // WHAT THE DIORAMA IS ALLOWED TO THROW AWAY. cloneModel shares geometry AND materials with
 // the entry in the model cache, and the world draws from that same entry -- so disposing
@@ -8359,6 +8363,7 @@ function dioMat(o) {
 
 // Where a direction meets the surface, and the turn that stands a thing up on it.
 const _dqA = new THREE.Vector3(), _dqB = new THREE.Quaternion(), _dqC = new THREE.Quaternion();
+const _dfF = new THREE.Vector3(), _dfR = new THREE.Vector3(), _dfU = new THREE.Vector3();
 function dioStand(o, dir, r, spin) {
   o.position.copy(dir).multiplyScalar(r);
   _dqB.setFromUnitVectors(_plY, _dqA.copy(dir).normalize());
@@ -8432,14 +8437,17 @@ function dioPlanet() {
 function dioClouds(g) {
   const mat = new THREE.MeshStandardMaterial({ color: 0xf2f6ff, roughness: 1, metalness: 0 });
   mat.userData.noHole = true;
-  for (let i = 0; i < 11; i++) {
-    const lat = rnd(-.62, .10), lon = i / 11 * Math.PI * 2 + rnd(-.24, .24);
+  // Smaller and more of them, sat just off the limb rather than piled on it. The first cut
+  // used two-unit puffs on a fourteen-unit planet in clumps six across -- a quarter of the
+  // world per cloud -- so they merged with the ball and with each other and read as fog.
+  for (let i = 0; i < 16; i++) {
+    const lat = rnd(-.72, .04), lon = i / 16 * Math.PI * 2 + rnd(-.18, .18);
     const cl = new THREE.Group();
-    cl.position.copy(dioDir(lat, lon)).multiplyScalar(DIO.R * rnd(1.01, 1.12));
-    for (let j = 0, n = 5 + (Math.random() * 4 | 0); j < n; j++) {
-      const s = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(rnd(.85, 2.0), 14, 10)), mat);
-      s.position.set(rnd(-3, 3), rnd(-.6, .8), rnd(-1, 1));
-      s.scale.y = rnd(.72, 1);
+    cl.position.copy(dioDir(lat, lon)).multiplyScalar(DIO.R * rnd(1.0, 1.07));
+    for (let j = 0, n = 4 + (Math.random() * 3 | 0); j < n; j++) {
+      const s = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(rnd(.55, 1.15), 14, 10)), mat);
+      s.position.set(rnd(-1.7, 1.7), rnd(-.35, .5), rnd(-.6, .6));
+      s.scale.y = rnd(.7, .95);
       cl.add(s);
     }
     cl.lookAt(0, 0, 0);
@@ -8447,53 +8455,57 @@ function dioClouds(g) {
   }
 }
 
-// The star field, the nebula, the neighbours and the two big lumps in the corners. The lumps
-// are the trick worth naming: something CLOSE and unlit at the edge of frame is what makes a
-// wide shot read as deep rather than flat, because it gives the eye a near thing and a far
-// thing in the same picture.
+// WHERE THE NEIGHBOURS GO, and the point is that it is written in FRAME coordinates rather
+// than world ones. "Bottom left corner" and "off the right edge" are things about the picture,
+// and a latitude and longitude on some sphere cannot express either -- which is why the first
+// pass put five bodies in the scene and none of them where the reference has them.
+//
+// sx and sy are fractions of the half-frame: -1 is the left edge, +1 the right, +1 the top.
+// `rf` is the body's radius as a fraction of the half-frame WIDTH at its own distance, so
+// everything holds its share of the picture on any screen. dioramaFrame places them each
+// frame off the live camera basis.
+const DIO_BODIES = [
+  { sx:  1.12, sy:  .14, d: 235, rf: .62, c: '#d0824f', ring: '#e6c6a2' },  // the ringed giant, off the right edge
+  { sx: -1.08, sy:  .36, d: 285, rf: .50, c: '#4c7f93' },                   // the blue-green one, off the left
+  { sx:   .50, sy:  .66, d: 320, rf: .13, c: '#a9a6ae' },                   // a small moon, upper right
+  { sx:  -.90, sy: -.98, d:  64, rf: .60, c: '#7c6b57', rock: 1 },          // the big brown lump, bottom left
+  { sx:  1.00, sy:-1.02, d:  76, rf: .64, c: '#8a7ea6', rock: 1 },          // the purple moon, bottom right
+  { sx:  -.82, sy: -.34, d: 170, rf: .075, c: '#6d6660', rock: 1 },
+  { sx:   .90, sy: -.60, d: 185, rf: .085, c: '#6b6371', rock: 1 },
+  { sx:  -.62, sy: -.80, d: 210, rf: .055, c: '#5f584f', rock: 1 },
+];
+
 function dioSky(g) {
-  // The star field and the nebula are the owner's plate now (titleBackdrop), so all that is
-  // left in here is the geometry that has to sit IN FRONT of it: the neighbouring worlds, and
-  // the big close lumps at the edges of frame. Those two are what make a wide shot read as
-  // deep rather than flat -- a near thing and a far thing in the same picture.
-  // neighbours: [lat, lon, dist, radius, colour, ring?]
-  const worlds = [
-    [ .46, 1.02, 190, 34, '#d3814e', '#e8c39a'],       // the ringed giant, upper right
-    [ .30, 4.35, 210, 26, '#4e7fb8', null],            // the blue one, left
-    [ .58, 5.60, 250, 11, '#b9b2c8', null],
-    [-.10, 2.30, 265, 14, '#7f6fc0', null],
-    [-.46, 3.70, 200, 20, '#8d7f74', null],
-  ];
-  for (const [lat, lon, dd, rad, hex, ring] of worlds) {
-    const m = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(rad, 30, 22)),
-      new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 1, metalness: 0 }));
-    m.material.userData.noHole = true;
-    m.position.copy(dioDir(lat, lon)).multiplyScalar(dd);
-    if (ring) {
-      const rg = new THREE.Mesh(dioOwn(new THREE.RingGeometry(rad * 1.45, rad * 2.25, 64)),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(ring), transparent: true, opacity: .75,
-          side: THREE.DoubleSide, depthWrite: false }));
-      rg.rotation.set(1.18, .4, .25); m.add(rg);
-    }
-    g.add(m);
-  }
-  const lump = (lat, lon, dd, rad, hex) => {
+  // The star field and the nebula are the owner's plate now (titleBackdrop). What is left in
+  // here is the geometry that has to sit IN FRONT of it: a near thing and a far thing in the
+  // same picture is the whole of why a wide shot reads as deep rather than flat.
+  DIO.bodies = [];
+  const craggy = (rad) => {
     const geo = dioOwn(new THREE.IcosahedronGeometry(rad, 2)), pa = geo.attributes.position;
     for (let i = 0; i < pa.count; i++) {
-      const k = .78 + fbm3(pa.getX(i) * .3, pa.getY(i) * .3, pa.getZ(i) * .3, 3) * .44;
+      const k = .80 + fbm3(pa.getX(i) * 1.4 / rad, pa.getY(i) * 1.4 / rad, pa.getZ(i) * 1.4 / rad, 3) * .40;
       pa.setXYZ(i, pa.getX(i) * k, pa.getY(i) * k, pa.getZ(i) * k);
     }
     geo.computeVertexNormals();
-    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      color: new THREE.Color(hex), roughness: 1, metalness: 0 }));
-    m.material.userData.noHole = true;
-    m.position.copy(dioDir(lat, lon)).multiplyScalar(dd);
-    m.rotation.set(rnd(3), rnd(3), rnd(3));
-    g.add(m);
+    return geo;
   };
-  lump(-.72, 2.05, 74, 20, '#6b6055');                 // bottom left, close
-  lump(-.66, 4.95, 82, 17, '#5a5266');                 // bottom right
-  lump( .70, 3.35, 150, 12, '#5f5a52');
+  for (const b of DIO_BODIES) {
+    // Unit radius, scaled per frame: the size is a share of the picture, not a world number.
+    const geo = b.rock ? craggy(1) : dioOwn(new THREE.SphereGeometry(1, 34, 24));
+    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(b.c), roughness: 1, metalness: 0 });
+    mat.userData.noHole = true;
+    const m = new THREE.Mesh(geo, mat);
+    m.rotation.set(rnd(3), rnd(3), rnd(3));
+    m.frustumCulled = false;
+    if (b.ring) {
+      const rg = new THREE.Mesh(dioOwn(new THREE.RingGeometry(1.42, 2.18, 72)),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(b.ring), transparent: true, opacity: .8,
+          side: THREE.DoubleSide, depthWrite: false }));
+      rg.rotation.set(1.22, .35, .22); m.add(rg);
+    }
+    g.add(m);
+    DIO.bodies.push({ m, spec: b });
+  }
 }
 
 // What stands on it. Everything here is one of ours -- the pack props, our building, our
@@ -8512,29 +8524,32 @@ function dioDress(g) {
     g.add(holder);
   });
   // the base, its dish and its mast, on the left shoulder
-  put('models/alien_building_01.glb', .70, 2.55, 5.0, .4);
-  put('models/sp_sci_fi_antenna.glb', .62, 2.95, 4.4, 0);
-  put('models/alien_building_01.glb', .60, 2.20, 3.4, 1.1);
+  // EVERYTHING IS BIGGER THAN IT WAS. On a fourteen-unit planet a three-unit tree is a speck
+  // once the ball is three quarters of the frame; the reference's mushrooms are a third of
+  // the planet's radius and its base half of it. Storybook scale is the whole point.
+  put('models/alien_building_01.glb', .72, 2.55, 8.0, .4);
+  put('models/sp_sci_fi_antenna.glb', .60, 3.00, 7.0, 0);
+  put('models/alien_building_01.glb', .56, 2.16, 5.4, 1.1);
   // the grove opposite, tall and varied
   for (let i = 0; i < 7; i++)
     put(pick(['models/sp_tree03.glb', 'models/sp_tree04.glb', 'models/sp_tree01.glb']),
-      rnd(.38, .74), rnd(4.9, 6.15), rnd(3.2, 5.4), rnd(6.3));
+      rnd(.34, .76), rnd(4.8, 6.20), rnd(5.2, 8.4), rnd(6.3));
   // umbrella growth flanking it, the reference's big mushroom caps
-  for (let i = 0; i < 5; i++)
+  for (let i = 0; i < 6; i++)
     put(pick(['models/sp_plant06.glb', 'models/sp_plant01.glb', 'models/alien_mushroom_01.glb']),
-      rnd(.30, .66), rnd(0.1, 1.5), rnd(2.4, 4.0), rnd(6.3));
+      rnd(.26, .68), rnd(0.0, 1.6), rnd(4.2, 6.6), rnd(6.3));
   // a crystal stand behind the base
-  for (let i = 0; i < 4; i++)
-    put('models/sp_crystal01.glb', rnd(.52, .76), rnd(3.3, 4.2), rnd(1.6, 3.0), rnd(6.3));
+  for (let i = 0; i < 5; i++)
+    put('models/sp_crystal01.glb', rnd(.50, .78), rnd(3.3, 4.3), rnd(2.8, 4.6), rnd(6.3));
   // low cover scattered over the green, and rock round the shoulders
-  for (let i = 0; i < 22; i++)
+  for (let i = 0; i < 26; i++)
     put(pick(['models/sp_plant02.glb', 'models/sp_plant04.glb', 'models/sp_plant07.glb', 'models/sp_plant09.glb']),
-      rnd(.30, .92), rnd(0, 6.283), rnd(.7, 1.5), rnd(6.3));
-  for (let i = 0; i < 10; i++)
+      rnd(.24, .94), rnd(0, 6.283), rnd(1.4, 2.8), rnd(6.3));
+  for (let i = 0; i < 12; i++)
     put(pick(['models/sp_rock02.glb', 'models/sp_rock05.glb', 'models/sp_rock09.glb']),
-      rnd(-.10, .40), rnd(0, 6.283), rnd(1.1, 2.6), rnd(6.3));
-  // and a couple of the island's own creatures, oversize like the reference's
-  for (const [lat, lon, sp] of [[.62, 5.05, 2.6], [.52, 0.55, 2.2]])
+      rnd(-.14, .42), rnd(0, 6.283), rnd(2.0, 4.4), rnd(6.3));
+  // and a few of the island's own creatures, oversize like the reference's
+  for (const [lat, lon, sp] of [[.60, 5.05, 4.4], [.50, 0.55, 3.8], [.66, 1.15, 3.4]])
     put('models/purple_horny.glb', lat, lon, sp, rnd(6.3));
 }
 
@@ -8548,7 +8563,13 @@ function buildDiorama() {
   sc.background = new THREE.Color('#05060f');
   DIO.cam = new THREE.PerspectiveCamera(46, camera.aspect, 1, 900);
 
-  const key = new THREE.DirectionalLight(0xfff0dc, 2.5);
+  // EXPOSURE. The first cut ran key 2.5 + rim 1.05 + hemi 1.05 + ambient .55, which is about
+  // five units of light on a diffuse white-ish surface -- so every colour on the planet
+  // clipped, the whole ball went white, and the bloom pass then threw a halo round it because
+  // a clipped ball is by definition over the bright threshold. None of the vertex colour
+  // survived to be seen. One key, and everything else only enough to keep the dark side
+  // readable.
+  const key = new THREE.DirectionalLight(0xfff2e0, 1.45);
   key.position.set(-38, 44, 40);
   // It casts. A ball this size with no shadow on it reads as a sticker, and the alien's own
   // shadow on the grass is most of what sells him as standing there.
@@ -8558,10 +8579,10 @@ function buildDiorama() {
   sh.left = -26; sh.right = 26; sh.top = 26; sh.bottom = -26; sh.near = 1; sh.far = 160;
   key.shadow.bias = -.0012;
   sc.add(key); sc.add(key.target);
-  const rim = new THREE.DirectionalLight(0x86b8ff, 1.05);
+  const rim = new THREE.DirectionalLight(0x7fb0ff, .40);
   rim.position.set(46, 10, -34); sc.add(rim);
-  sc.add(new THREE.HemisphereLight(0xbcd4ff, 0x2a2450, 1.05));
-  sc.add(new THREE.AmbientLight(0x6a6ea0, .55));
+  sc.add(new THREE.HemisphereLight(0x9fbcf0, 0x241f42, .30));
+  sc.add(new THREE.AmbientLight(0x5a5f8c, .16));
 
   const spin = DIO.spin = new THREE.Group(); sc.add(spin);
   DIO.ball = dioPlanet(); spin.add(DIO.ball);
@@ -8574,7 +8595,7 @@ function buildDiorama() {
   // the alien, standing on top of the world at a size no real body would be
   loadModel('models/alien_orange.glb', e => {
     const inst = cloneModel(e.root), h = e.box.max.y - e.box.min.y;
-    const s = 6.4 / Math.max(1e-4, h);
+    const s = 6.5 / Math.max(1e-4, h);
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.traverse(o => { if (o.isMesh) { o.castShadow = true; dioMat(o); } });
     const holder = new THREE.Group(); holder.add(inst);
@@ -8586,12 +8607,11 @@ function buildDiorama() {
   // and our ship, up on the left where the reference puts its saucer
   loadModel(SHIP.url, e => {
     const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
-    const s = 11 / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));
+    const s = 1 / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));
     inst.scale.setScalar(s);
     inst.traverse(o => { if (o.isMesh) dioMat(o); });
     const holder = new THREE.Group();
-    holder.add(inst); holder.position.set(-19, 20, 16);
-    holder.rotation.set(-.16, .9, .12);
+    holder.add(inst); holder.frustumCulled = false;
     sc.add(holder); DIO.ship = holder;
   });
   DIO.mark = titleMark(sc);
@@ -8605,23 +8625,39 @@ function dioramaFrame(dt, k) {
   DIO.t += dt;
   const cam3 = DIO.cam;
   if (cam3.aspect !== camera.aspect) { cam3.aspect = camera.aspect; cam3.updateProjectionMatrix(); }
-  const vHalf = cam3.fov * Math.PI / 360;
-  const hHalf = Math.atan(Math.tan(vHalf) * cam3.aspect);
-  const half = Math.min(vHalf, hHalf) * DIO.fill;
-  const d = DIO.R / Math.max(.02, Math.sin(half));
-  // The planet sits a little low so the name has the top of the frame, which is the
-  // reference's whole layout: word up there, world down here, space behind both.
-  const drop = Math.tan(vHalf) * d * .10;
-  cam3.position.set(Math.sin(DIO.t * .035) * d * .05, drop * .55 + Math.sin(DIO.t * .06) * .5, d);
-  cam3.lookAt(0, -drop * .45, 0);
+  const vHalf = cam3.fov * Math.PI / 360, tv = Math.tan(vHalf);
+  const th = tv * cam3.aspect;
+  // Distance straight out of the width rule: the planet's screen width is 2R / (2 d tan(hHalf)),
+  // so asking for a fraction of the frame fixes d. No constant, no tuning per device.
+  const d = DIO.R / Math.max(.02, DIO.fill * th);
+  // And it is pushed DOWN the frame by aiming above it, which is cheaper and steadier than
+  // moving the camera: the lens keeps pointing at the same place while the world drops.
+  const up = -DIO.drop * tv * d;
+  cam3.position.set(Math.sin(DIO.t * .035) * d * .035, up + Math.sin(DIO.t * .06) * .4, d);
+  cam3.lookAt(0, up, 0);
   cam3.updateMatrixWorld(true);
+  // Everything that is placed in the FRAME rather than in the world: the neighbours, the
+  // lumps in the corners, and the ship. Half-frame at a given distance is dist*tan(half), so
+  // sx = 1 lands exactly on the right edge whatever the screen is doing.
+  _dfF.set(0, 0, -1).applyQuaternion(cam3.quaternion);
+  _dfR.set(1, 0, 0).applyQuaternion(cam3.quaternion);
+  _dfU.set(0, 1, 0).applyQuaternion(cam3.quaternion);
+  const place = (o, sx, sy, dist, rf) => {
+    const hh = dist * tv, hw = hh * cam3.aspect;
+    o.position.copy(cam3.position).addScaledVector(_dfF, dist)
+      .addScaledVector(_dfR, sx * hw).addScaledVector(_dfU, sy * hh);
+    if (rf !== undefined) o.scale.setScalar(rf * hw);
+  };
+  for (const b of DIO.bodies) place(b.m, b.spec.sx, b.spec.sy, b.spec.d, b.spec.rf);
   titleBackdropFrame(cam3);
   if (DIO.spin) DIO.spin.rotation.y = DIO.t * .035;
-  if (DIO.sky) DIO.sky.rotation.y = -DIO.t * .006;
   if (DIO.mix) DIO.mix.update(dt);
   if (DIO.ship) {
-    DIO.ship.position.y = 20 + Math.sin(DIO.t * .5) * .7;
-    DIO.ship.rotation.z = .12 + Math.sin(DIO.t * .37) * .05;
+    // Up on the left, under the name and clear of the world -- where the reference puts its
+    // saucer. In frame coordinates for the same reason everything else is.
+    place(DIO.ship, -.50, .56 + Math.sin(DIO.t * .5) * .02, 70, .52);
+    DIO.ship.quaternion.copy(cam3.quaternion);
+    DIO.ship.rotateY(.55); DIO.ship.rotateZ(.14 + Math.sin(DIO.t * .37) * .04); DIO.ship.rotateX(-.12);
   }
   titleMarkFrame(k, cam3);
 }
