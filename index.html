@@ -958,7 +958,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b91';
+const BUILD = 'b92';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4643,9 +4643,11 @@ class Creature {
   inNet(dt) {
     const N = this.net;
     if (!N || !N.alive) { this.net = null; return false; }
-    N.held -= dt;
-    if (player.drag === this) N.held = Math.max(N.held, NET.dragHold);   // it cannot work free while held
-    if (N.held <= 0) { N.cut(); return false; }
+    if (NET.hold > 0) {
+      N.held -= dt;
+      if (player.drag === this) N.held = Math.max(N.held, NET.dragHold);   // it cannot work free while held
+      if (N.held <= 0) { N.cut(); return false; }
+    }
     if (player.drag === this) {
       // A rope of a given length does nothing at all until it comes tight, and then it does
       // everything. It can be hauled over ground it would never choose to walk onto, but not
@@ -8145,10 +8147,14 @@ const NET = {
   give: .5, shove: .1,
   rim: 2.4,                           // the outer hoop is weighted, the way a cast net's is
   catch: .95,                         // how much of the open radius has to pass the animal to take it
-  hold: 16,                           // seconds an animal stays in it before it works free
-  dragHold: 6,                        // and the floor that keeps while you are dragging it
+  // Zero means it never works free. It was sixteen seconds, and sixteen seconds is exactly
+  // long enough to look like the net FAILING -- it wraps, it holds, and then for no visible
+  // reason it slides off and puddles on the ground. A capture that expires on a timer is a
+  // countdown nobody asked for. Caught is caught; a plasma bolt is how you cut one loose.
+  hold: 0,
+  dragHold: 6,                        // (only used when hold is non-zero)
   fade: 7,                            // an empty net on the ground lasts this long
-  cling: 5.5,                         // how hard the cords are drawn down onto whatever is inside
+  cling: 7.0,                         // how hard the cords are drawn down onto whatever is inside
   // THE CINCH. On a catch the cords are re-cut shorter over `cinchT` seconds, down to `cinch`
   // of their flying length. That is the difference between a net lying ON an animal and a net
   // AROUND one: the cords actively shorten, the body stops them, and what is left is a bag.
@@ -8157,7 +8163,7 @@ const NET = {
   // an offset in the animal's own frame and rebuilt from that each frame, so it rides the
   // body exactly and cannot slide off it however the animal thrashes. It still looks like a
   // simulated net because for the first second it was one; it just stops being able to lose.
-  bindT: 1.0,
+  bindT: .75,
   // And a leash. Nothing may sit further from the animal's middle than this much of its own
   // size, so the sheet cannot spread out flat on the ground beside it -- which is what it was
   // doing, and why it looked like it fell off rather than caught.
@@ -8961,6 +8967,10 @@ class Bolt {
       if (!o.alive) continue;
       const d = Math.hypot(o.pos.x - this.x, o.pos.z - this.z);
       if (d > BL) continue;
+      // A bolt cuts a net. Nets do not expire any more, so there has to be a way to let one
+      // go that is not walking up and untying it -- and burning it off is the one that needs
+      // no new button and reads on sight.
+      if (o.net && d < BL * .6) { o.net.cut(); continue; }
       // Right where it went off, it throws. Out at the edge of the blast it only startles.
       if (d < R + (o.rad || 1) + 1.6 && o.knock) o.knock(this, 1);
       else if (d < BL * .45 && o.knock) o.knock(this, clamp(1 - d / (BL * .45), .25, .6));
@@ -9172,7 +9182,7 @@ class NetShot {
     this.cinch = 0; this.closeT = 0; this.bind = null;   // starts pulling closed from here
     this.rope.mat.color.set(NET.cord); this.kmat.color.set(NET.knot);
     world.effects.push(new Burst(o.pos.x, o.pos.y + (o.rad || 1), o.pos.z, '#9ff0d8', 11, .9));
-    logMsg('The net comes down over it. Walk up and take hold to drag it.');
+    logMsg('The net comes down over it. Walk up and take hold to drag it; a bolt cuts it loose.');
   }
   // Re-lay it flat OVER the animal. Leaving it standing where the shot happened to stop was
   // the whole reason it never looked like it wrapped anything: the disc had been flying
