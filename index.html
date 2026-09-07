@@ -1142,7 +1142,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c73';
+const BUILD = 'c74';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -3987,6 +3987,64 @@ const MODEL = {
 // after that gets a clone that shares the geometry and materials. Measuring is the
 // expensive part (every vertex through boneTransform), so it must not happen per creature.
 const MODELS = {};
+// ---------- skins ----------
+// A MODEL AND ITS PAINT ARE TWO FILES NOW. Export the GLB with no image in it at all, name a
+// skin here, and the same mesh can wear any number of them -- a repaint is a 40 kB webp and a
+// reload, with no re-export and no second copy of the geometry.
+//
+// Why not put the webp inside the .gltf and let the loader fetch it: the glTF spec only
+// allows PNG and JPEG as image sources, so Blender writes a webp as an EXT_texture_webp
+// extension -- and three r128 predates GLTFTextureWebPExtension (that landed in r131). The
+// loader would ignore it and the model would arrive untextured with no error. Loading the
+// image ourselves goes through TextureLoader and an <img>, which has understood webp since
+// iOS 14 and does not care what the glTF spec thinks.
+//
+// So: keep exporting GLB. One request, Draco still works, nothing about the pipeline changes
+// except that the texture box is unticked.
+const SKINS = {
+  // 'models/drone_rigged.glb': 'models/skins/drone_default.webp',
+};
+const SKIN_TEX = {};
+// flipY false and sRGB, because those are the two things that are different about a texture
+// that arrives beside a glTF rather than inside one. GLTFLoader sets both on its own textures
+// and a hand-loaded one keeps the DOM defaults, which puts the map on upside down and washes
+// every colour out by a gamma.
+function skinTex(url) {
+  let t = SKIN_TEX[url];
+  if (!t) {
+    t = SKIN_TEX[url] = new THREE.TextureLoader().load(url, () => {}, undefined,
+      () => console.warn('[skin] missing: ' + url));
+    t.flipY = false; t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
+  }
+  return t;
+}
+// Put a skin on every material under `root`. Safe to call on a model that already has a map:
+// the new one replaces it. `col` white, or the map is multiplied by whatever tint the
+// exporter happened to leave in the material's base colour factor.
+function applySkin(root, url) {
+  const t = skinTex(url);
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) {
+      if (!m || m.userData.noSkin) continue;
+      m.map = t; m.color.setRGB(1, 1, 1); m.needsUpdate = true;
+    }
+  });
+  return root;
+}
+// Swap what everything wearing a model is painted with, live, from the console:
+//   isle.skin('models/drone_rigged.glb', 'models/skins/drone_blue.webp')
+// The cached materials are shared by every instance, so one call repaints all of them.
+function setSkin(model, skinUrl) {
+  SKINS[model] = skinUrl;
+  const e = MODELS[model];
+  if (e && e.root) applySkin(e.root, skinUrl);
+  // instances cloned before now share their materials with e.root, so they follow -- except
+  // the private copies solid() and tintFor() made, which are keyed off the originals
+  for (const [src, c] of NOHOLE) { if (src.map !== c.map) { c.map = src.map; c.color.copy(src.color); c.needsUpdate = true; } }
+  for (const [, m] of TINTED) { m.needsUpdate = true; }
+  return skinUrl;
+}
 function loadModel(url, cb) {
   let e = MODELS[url];
   if (e) { if (e.ready) cb(e); else if (!e.failed) e.waiting.push(cb); return; }
@@ -3996,6 +4054,7 @@ function loadModel(url, cb) {
   const loader = new THREE.GLTFLoader(); loader.setDRACOLoader(draco);
   loader.load(url, gltf => {
     e.root = gltf.scene; e.anims = gltf.animations;
+    if (SKINS[url]) applySkin(e.root, SKINS[url]);      // the paint, if this model ships without one
     prepModel(e.root);
     jointDrift(e.root, e.anims, url);
     // Measure in the idle pose, not the bind pose. Mixamo exports keep the bind pose hips
@@ -11032,7 +11091,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
