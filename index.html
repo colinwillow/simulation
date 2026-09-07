@@ -34,6 +34,27 @@
      nearly all the time; it is not a no-op, it is what creates the containing block. */
   body{width:var(--vvw,100%);height:var(--vvh,100%);
     transform:translate(var(--vvl,0px),var(--vvt,0px))}
+  </style>
+  <script>
+  // BEFORE THE FIRST PAINT, not on the first animation frame. syncSize sets these, and it
+  // does not run until frame() does -- so the boot card and the studio splash are laid out
+  // once against a box that is still the layout viewport, which on iOS with the URL bar up
+  // is taller than the screen. That is the shift you see while it is still loading, before
+  // anything of the game is on screen at all. Same four lines, run here as well.
+  (function () {
+    var set = function () {
+      var vv = window.visualViewport, d = document.documentElement.style;
+      d.setProperty('--vvw', Math.round(vv ? vv.width : innerWidth) + 'px');
+      d.setProperty('--vvh', Math.round(vv ? vv.height : innerHeight) + 'px');
+      d.setProperty('--vvl', (vv ? vv.offsetLeft : 0) + 'px');
+      d.setProperty('--vvt', (vv ? vv.offsetTop : 0) + 'px');
+    };
+    set();
+    addEventListener('resize', set);
+    if (window.visualViewport) { visualViewport.addEventListener('resize', set); visualViewport.addEventListener('scroll', set); }
+  })();
+  </script>
+  <style>
   /* FIXED AND FILLING, rather than a block in flow that three.js sizes in pixels. In flow, the
      canvas is exactly as tall as the number syncSize last handed it -- and on iOS innerHeight
      and the actually-visible viewport disagree whenever the URL bar moves, so a stale number
@@ -1051,7 +1072,8 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c55';
+const BUILD = 'c56';
+const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2200,7 +2222,14 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         // caught up during a descent that fast. uSpace is spaceK -- the same number that turns
         // the dome into SKY.space -- read straight off the camera's distance, exact and
         // instant. When the sky is space, the plate covers all of it.
-        c = mix(c, pl, uPlateK * mix(smoothstep(-0.03, uPlateH, h), 1.0, max(uHigh, uSpace)));
+        // -0.6, not -0.03. The roll-off existed to keep a galaxy out of the strip above the
+        // sea where distant land lives -- and with the panorama at zero there is no distant
+        // land, only sea. Meanwhile every downward-looking camera puts most of its pixels
+        // BELOW h = 0, so a floor at -0.03 blacked out the whole descent off the title, and
+        // uSpace only rescues the far end of it. Below the horizon on the ground you see
+        // terrain and sea, never the dome, so extending it down costs nothing and closes the
+        // entire class: at the waterline the plate is now at 0.92 instead of 0.
+        c = mix(c, pl, uPlateK * mix(smoothstep(-0.6, uPlateH, h), 1.0, max(uHigh, uSpace)));
       }
       // The HDRI, on the dome, under everything else. Sampled as an equirectangular map --
       // the same projection three uses for one -- and tinted by the hour so the day still
@@ -2663,8 +2692,22 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
 // stains it -- and the terrain never went through it at all, which is why turning that off
 // in c37 made every model vivid and left the ground exactly as washed as it always was.
 const GROUND_UNI = { uGSat: { value: 1 }, uGMul: { value: 1 }, uGPatch: { value: 0 } };
-function groundPatch(sh) {
+// `patch` is off for the grass, and that is a frame-rate decision rather than an art one.
+// Eleven thousand instanced blades are the highest-overdraw surface in the game -- a hundred
+// of them stack over one pixel at a grazing angle -- and every one of those layers was paying
+// for a 3D value noise. The pattern is a metre-scale thing on the GROUND; on a blade two
+// centimetres wide it is invisible at any distance and free to leave out.
+function groundPatch(sh, patch) {
   sh.uniforms.uGSat = GROUND_UNI.uGSat; sh.uniforms.uGMul = GROUND_UNI.uGMul;
+  if (!patch) {
+    sh.fragmentShader = 'uniform float uGSat, uGMul;\n' + sh.fragmentShader
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        float glum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+        diffuseColor.rgb = max(vec3(0.0), mix(vec3(glum), diffuseColor.rgb, uGSat)) * uGMul;
+      }`);
+    return;
+  }
   sh.uniforms.uGPatch = GROUND_UNI.uGPatch;
   // The world position, because the ground's own vertex colour is the only thing it has and a
   // pattern needs somewhere to live. The terrain is baked onto the sphere so its model matrix
@@ -2673,18 +2716,16 @@ function groundPatch(sh) {
   // square inch of pattern.
   sh.vertexShader = 'varying vec3 vWPos;\n' + sh.vertexShader
     .replace('#include <project_vertex>', `#include <project_vertex>
-      #ifdef USE_INSTANCING
-        vWPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
-      #else
-        vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-      #endif`);
+      vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
   sh.fragmentShader = `uniform float uGSat, uGMul, uGPatch;
     varying vec3 vWPos;
-    float gh3(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
-    float gn3(vec3 p){
-      vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-      return mix(mix(mix(gh3(i), gh3(i + vec3(1,0,0)), f.x), mix(gh3(i + vec3(0,1,0)), gh3(i + vec3(1,1,0)), f.x), f.y),
-                 mix(mix(gh3(i + vec3(0,0,1)), gh3(i + vec3(1,0,1)), f.x), mix(gh3(i + vec3(0,1,1)), gh3(i + vec3(1,1,1)), f.x), f.y), f.z);
+    // 2D, on the horizontal plane, which halves it: four hashes a fragment instead of eight.
+    // The island is a cap on a sphere and the pattern is only ever looked at from above, so
+    // the third dimension was buying nothing but sin() calls over half the screen.
+    float gh3(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    float gn3(vec2 p){
+      vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(gh3(i), gh3(i + vec2(1,0)), f.x), mix(gh3(i + vec2(0,1)), gh3(i + vec2(1,1)), f.x), f.y);
     }
   ` + sh.fragmentShader
     .replace('#include <color_fragment>', `#include <color_fragment>
@@ -2704,8 +2745,8 @@ function groundPatch(sh) {
       // One 3D value noise and one cell hash, nine sin() a fragment. It covers half the
       // screen; this is the budget it gets.
       if (uGPatch > 0.002) {
-        float gp = gn3(vWPos * 0.055);
-        float cell = gh3(floor(vWPos * 0.85));
+        float gp = gn3(vWPos.xz * 0.055);
+        float cell = gh3(floor(vWPos.xz * 0.85));
         float band = smoothstep(0.44, 0.56, gp) - 0.5;
         diffuseColor.rgb *= 1.0 + uGPatch * (band * 0.30 + (cell - 0.5) * 0.13);
         float ink = 1.0 - smoothstep(0.0, 0.055, abs(gp - 0.5));
@@ -2714,7 +2755,7 @@ function groundPatch(sh) {
 }
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 });
 terrainMat.userData.shaderTag = 'ground';
-terrainMat.onBeforeCompile = sh => { toonPatch(sh); groundPatch(sh); };
+terrainMat.onBeforeCompile = sh => { toonPatch(sh); groundPatch(sh, true); };
 const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 terrain.material.userData.noHole = true;
 terrain.receiveShadow = true; terrain.userData.flat = true; scene.add(terrain);   // built on the sphere already
@@ -2972,7 +3013,10 @@ grassMat.onBeforeCompile = s => {
   // long before the toon ramp existed -- so the blades have been the one surface on the
   // island lit the old smooth way, and the one thing the see-through hole could not cut.
   // They take the ground's lift too, or they read as pale straw over a green field.
-  toonPatch(s); holePatch(s); groundPatch(s);
+  // No holePatch: the hole is a discard branch, and on the one surface in the game with real
+  // overdraw that is the most expensive place in the file to put a branch. Blades are ankle
+  // height -- they were never what stands between the lens and his chest.
+  toonPatch(s); groundPatch(s, false);
   s.uniforms.uT = grassUni.uT; s.uniforms.uWind = grassUni.uWind;
   s.vertexShader = 'uniform float uT; uniform vec3 uWind;\n' + s.vertexShader.replace('#include <begin_vertex>', `
     #include <begin_vertex>
@@ -13564,7 +13608,11 @@ function frame(now) {
     const urls = Object.keys(MODELS);
     if (world.clock > 6 || (urls.length > 3 && urls.every(u => MODELS[u].ready || MODELS[u].failed))) {
       booted = true;
-      if (window._majiaFinish) window._majiaFinish();          // the studio mark bows out early on a fast boot
+      // ... but not INSTANTLY. On a warm cache every model is ready inside a frame or two, so
+      // this fired before the splash had drawn anything and the mark was never seen at all.
+      // Two and a bit seconds is the floor; a slow boot still overruns it and dismisses on
+      // its own timeline.
+      if (window._majiaFinish) setTimeout(window._majiaFinish, Math.max(0, 2300 - (Date.now() - T0)));
       const b = document.getElementById('boot'); b.style.opacity = 0; setTimeout(() => b.remove(), 1300);
       if (INTRO.on) introEl.hidden = false; else document.body.classList.remove('intro');
     }
