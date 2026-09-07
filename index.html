@@ -1048,7 +1048,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c51';
+const BUILD = 'c52';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4246,7 +4246,25 @@ function attachRig(parent, cfg, done) {
       const y = b.getWorldPosition(_pvV).applyMatrix4(_pvI).y * s + inst.position.y;
       if (y > cfg.height * .06) { pivotY = y; break; }     // a joint sitting on the floor is the armature, not the hips
     }
-    if (pivotY == null) pivotY = cfg.height * .5;
+    // AND THEN CHECK IT AGAINST THE BODY, because on these files the bone does not live in
+    // the same space as the skin. Measured out of the GLBs with @gltf-transform: the meshes
+    // are about one unit tall (purple_horny's box is 0.99 x 0.74 x 0.72) and mixamorig_Hips
+    // sits at y = 18.6; creature_green's at 10.1. The skeleton is in centimetre-ish units and
+    // the inverse bind matrices bring the skin down -- so the hips' WORLD position is nowhere
+    // near the hips, and scaling it to the creature's height gives a pivot sixty units above
+    // its feet.
+    // Which is invisible until something turns about it. tumble holds that point still while
+    // the body rotates, so the render position swings by twice the pivot -- a hundred and
+    // twenty units, in a frame. That is the whole of "I shoot them, they are gone, and then
+    // they come flying in from outside the frame": they were never gone and never went
+    // anywhere. They were being drawn a hundred units away, orbiting a point in the sky.
+    // A pivot is inside the body or it is not a pivot. Anything else falls back to the middle
+    // of the silhouette, which is what the loop above was always meant to be a refinement of.
+    if (!(pivotY > cfg.height * .06 && pivotY < cfg.height * 1.2)) {
+      if (pivotY != null) console.warn('[rig] ' + cfg.url + ': hips measure ' + pivotY.toFixed(1)
+        + ' on a body ' + cfg.height + ' tall -- the skeleton is not in the skin\'s space. Using the silhouette.');
+      pivotY = cfg.height * .5;
+    }
 
     const morphs = [];
     inst.traverse(o => {
@@ -4866,7 +4884,9 @@ class Creature {
   // that lands near the floor, so the thing swung about its feet: tumbling about the root,
   // which is exactly what it looked like. Measure the body it actually built instead.
   pivotY() {
-    if (this.rig) return this.rig.pivotY;
+    // Belt as well as braces (buildRig checks it at the source): a pivot outside the body is
+    // not a pivot, and the one place it is used turns the whole animal about it.
+    if (this.rig) return clamp(this.rig.pivotY, .1, (this.rad || 1) * 2.4);
     if (this._pv === undefined) this._pv = this.measurePivot();
     return this._pv;
   }
@@ -5162,7 +5182,7 @@ class Creature {
     // That is what an animal that "disappears and slingshots back" looks like from here, so it
     // is worth a guard and a line in the log rather than a silent hole in the world.
     let hy = this.pivotY();
-    if (!(hy >= 0 && hy < 1e4)) {
+    if (!(hy >= 0 && hy < (this.rad || 1) * 6)) {
       if (!this._pvWarn) { this._pvWarn = 1; console.warn('[knock] ' + this.constructor.name + ' has no usable pivot (' + hy + '); falling back to its radius.'); }
       hy = (this.rad || 1) * .8;
     }
