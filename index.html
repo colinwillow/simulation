@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c25';
+const BUILD = 'c26';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8565,6 +8565,7 @@ const DIO = {
   fill: .74, drop: -.13,
   scene: null, cam: null, t: 0, built: false, mixes: [],
   ball: null, alien: null, ship: null, own: [], bodies: [],
+  upright: .44,
 };
 // WHAT THE DIORAMA IS ALLOWED TO THROW AWAY. cloneModel shares geometry AND materials with
 // the entry in the model cache, and the world draws from that same entry -- so disposing
@@ -8581,11 +8582,21 @@ function dioMat(o) {
 
 // Where a direction meets the surface, and the turn that stands a thing up on it.
 const _dqA = new THREE.Vector3(), _dqB = new THREE.Quaternion(), _dqC = new THREE.Quaternion();
+// THE MAP CHEAT, and it is a cheat on purpose. Standing everything exactly on its own surface
+// normal is correct and reads badly: on a ball this small, anything past the shoulder is
+// presented to the lens edge-on or from directly overhead, so a creature is a pair of ears and
+// a building is a roof. Leaning each thing part of the way back toward world up -- not all the
+// way, which would have them growing sideways out of the limb -- turns them toward the camera
+// the way an isometric map does, while they still plainly belong to the surface they stand on.
+// 0 is honest, 1 is a sticker. Everything on the planet reads this unless it overrides it.
 const _dfF = new THREE.Vector3(), _dfR = new THREE.Vector3(), _dfU = new THREE.Vector3();
 const _dfCam = new THREE.Vector3();
-function dioStand(o, dir, r, spin) {
+function dioStand(o, dir, r, spin, upK) {
   o.position.copy(dir).multiplyScalar(r);
-  _dqB.setFromUnitVectors(_plY, _dqA.copy(dir).normalize());
+  _dqA.copy(dir).normalize();
+  const k = upK === undefined ? DIO.upright : upK;
+  if (k > 0) _dqA.lerp(_plY, k).normalize();
+  _dqB.setFromUnitVectors(_plY, _dqA);
   o.quaternion.copy(_dqB).multiply(_dqC.setFromAxisAngle(_plY, spin || 0));
 }
 // A direction from latitude and longitude, latitude in -1..1 as sin.
@@ -8763,20 +8774,22 @@ function dioDress(g) {
     inst.position.y = -e.box.min.y * s;
     inst.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; dioMat(o); } });
     const holder = new THREE.Group(); holder.add(inst);
-    dioStand(holder, dioDir(lat, lon), DIO.R * (1 + (lift || 0)) * 1.012, spin || 0);
+    // Leaning something lifts the far edge of its base off the sphere, so it is sunk by
+    // roughly what the lean costs it. Wide things lean off more and sink more.
+    dioStand(holder, dioDir(lat, lon), DIO.R * (1 + (lift || 0)) * 1.012 - span * DIO.upright * .17, spin || 0);
     g.add(holder);
     return inst;
   });
   // A creature, facing roughly out of the picture and breathing. They are the only things on
   // this planet that are supposed to look back at you.
-  const beast = (url, lat, lon, span) => loadModel(url, e => {
+  const beast = (url, lat, lon, span, upK) => loadModel(url, e => {
     const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
     const s = span / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.traverse(o => { if (o.isMesh) { o.castShadow = true; dioMat(o); } });
     const holder = new THREE.Group(); holder.add(inst);
     const dir = dioDir(lat, lon);
-    dioStand(holder, dir, DIO.R * 1.012, 0);
+    dioStand(holder, dir, DIO.R * 1.012 - span * (upK === undefined ? DIO.upright : upK) * .17, 0, upK);
     dioFace(holder, dir, _dfCam.set(0, 0, 1));
     g.add(holder);
     const idle = pickClip(e.anims || [], 'idle', 'idle', 'walk|run|die');
@@ -8784,22 +8797,27 @@ function dioDress(g) {
   });
 
   // ---- the base, on the left shoulder ----
-  put('models/space_base.glb', .64, 2.46, 9.4, .28);
-  put('models/sp_sci_fi_antenna.glb', .54, 2.84, 6.0, 0);
+  // Brought round toward the front and made properly big. At lon 2.46 the base was half off
+  // the left limb, showing the camera its own side; the reference has the whole of it.
+  put('models/space_base.glb', .58, 2.22, 12.5, .34);
+  put('models/sp_sci_fi_antenna.glb', .52, 2.62, 7.6, 0);
 
   // ---- THREE big caps, in the three places the reference puts them ----
-  put('models/fantasy_mushroom_colorful.glb', .60, 0.95, 5.4, rnd(6.3));   // beside the alien, right
-  put('models/fantasy_mushroom_colorful.glb', .27, 0.12, 6.2, rnd(6.3));   // out on the right limb
-  put('models/fantasy_mushroom_colorful.glb', .37, 2.10, 7.0, rnd(6.3));   // front left, the biggest
+  put('models/fantasy_mushroom_colorful.glb', .56, 0.90, 6.6, rnd(6.3));   // beside the alien, right
+  put('models/fantasy_mushroom_colorful.glb', .24, 0.28, 7.4, rnd(6.3));   // out on the right limb
+  put('models/fantasy_mushroom_colorful.glb', .34, 1.98, 8.2, rnd(6.3));   // front left, the biggest
 
   // ---- one spray of crystals, not five scattered ones ----
   for (let i = 0; i < 5; i++)
     put('models/sp_crystal01.glb', .48 + rnd(-.05, .05), 0.52 + rnd(-.14, .14), rnd(2.2, 3.8), rnd(6.3));
 
   // ---- the creatures the reference has looking out of it ----
-  beast('models/purple_horny.glb', .56, 1.14, 3.6);
-  beast('models/tucann.glb', .42, 1.92, 3.0);
-  for (let i = 0; i < 3; i++) beast('models/creature_green.glb', .30 - i * .08, 2.72 + i * .19, 2.0 + i * .2);
+  // Bigger, and round toward the front where the lens can see their faces rather than the
+  // tops of their heads. They lean the most of anything here -- a creature IS its face, so
+  // there is nothing to be gained by standing one honestly on a normal.
+  beast('models/purple_horny.glb', .48, 1.06, 4.8, .62);
+  beast('models/tucann.glb', .36, 1.86, 4.2, .62);
+  for (let i = 0; i < 3; i++) beast('models/creature_green.glb', .26 - i * .07, 2.60 + i * .17, 2.8 + i * .25, .62);
 
   // ---- and the planting. A BAND along the line where the green gives out, plus a few bushes
   // up on the grass -- which is where the reference has all of its, and nowhere else.
@@ -9014,8 +9032,10 @@ function dioMeteorStep(dt, place) {
     if (s.t < 0) {
       if ((s.wait -= dt) > 0) { s.m.visible = false; continue; }
       // start off one edge, run down and across: the reference's all fall the same way
-      s.sx = rnd(-1.3, .9); s.sy = rnd(.35, 1.15);
-      const a = rnd(-.95, -.55);
+      // Upper right to lower left. It ran the other way: cos of an angle in (-.95, -.55) is
+      // POSITIVE, so every streak was travelling right and down, off the wrong corner.
+      s.sx = rnd(-.15, 1.30); s.sy = rnd(.40, 1.20);
+      const a = Math.PI + rnd(.55, .95);
       s.dx = Math.cos(a) * 2.6; s.dy = Math.sin(a) * 2.6;
       s.len = rnd(.10, .18); s.t = 0;
     }
@@ -9049,7 +9069,9 @@ function buildDiorama() {
   // survived to be seen. One key, and everything else only enough to keep the dark side
   // readable.
   const key = new THREE.DirectionalLight(0xfff2e0, 1.22);
-  key.position.set(-38, 44, 40);
+  // Higher than it was. At (-38, 44, 40) it grazed the ball and every tree laid a shadow
+  // halfway round it, which is what those long dark streaks across the underside were.
+  key.position.set(-28, 62, 34);
   // It casts. A ball this size with no shadow on it reads as a sticker, and the alien's own
   // shadow on the grass is most of what sells him as standing there.
   key.castShadow = true;
@@ -9076,12 +9098,18 @@ function buildDiorama() {
   // the alien, standing on top of the world at a size no real body would be
   loadModel('models/alien_orange.glb', e => {
     const inst = cloneModel(e.root), h = e.box.max.y - e.box.min.y;
-    const s = 6.5 / Math.max(1e-4, h);
+    const s = 8.6 / Math.max(1e-4, h);
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
-    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; dioMat(o); } });
+    inst.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = true; dioMat(o);
+      // He is the subject, so he carries a little of his own light: his own map as an
+      // emissive, low, which lifts him off the planet without turning him into a lamp.
+      for (const m of [].concat(o.material)) { m.emissiveMap = m.map; m.emissive.setScalar(.34); }
+    });
     const holder = new THREE.Group(); holder.add(inst);
     const dir = dioDir(.985, 1.9);
-    dioStand(holder, dir, DIO.R * 1.012, 0);
+    dioStand(holder, dir, DIO.R * .998, 0);
     // Turned to face the lens rather than left on an arbitrary yaw. The camera sits out along
     // +Z, and this rig's forward is +Z -- the same convention the whole game uses.
     dioFace(holder, dir, _dfCam.set(0, 0, 1));
@@ -9145,7 +9173,9 @@ function dioramaFrame(dt, k) {
   if (DIO.ship) {
     // Up on the left, under the name and clear of the world -- where the reference puts its
     // saucer. In frame coordinates for the same reason everything else is.
-    place(DIO.ship, -.50, .56 + Math.sin(DIO.t * .5) * .02, 70, .52);
+    // Well below the wordmark. At .56 it was sitting inside the letters with only its legs
+    // showing under them, which is the one place on this screen a ship cannot be.
+    place(DIO.ship, -.56, .27 + Math.sin(DIO.t * .5) * .02, 70, .50);
     DIO.ship.quaternion.copy(cam3.quaternion);
     DIO.ship.rotateY(.55); DIO.ship.rotateZ(.14 + Math.sin(DIO.t * .37) * .04); DIO.ship.rotateX(-.12);
   }
