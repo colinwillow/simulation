@@ -59,13 +59,23 @@
       // currently reporting it.
       var lw = Math.max(innerWidth, vv ? vv.width : 0, document.documentElement.clientWidth || 0);
       var lh = Math.max(innerHeight, vv ? vv.height : 0, document.documentElement.clientHeight || 0);
-      // AND THE SCREEN ITSELF, when the browser's own chrome is what the other three are
-      // short by. Every one of them describes a viewport; none of them describes the glass.
-      // Guarded to a third, so a desktop window a quarter the height of a monitor does not
-      // start rendering a monitor.
       var sc = typeof screen !== 'undefined' ? screen : null;
       if (sc && sc.height > lh && sc.height < lh * 1.34) lh = sc.height;
       if (sc && sc.width > lw && sc.width < lw * 1.34) lw = sc.width;
+      // AND THEN ASK THE BROWSER WHAT 100vh ACTUALLY IS, because after twenty rounds of this
+      // the honest conclusion is that no API here reliably means "the glass": innerHeight,
+      // visualViewport, documentElement.clientHeight and screen.height each mean something
+      // slightly different and each one has been short at some point. A hidden probe styled
+      // 100vw x 100vh is not an opinion about the viewport -- it IS the viewport unit, the
+      // same one the canvas rule below is written in, measured by the engine that will lay
+      // the canvas out. The two cannot disagree, which is the only property that matters.
+      var pr = document.getElementById('vprobe');
+      if (!pr && document.body) {
+        pr = document.createElement('div'); pr.id = 'vprobe';
+        pr.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;visibility:hidden;pointer-events:none;z-index:-1';
+        document.body.appendChild(pr);
+      }
+      if (pr) { lw = Math.max(lw, pr.offsetWidth); lh = Math.max(lh, pr.offsetHeight); }
       d.setProperty('--cvw', Math.round(lw) + 'px'); d.setProperty('--cvh', Math.round(lh) + 'px');
     };
     set();
@@ -1098,7 +1108,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c67';
+const BUILD = 'c68';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -6145,7 +6155,11 @@ class Spout {
 // The shelves are 5.5 apart and 35 degrees round, so from any one the next is a jump that
 // reads as a jump: too easy and it is a staircase, too hard and it is a puzzle. Up is the
 // only direction that is difficult, which is the point of a tree fort.
-const MTREE = { H: 62, fort: 50, r0: 5.4, r1: 3.4, step: 5.5, turn: .62, shelf: 3.2 };
+// Taller, and the fort carried up into the canopy rather than hanging in clear air below it.
+// At 50 of 62 there was a third of a tree of nothing above your head, which reads as a
+// platform bolted to a trunk; at 62 of 74 the leaves are over you and it reads as being IN
+// the tree, which is the whole idea.
+const MTREE = { H: 74, fort: 62, r0: 5.4, r1: 3.4, step: 5.5, turn: .62, shelf: 3.2 };
 class MotherTree {
   constructor(x, z) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z);
@@ -6161,7 +6175,10 @@ class MotherTree {
     const trunkR = () => T.r0;
     const put = (mesh_, cast = true) => { mesh_.castShadow = cast; mesh_.receiveShadow = true; this.g.add(mesh_); return mesh_; };
     // a platform collider: air, with an underside, tagged
-    const deck = (lx, lz, r, ly, thick, tag) => this.obs.push(obAdd(x + lx, z + lz, r, null, y0 + ly + thick * .5 + .05, 'tree:' + tag, y0 + ly - thick * .5 - .6, true));
+    // The collider's top is the deck's own top surface, to the millimetre -- G.cyl is centred,
+    // so that is ly + half the thickness -- and its radius is a hair INSIDE the visible disc.
+    // Outside it and you can stand on air past the edge; over it and you sink.
+    const deck = (lx, lz, r, ly, thick, tag) => this.obs.push(obAdd(x + lx, z + lz, r - .35, null, y0 + ly + thick * .5, 'tree:' + tag, y0 + ly - thick * .5 - .6, true));
     // buttress roots, the great tree's trick
     for (let i = 0; i < 8; i++) {
       const a = i / 8 * Math.PI * 2 + rnd(-.15, .15), out = rnd(11, 18), up = rnd(7, 13);
@@ -6226,14 +6243,14 @@ class MotherTree {
     }
     // THE CANOPY, well above the fort so the fort is IN the tree rather than on top of it.
     for (let i = 0; i < 4; i++) {
-      const a = i / 4 * Math.PI * 2 + rnd(-.3, .3), p0 = new THREE.Vector3(0, H - 4, 0), p1 = new THREE.Vector3(Math.cos(a) * 14, H + 6, Math.sin(a) * 14);
+      const a = i / 4 * Math.PI * 2 + rnd(-.3, .3), p0 = new THREE.Vector3(0, H - 8, 0), p1 = new THREE.Vector3(Math.cos(a) * 15, H + 4, Math.sin(a) * 15);
       const dir = p1.clone().sub(p0), L = dir.length(); dir.normalize();
       const limb = put(mesh(G.cylT, bark, 1.6, L, 1.6, 0, 0, 0));
       limb.position.copy(p0).lerp(p1, .5); limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     }
     for (let i = 0; i < 7; i++) {
       const a = rnd(6.283), r = rnd(10, 16), d = i ? rnd(6, 16) : 0;
-      const b = put(mesh(pick(G.blob), pick(M.elderLeaf), r, r * .6, r, Math.cos(a) * d, H + rnd(0, 8), Math.sin(a) * d));
+      const b = put(mesh(pick(G.blob), pick(M.elderLeaf), r, r * .6, r, Math.cos(a) * d, H - 2 + rnd(0, 8), Math.sin(a) * d));
       b.rotation.set(rnd(3), rnd(3), rnd(3));
     }
     flatten(this.g, () => false);
@@ -13031,7 +13048,14 @@ function updatePlayer(dt) {
     // lifted him, and he stood on dry land bobbing with a sea he was not in.
     const dry = h < SEA - .3 ? Math.max(deck, wy) : deck;
     const target = lerp(dry, Math.max(h, wy - depth), player.swim);
-    player.gy = lerp(player.gy, target, Math.min(1, dt * (player.swim > .5 ? 6 : 14)));   // ground snaps; water bobs
+    // UP IS INSTANT, DOWN EASES. It was a lerp both ways, and a lerp both ways is why landing
+    // on a platform sinks into it: the floor rises toward his feet at fourteen a second, so
+    // for a fifth of a second he stands below the deck he is standing on. You cannot sink
+    // into a step in the real world and there is nothing to smooth on the way up -- the
+    // easing exists for walking OFF things, so that a lip does not drop him a foot at a time.
+    // In the water it still bobs both ways, because there the floor really does move.
+    if (player.swim > .5) player.gy = lerp(player.gy, target, Math.min(1, dt * 6));
+    else player.gy = target > player.gy ? target : lerp(player.gy, target, Math.min(1, dt * 14));
     const canLead = RIG.jumpLead > 0 && player.rigH && player.rigH.acts.jumpStart;
     // In the water there is nothing to crouch against, so a surface leap goes straight up
     // with less push — enough to break out and land back in, or onto a bank.
@@ -13635,6 +13659,9 @@ function syncSize() {
   const sc = typeof screen !== 'undefined' ? screen : null;
   if (sc && sc.height > h && sc.height < h * 1.34) h = sc.height;
   if (sc && sc.width > w && sc.width < w * 1.34) w = sc.width;
+  // the probe, which is what the canvas rule's own 100vw/100vh will resolve to
+  const pr = document.getElementById('vprobe');
+  if (pr) { w = Math.max(w, pr.offsetWidth); h = Math.max(h, pr.offsetHeight); }
   w |= 0; h |= 0;
   // The page's own box first, and every frame rather than only when the size changes: the
   // offset moves on its own while the bar slides, without the height ever differing. Body is
@@ -14042,7 +14069,12 @@ function updateHUD() {
     // the lens is actually being drawn at. Whichever of the first four is smaller than the
     // last is the browser's own chrome, and the last one is what has to cover the glass.
     `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}<br>` +
-    `doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight} scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'} lens ${_vw}x${_vh}`;
+    `doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight} scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'} lens ${_vw}x${_vh}<br>` +
+    // The four numbers that decide whether the background is his galaxy or a black hole:
+    // how much plate is being asked for, whether the texture arrived, and the two terms that
+    // open its roll-off. If plate reads 0.00 the image has not loaded; if space and high are
+    // both near 0 while the camera is high, the altitude terms are what is wrong.
+    `plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}`;
   const era = eraName(); if (era !== world.lastEra) { world.lastEra = era; eraEl.textContent = era; }
 }
 setInterval(updateHUD, 600); updateHUD();
