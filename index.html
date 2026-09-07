@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c29';
+const BUILD = 'c30';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3569,8 +3569,13 @@ function boneWeights(root) {
       if (w <= 1e-4) continue;
       const b = bones[si.array[i * k + j]];
       if (!b) continue;
-      const a = out[b.name] || (out[b.name] = { x: 0, y: 0, z: 0, w: 0 });
-      a.x += pa.getX(i) * w; a.y += pa.getY(i) * w; a.z += pa.getZ(i) * w; a.w += w;
+      const a = out[b.name] || (out[b.name] = { x: 0, y: 0, z: 0, w: 0, L: 0, R: 0 });
+      const vx = pa.getX(i);
+      a.x += vx * w; a.y += pa.getY(i) * w; a.z += pa.getZ(i) * w; a.w += w;
+      // which HALF of the model this weight lands on, kept separately -- a centroid alone
+      // cannot tell a bone bound to the middle from one bound to both sides at once, and
+      // those two want completely different fixes
+      if (vx < -.15) a.L += w; else if (vx > .15) a.R += w;
     }
   });
   for (const n in out) { const a = out[n]; if (a.w > 0) { a.x /= a.w; a.y /= a.w; a.z /= a.w; } }
@@ -9811,12 +9816,17 @@ const RIG = {
     // console naming it. Silence was the real problem: an unweighted fin looked identical to
     // a working one from the game's side.
     const wc = boneWeights(inst);
-    const fins = [], dead = [];
+    const fins = [], dead = [], both = [];
     let glowEnt = null;
     inst.traverse(o => {
       if (o.isBone && DRONE.fin.match.test(o.name)) {
         const w = wc[o.name];
         if (!w || w.w < 1e-3) { dead.push(o.name); return; }
+        // Bound to BOTH halves is its own failure and its own message: one bone turning two
+        // mirrored fins turns them the same way, so one of them looks right and the other
+        // looks inverted. That is a vertex group that was mirrored and never renamed, and no
+        // amount of sign-handling here can fix it -- the two fins have to be two groups.
+        if (w.L > w.w * .2 && w.R > w.w * .2) both.push(o.name);
         fins.push({ b: o, rest: o.rotation.clone(), sgn: w.x >= 0 ? 1 : -1, kind: o.name.split('_')[0].toLowerCase() });
         return;
       }
@@ -9829,8 +9839,12 @@ const RIG = {
       }
     });
     if (dead.length) console.warn('[drone] no skin weight on ' + dead.join(', ')
-      + ' -- those fins are in the file but bound to nothing, so nothing will move them. '
-      + 'node tools/weights.js models/drone_rigged.glb says what each bone actually drives.');
+      + ' -- those fins are in the file but bound to nothing, so nothing will move them.');
+    if (both.length) console.warn('[drone] ' + both.join(', ')
+      + ' is weighted to BOTH sides of the model at once, so it turns two mirrored fins the '
+      + 'same way and one of them comes out inverted. Split that vertex group by X.');
+    if (dead.length || both.length)
+      console.warn('[drone] node tools/weights.js models/drone_rigged.glb says what every bone actually drives.');
     lamp.add(inst); player.drone = inst; player.fins = fins; player.droneGlow = glowEnt; bulb.visible = false;
   });
   g.traverse(m => { if (m.isMesh) m.castShadow = true; });

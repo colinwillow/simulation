@@ -34,7 +34,7 @@ const draco = require('draco3dgltf');
     }
     set++;
   }
-  console.log('bone            rest X    the fin it MOVES (weighted centroid)   weight   agree?');
+  console.log('bone            rest X    the fin it MOVES (weighted centroid)   weight   verdict');
   let bad = 0;
   for (let i = 0; i < joints.length; i++) {
     const n = joints[i], a = acc[i];
