@@ -990,7 +990,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c00';
+const BUILD = 'c01';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4070,6 +4070,14 @@ const TINT = {
   col: col('#dfe8ea'),                   // and what the rest of it is pulled toward
   lo: .05, hi: .30, k: 1.5,              // the glow key: warmth from, warmth to, how hard
   lum: [.34, .78],                       // and only where the texel is bright as well as warm
+  // WHICH WAY THE KEY POINTS. 'warm' picks the yellows, oranges and reds -- the right answer
+  // for a plant, a crystal or a rock, where the hot bits are the warm bits. It is the wrong
+  // answer for anything whose lights are COOL, because a cyan lamp on a tan hull keys as the
+  // hull. The drone is exactly that model: 53% of its map keys warm at the default threshold
+  // (the whole beige shell, plus a big orange panel) and the turquoise it is actually lit
+  // with keys at -0.75. Flipping the key to `min(b-r, g-r)` separates them completely --
+  // beige lands at -0.13, orange at -0.75, the turquoise at +0.75, and nothing sits between.
+  key: 'warm',
 };
 // One material per (model, region). A material is shared by every instance of a URL, so a
 // per-region tint cannot be a uniform on it -- but there are only ever seven regions and a
@@ -4100,7 +4108,7 @@ function worldTint(mat, cfg) {
     uKeep: { value: cfg.keep }, uTint: { value: cfg.col },
     uLumA: { value: cfg.lum[0] }, uLumB: { value: cfg.lum[1] },
   };
-  mat.userData.shaderTag = 'tint';
+  mat.userData.shaderTag = 'tint' + (cfg.key === 'cool' ? 'C' : '');
   mat.onBeforeCompile = sh => {
     // An instance hook shadows the prototype's, so the see-through hole has to be chained on
     // by hand -- and skipped on the same terms the prototype skips it. Anything riding with
@@ -4108,12 +4116,15 @@ function worldTint(mat, cfg) {
     // radius all day, and cutting it would dissolve the one thing lighting him.
     if (!mat.userData.noHole) holePatch(sh);
     for (const k in uni) sh.uniforms[k] = uni[k];
+    const KEY = cfg.key === 'cool'
+      ? 'min(diffuseColor.b - diffuseColor.r, diffuseColor.g - diffuseColor.r)'
+      : 'min(diffuseColor.r - diffuseColor.b, diffuseColor.g - diffuseColor.b)';
     sh.fragmentShader = 'uniform float uLo, uHi, uK, uKeep, uLumA, uLumB;\nuniform vec3 uTint;\nfloat _glowK;\n'
       + sh.fragmentShader
         .replace('#include <color_fragment>', `#include <color_fragment>
       {
         float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-        float warm = min(diffuseColor.r - diffuseColor.b, diffuseColor.g - diffuseColor.b);
+        float warm = ${KEY};
         _glowK = smoothstep(uLo, uHi, warm) * smoothstep(uLumA, uLumB, lum);
         // the body: nearly all the way to grey, then stained the world's colour
         vec3 body = mix(vec3(lum), diffuseColor.rgb, uKeep) * uTint;
@@ -4123,7 +4134,12 @@ function worldTint(mat, cfg) {
       totalEmissiveRadiance += diffuseColor.rgb * _glowK * uK;`);
   };
   mat.needsUpdate = true;
-  GLOW_UNI.push({ uni, k: cfg.k });
+  // The entry, not just the uniforms: `k` is this material's share of the island-wide dusk
+  // ramp, and something that wants to brighten on its own (the drone's eye with its lamp)
+  // sets it here and lets updateSky keep applying the time of day on top.
+  const ent = { uni, k: cfg.k };
+  GLOW_UNI.push(ent);
+  mat.userData.glow = ent;
   return uni;
 }
 // Hangs a static model on a plant and darkens the primitives it stood in for. No rig, no
@@ -8090,15 +8106,20 @@ addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive
 // card shrinks to something that reads as a lens flare rather than a flashbang, and the
 // light becomes a wide cone aimed past him at the ground he is walking on.
 const DRONE = {
-  url: 'models/alien_drone.glb',
+  url: 'models/drone_rigged.glb',
   size: 1.25,                        // across its longest axis, in world units
   turn: 3.4,                         // how briskly it swings onto the way it is going
-  // Only the warm, bright texels glow -- the eye and the jets on its flanks. Everything else
-  // is desaturated and stained cool. That is the same treatment every plant and rock on the
-  // island gets, which is what makes a generated model belong here instead of looking bolted
-  // on: the machinery is worldTint, and all this does is key it a little tighter, because a
-  // drone has two small hot spots rather than a canopy full of them.
-  glow: { lo: .04, hi: .21, k: 1.9, keep: .5, col: col('#c6d2de'), lum: [.24, .96] },
+  // The eye and the strips down its fins glow; the shell does not. Same worldTint machinery
+  // every plant and rock gets -- but keyed the other way round, because this drone's lights
+  // are COOL and its hull is warm, which is the exact reverse of a plant.
+  //
+  // Measured off the map rather than guessed: the beige shell is 30% of the atlas and keys
+  // warm at +0.13, an orange panel is another 10% at +0.38, and the turquoise is 1.5% at
+  // +0.75 on the cool key and -0.75 on the warm one. Under the old warm key more than half
+  // the texels lit and the whole machine became a lamp. Under the cool key the shell sits at
+  // -0.13, the orange at -0.75, and only the turquoise is anywhere near the threshold --
+  // so lo/hi can be wide and lazy and still cut in exactly one place.
+  glow: { key: 'cool', lo: .22, hi: .55, k: 2.4, keep: .5, col: col('#c6d2de'), lum: [.28, .96] },
   // A wide-aperture lamp instead of a bare bulb. A point light at his shoulder blew him out
   // from a foot away, and it got worse the closer the spring pulled it in. A cone aimed past
   // him at the ground lights the scene he is standing in and only ever grazes the body.
@@ -8112,6 +8133,36 @@ const DRONE = {
   // spring that normally holds it beside him is slackened while it flies so it actually
   // travels instead of being yanked back on the next frame.
   knock: { push: 17, lift: 7.5, time: 1.5, spin: 14, slack: .1, at: 5 },
+  // ---- the fins ----
+  // Six bones came with the model: one fin out each side, two antennae on top, two small
+  // stabilisers underneath. The file carries no clips at all, so none of this is playback --
+  // every angle below is read back off what the machine is actually doing, the way the ship's
+  // nozzles and legs are. That is the whole point. A fin that rakes because the drone is
+  // moving reads as a machine; a fin on a sine wave reads as decoration, and you can tell
+  // the difference instantly without knowing why.
+  //
+  // AXES. The bones hang off a root whose world rotation is identity (the Armature's quarter
+  // turn and the root's cancel exactly), so a bone's local X, Y and Z are the drone's own
+  // axes and +Z is the way it faces -- the same convention as everything else in this file.
+  // A rod pointing UP and a rod pointing DOWN sweep opposite ways about X, which is why the
+  // antennae take a negative sweep and the belly fins a positive one to both trail backward.
+  //
+  // SIDES come off each bone's rest X, never its name: the export calls the +X flank fin
+  // `side_right` and the +X antenna `top_left`, so the names contradict each other and the
+  // geometry does not. Reading the position cannot be got wrong.
+  fin: {
+    match: /^(side|top|bottom)_(left|right)$/i,
+    ease: 7,                           // how fast a control chases what the drone is doing
+    at: 9,                             // the speed that fully rakes them back
+    sideSweep: .34, topSweep: .42, botSweep: .26,
+    bank: 1.15, bankMax: .42,          // the flank pair rolls into a turn
+    dihedral: .30, climbAt: 11,        // and lifts on a climb, drops on a dive
+    splay: .34,                        // the antennae open out when the lamp is up
+    flare: .55,                        // and the belly fins spread when the claw goes down
+    idle: .055, idleRate: 1.3,         // the slow breathe that keeps it alive parked
+    twitch: .085, twitchRate: 5.1,     // the antennae are the fast pair
+    hit: 1.0,                          // knocked flying, everything splays
+  },
 };
 
 // ---------- the wanderer: a body to move through the world with ----------
@@ -8269,16 +8320,29 @@ const RIG = {
     const k = DRONE.size / (w || 1);
     inst.scale.setScalar(k);
     inst.position.y = -(e.box.max.y + e.box.min.y) * .5 * k;
+    // The six fins, and each one's rest pose to move away from. Which side a fin is on comes
+    // off its rest X and nothing else -- see the note on DRONE.fin. `kind` is the row it is
+    // in, which is all the poser needs to know about it.
+    const fins = [];
+    let glowEnt = null;
     inst.traverse(o => {
+      if (o.isBone && DRONE.fin.match.test(o.name)) {
+        fins.push({ b: o, rest: o.rotation.clone(), sgn: o.position.x >= 0 ? 1 : -1, kind: o.name.split('_')[0].toLowerCase() });
+        return;
+      }
       if (!o.isMesh) return;
       o.castShadow = false;                          // it is a lamp; its own shadow is noise
-      for (const m of [].concat(o.material)) if (m && !m.userData.droneTint) { m.userData.droneTint = 1; worldTint(m, DRONE.glow); }
+      for (const m of [].concat(o.material)) {
+        if (!m || m.userData.droneTint) continue;
+        m.userData.droneTint = 1; worldTint(m, DRONE.glow);
+        glowEnt = m.userData.glow;
+      }
     });
-    lamp.add(inst); player.drone = inst; bulb.visible = false;
+    lamp.add(inst); player.drone = inst; player.fins = fins; player.droneGlow = glowEnt; bulb.visible = false;
   });
   g.traverse(m => { if (m.isMesh) m.castShadow = true; });
   scene.add(g);
-  Object.assign(player, { g, ph, legs, lamp, gl, light, spot, bulb, drone: null, rig: null, rigH: null, mixer: null, acts: null, blink: null, speed: 0 });
+  Object.assign(player, { g, ph, legs, lamp, gl, light, spot, bulb, drone: null, fins: null, droneGlow: null, rig: null, rigH: null, mixer: null, acts: null, blink: null, speed: 0 });
   const sp = world.spawn || { x: 0, z: 0 };
   player.pos.set(sp.x, Math.max(height(sp.x, sp.z), SEA), sp.z);
   g.position.copy(player.pos);
@@ -10494,11 +10558,19 @@ function updateFairy(dt) {
     p.drone.rotation.z = Math.sin(f.t * 1.7) * .06 - clamp(sp2 * .035, 0, .22) + f.roll;
     p.drone.rotation.x = clamp(-f.vel.y * .05, -.28, .28) + f.roll * .6;
     if (f.spin < .05 && f.roll) f.roll = lerp(f.roll, 0, Math.min(1, dt * 3));
+    // `d` is how far off its heading it still is, which is a better turn signal than the
+    // yaw rate: it leans into the corner while it is still coming round, not after.
+    stepFins(dt, sp2, d);
   }
   // The fill only has to keep the hull off black; the cone does the lighting, and because it
   // points past him rather than at him, drifting close no longer washes him out.
   p.light.intensity = lerp(DRONE.fill.day, DRONE.fill.night, world.night) * f.lit * (f.lampOff ? .06 : 1);
   p.spot.intensity = lerp(DRONE.spot.day, DRONE.spot.night, world.night) * f.lit * (f.lampOff ? .04 : 1);
+  // The eye and the fin strips are the only turquoise on the map, so they are the only thing
+  // the cool key lifts -- and tying their strength to the lamp is what makes shuttering it
+  // show on the machine instead of only on the ground. updateSky keeps applying the time of
+  // day on top of whatever is set here.
+  if (p.droneGlow) p.droneGlow.k = DRONE.glow.k * (f.lampOff ? .34 : .72 + .5 * f.lit);
   p.gl.scale.setScalar((.9 + world.night * 1.1) * (.45 + .55 * f.lit));
   p.gl.material.opacity = .4 * (.4 + .6 * f.lit);
   fairyTrail.rate = p.free ? 0 : 18 + Math.min(34, f.vel.length() * 3.4);
@@ -10532,6 +10604,48 @@ function updateRig(dt) {
     // Holding the stick out with the blaster up is a wind-up, and he stands like it.
     aim: p.aiming ? 1 : 0,
   });
+}
+
+// The fins. Six bones, no clips: everything here is the machine's own state read back as
+// posture. Controls are smoothed on their way to a bone, like the ship's joints, so a dart or
+// a hard turn bends the fins instead of snapping them.
+function stepFins(dt, sp, turn) {
+  const p = player, f = fairy, F = DRONE.fin, fins = p.fins;
+  if (!fins || !fins.length) return;
+  const c = f.finC || (f.finC = { sweep: 0, bank: 0, dih: 0, splay: 0, flare: 0, hit: 0 });
+  // What it is doing this frame, as a handful of numbers the fins can be posed from.
+  const want = {
+    sweep: clamp(sp / F.at, 0, 1),
+    bank: clamp(turn * F.bank, -F.bankMax, F.bankMax),
+    dih: clamp(f.vel.y / F.climbAt, -1, 1),
+    // The lamp: brighter at night, off entirely when it is shuttered.
+    splay: f.lampOff ? 0 : (.3 + .7 * world.night) * f.lit,
+    flare: claw.job ? 1 : clamp(claw.out / 1.5, 0, 1),
+    hit: f.hit > 0 ? 1 : 0,
+  };
+  const k = Math.min(1, dt * F.ease);
+  for (const n in want) c[n] = lerp(c[n], want[n], k);
+  // The breathe fades out as it picks up speed -- a machine holding station fidgets, a
+  // machine going somewhere holds its surfaces still.
+  const breathe = Math.sin(f.t * F.idleRate) * F.idle * (1 - c.sweep * .6);
+  const twitch = Math.sin(f.t * F.twitchRate + 1.1) * F.twitch;
+  for (const fn of fins) {
+    const b = fn.b, r = fn.rest, s = fn.sgn;
+    if (fn.kind === 'side') {
+      // rakes back with speed; rolls into the turn as a pair; opens as a dihedral on a climb
+      b.rotation.y = r.y + s * (F.sideSweep * c.sweep + F.hit * c.hit * .5);
+      b.rotation.z = r.z + c.bank + s * (F.dihedral * c.dih + breathe);
+    } else if (fn.kind === 'top') {
+      // an antenna points UP, so a positive X sweeps it forward: trailing back is negative
+      b.rotation.x = r.x - F.topSweep * c.sweep + twitch;
+      b.rotation.y = r.y + s * (F.splay * c.splay + F.hit * c.hit);
+      b.rotation.z = r.z + s * breathe * 1.6;
+    } else {
+      // and a fin pointing DOWN is the mirror of that: positive X is what trails it
+      b.rotation.x = r.x + F.botSweep * c.sweep;
+      b.rotation.z = r.z + s * (F.flare * c.flare + breathe) + c.bank * .4;
+    }
+  }
 }
 
 // ---------- the drone's panel ----------
