@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c20';
+const BUILD = 'c21';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8557,10 +8557,10 @@ const DIO_BODIES = [
   // one model is the brown lump bottom left, the purple moon bottom right and the little grey
   // ones -- which is also how the reference does it: the same rock at four sizes.
   { sx:  -.90, sy: -.98, d:  64, rf: .60,  model: 'models/cratered_asteroid.glb', tint: '#b09678' },
-  { sx:  1.00, sy:-1.02, d:  76, rf: .64,  model: 'models/cratered_asteroid.glb', tint: '#9b8cc4' },
+  { sx:  1.00, sy:-1.02, d:  76, rf: .64,  model: 'models/purple_moon.glb' },        // bottom right, its own colour
   { sx:   .50, sy:  .66, d: 320, rf: .13,  model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },
   { sx:  -.82, sy: -.34, d: 170, rf: .075, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },
-  { sx:   .90, sy: -.60, d: 185, rf: .085, model: 'models/cratered_asteroid.glb', tint: '#968ea0' },
+  { sx:   .90, sy: -.60, d: 185, rf: .085, model: 'models/purple_moon.glb' },
   { sx:  -.62, sy: -.80, d: 210, rf: .055, model: 'models/cratered_asteroid.glb', tint: '#8d867c' },
 ];
 
