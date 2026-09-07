@@ -4,6 +4,7 @@
   "description": "Tooling for the Plutopia simulation. The game itself needs none of this.",
   "scripts": {
     "check:syntax": "node tools/syntax.js index.html",
+    "check:intro": "node tools/intro.js index.html",
     "check:shader": "node tools/glslcheck.js index.html",
     "check:terrain": "node tools/terrain.js index.html",
     "check:sim": "node tools/headless.js index.html 6000",

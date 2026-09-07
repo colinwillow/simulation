@@ -24,6 +24,13 @@ Prefer, in this order: read the code; read the asset directly (`@gltf-transform/
 on a GLB answers rig questions in seconds); ship it and let him look. He has the game
 open on a phone. He is faster than every tool in this directory.
 
+**Always run, alongside the syntax gate, on any change under `INTRO`, `DIO*`, `title*` or
+`renderPost`:** `npm run check:intro` (~3s). Every other harness here sets `INTRO.on = false`
+before it does anything, so the title screen was the one path in the file that had never been
+run outside a browser -- and a throw there is invisible: the loop re-arms on its first line, so
+it repeats forever, the boot card never lifts, and all the owner sees is the studio splash. A
+whole build was lost to `dioBayWorks is not defined` that this catches in three seconds.
+
 **Do not run, unless he explicitly asks:**
 - `tools/shot.js` screenshots — ~10 minutes each under swiftshader.
 - `npm run check:gait` — **minutes, not seconds.** An earlier version of this file
