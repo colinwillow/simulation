@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c28';
+const BUILD = 'c29';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3553,6 +3553,29 @@ function loadModel(url, cb) {
 //
 // The rule is narrower than "every joint", though, and getting that wrong is what put the
 // blaster on the floor for a build -- see the note on the weight test below.
+// The weighted centroid of the vertices each bone moves, and how much weight it carries.
+// Same question jointDrift asks -- what is this bone actually attached to -- answered for
+// placement rather than for drift.
+function boneWeights(root) {
+  const out = {};
+  root.traverse(o => {
+    if (!o.isSkinnedMesh || !o.skeleton) return;
+    const bones = o.skeleton.bones, g = o.geometry;
+    const si = g.attributes.skinIndex, sw = g.attributes.skinWeight, pa = g.attributes.position;
+    if (!si || !sw || !pa) return;
+    const n = si.count, k = si.itemSize;
+    for (let i = 0; i < n; i++) for (let j = 0; j < k; j++) {
+      const w = sw.array[i * k + j];
+      if (w <= 1e-4) continue;
+      const b = bones[si.array[i * k + j]];
+      if (!b) continue;
+      const a = out[b.name] || (out[b.name] = { x: 0, y: 0, z: 0, w: 0 });
+      a.x += pa.getX(i) * w; a.y += pa.getY(i) * w; a.z += pa.getZ(i) * w; a.w += w;
+    }
+  });
+  for (const n in out) { const a = out[n]; if (a.w > 0) { a.x /= a.w; a.y /= a.w; a.z /= a.w; } }
+  return out;
+}
 function jointDrift(root, anims, url) {
   // ONLY BONES THAT DEFORM SOMETHING. The first cut of this took every skin joint, which put
   // the blaster on the floor: `weapon` and `weapon_direction` are in the joint list, so their
@@ -9780,11 +9803,21 @@ const RIG = {
     // The six fins, and each one's rest pose to move away from. Which side a fin is on comes
     // off its rest X and nothing else -- see the note on DRONE.fin. `kind` is the row it is
     // in, which is all the poser needs to know about it.
-    const fins = [];
+    // WHICH FIN A BONE DRIVES IS A FACT ABOUT THE WEIGHTS, not about the bone's name or where
+    // it sits. Both of those can disagree with the rig -- a fin bound to the bone on the other
+    // side is exactly the kind of mistake that gets made and then cannot be seen from here.
+    // So the side comes off the weighted centroid of the vertices each bone actually moves,
+    // and a bone with no weight at all is dropped rather than driven, with a line in the
+    // console naming it. Silence was the real problem: an unweighted fin looked identical to
+    // a working one from the game's side.
+    const wc = boneWeights(inst);
+    const fins = [], dead = [];
     let glowEnt = null;
     inst.traverse(o => {
       if (o.isBone && DRONE.fin.match.test(o.name)) {
-        fins.push({ b: o, rest: o.rotation.clone(), sgn: o.position.x >= 0 ? 1 : -1, kind: o.name.split('_')[0].toLowerCase() });
+        const w = wc[o.name];
+        if (!w || w.w < 1e-3) { dead.push(o.name); return; }
+        fins.push({ b: o, rest: o.rotation.clone(), sgn: w.x >= 0 ? 1 : -1, kind: o.name.split('_')[0].toLowerCase() });
         return;
       }
       if (!o.isMesh) return;
@@ -9795,6 +9828,9 @@ const RIG = {
         glowEnt = m.userData.glow;
       }
     });
+    if (dead.length) console.warn('[drone] no skin weight on ' + dead.join(', ')
+      + ' -- those fins are in the file but bound to nothing, so nothing will move them. '
+      + 'node tools/weights.js models/drone_rigged.glb says what each bone actually drives.');
     lamp.add(inst); player.drone = inst; player.fins = fins; player.droneGlow = glowEnt; bulb.visible = false;
   });
   g.traverse(m => { if (m.isMesh) m.castShadow = true; });
