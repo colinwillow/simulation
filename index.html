@@ -1142,7 +1142,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c74';
+const BUILD = 'c75';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -4023,13 +4023,24 @@ function skinTex(url) {
 // exporter happened to leave in the material's base colour factor.
 function applySkin(root, url) {
   const t = skinTex(url);
+  let noUV = 0, meshes = 0;
   root.traverse(o => {
     if (!o.isMesh) return;
+    meshes++;
+    // THE SILENT FAILURE THIS SETTING CAUSES. Turn materials off in the exporter and Blender
+    // has nothing left that references the UV map, so the TEXCOORD attribute can go with it --
+    // and a mesh with no UVs takes a texture perfectly happily and samples one corner of it
+    // for every pixel. That reads as "the skin is one flat colour", which is a much harder
+    // thing to work backwards from than an error. So it says so, once, by name.
+    if (!o.geometry || !o.geometry.attributes.uv) noUV++;
     for (const m of [].concat(o.material)) {
       if (!m || m.userData.noSkin) continue;
       m.map = t; m.color.setRGB(1, 1, 1); m.needsUpdate = true;
     }
   });
+  if (noUV) console.warn('[skin] ' + url + ': ' + noUV + ' of ' + meshes
+    + ' meshes have no UV map, so the skin will sample one texel. In Blender that is Data > Mesh > UVs,'
+    + ' and it usually goes missing because Materials was set to "No export" -- use Materials: Export with Images: None instead.');
   return root;
 }
 // Swap what everything wearing a model is painted with, live, from the console:
