@@ -1098,7 +1098,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c63';
+const BUILD = 'c64';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -8206,15 +8206,31 @@ function scatterDecor() {
     d.rotation.set(Math.PI / 2 + rnd(-.2, .2), rnd(3), rnd(3)); collect(bin, d);
     obAdd(p.x, p.z, 1.1, null, height(p.x, p.z) + .7);   // it is lying down; step over it
   }
+  addChunked(bin, true);
+}
+// The same ninety-unit cells layZones got in c58, for every other island-wide merge. Two
+// hundred boulders, two thousand reed quads and forty driftwood logs were going into a
+// handful of meshes whose bounding spheres covered the world, so every triangle in them was
+// submitted from everywhere. Same trade, same answer.
+const CHUNK_M = 90;
+function addChunked(bin, cast) {
   const grp = new THREE.Group(); grp.userData.flat = true;
-  for (const m of mergeBin(bin)) {
+  const cells = new Map();
+  for (const it of bin) {
+    const key = Math.floor(it.matrix.elements[12] / CHUNK_M) + ',' + Math.floor(it.matrix.elements[14] / CHUNK_M);
+    let a = cells.get(key); if (!a) cells.set(key, a = []);
+    a.push(it);
+  }
+  for (const a of cells.values()) for (const m of mergeBin(a)) {
     warpGeo(m.geometry);
+    m.geometry.computeBoundingSphere();
     // Two thousand reed blades laid flat against the tideline are a lot of shadow map for a
     // fringe of dark on wet sand. The boulders and the driftwood keep theirs.
-    if (m.material === M.reed) m.castShadow = false;
+    m.castShadow = !!cast && m.material !== M.reed; m.receiveShadow = true;
     grp.add(m);
   }
   scene.add(grp);
+  return grp;
 }
 // ---------- zones: arrangements, not scatter ----------
 // The island had exactly one placement rule -- find a legal spot at random, drop a thing on
@@ -12814,12 +12830,18 @@ const fairyTrail = new PSys({
 // seconds, on the on-screen log, naming the model and the formation that placed it and how
 // big its circle is against how big the thing looks. A phantom wall becomes a filename.
 const OBSAY = new Map();
+let obSayT = -99;
 function obSay(o, d) {
-  if (!KOBS) return;
-  const key = o.tag + '@' + o.x.toFixed(0) + ',' + o.z.toFixed(0);
+  // NOT BEHIND A FLAG ANY MORE. Four invisible walls have been reported by hand, at four
+  // coordinates, and each one cost a round of reading placement code to guess at. The game
+  // knows exactly what it stopped him with; it should simply say so. One line per collider
+  // per half minute and never more than one every six seconds, which is quieter than the
+  // island's own log and is only ever printed at the moment he is standing there wondering.
+  if (world.clock - obSayT < 6) return;
+  const key = (o.tag || 'x') + '@' + o.x.toFixed(0) + ',' + o.z.toFixed(0);
   const t = OBSAY.get(key) || -99;
-  if (world.clock - t < 5) return;
-  OBSAY.set(key, world.clock);
+  if (world.clock - t < 30) return;
+  OBSAY.set(key, world.clock); obSayT = world.clock;
   logMsg('blocked by ' + (o.tag || (o.owner ? o.owner.constructor.name : 'unknown'))
     + '  r ' + obRadP(o).toFixed(1) + (Math.abs(obRadP(o) - o.r) > .05 ? ' of ' + o.r.toFixed(1) + ' grown' : '') + '  top ' + (o.top === Infinity ? 'inf' : o.top.toFixed(1))
     + '  at ' + o.x.toFixed(0) + ',' + o.z.toFixed(0)
