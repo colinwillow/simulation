@@ -1098,7 +1098,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c64';
+const BUILD = 'c65';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -8157,7 +8157,13 @@ function scatterRocks() {
     e.root.updateMatrixWorld(true);
     e.root.traverse(o => { if (o.isMesh) parts.push({ geo: o.geometry, mat: o.material, m: o.matrixWorld.clone() }); });
     if (!parts.length) return;
-    const sz = e.box.getSize(new THREE.Vector3()), h0 = Math.max(1e-4, sz.y), w0 = Math.max(sz.x, sz.z);
+    // THE MEAN, NOT THE MAX -- and this is the third and last place with this bug in it. A
+    // collider is a circle; an elongated model is not, so a circle drawn round the LENGTH
+    // circumscribes the silhouette and you are stopped units out from thin air. zPut was fixed
+    // for it in c09 and placeProp in c54; scatterRocks kept the max the whole time, and
+    // scatterRocks is the one that spreads model rocks over the WHOLE island, which is why
+    // these keep turning up in open ground in a different region every time.
+    const sz = e.box.getSize(new THREE.Vector3()), h0 = Math.max(1e-4, sz.y), w0 = (sz.x + sz.z) * .5;
     // a boulder is made of the region it is lying in, same as the cliff behind it
     const bin = [], place = new THREE.Matrix4(), q = new THREE.Quaternion(), spin = new THREE.Quaternion();
     const pos = new THREE.Vector3(), scl = new THREE.Vector3(), nrm = new THREE.Vector3();
@@ -8171,12 +8177,10 @@ function scatterRocks() {
       place.compose(pos, q, scl.setScalar(s));
       const reg = biomeAt(p.x, p.z).name;
       for (const pt of parts) bin.push({ geo: pt.geo, mat: tintFor(pt.mat, reg, { keep: .3, k: .5 }), matrix: place.clone().multiply(pt.m) });
-      obAdd(p.x, p.z, w0 * s * .42, null, gy - sunk + H * .96);
+      obAdd(p.x, p.z, w0 * s * .42, null, gy - sunk + H * .96, 'rock:' + url.replace(/^.*\//, '').replace(/\.glb$/, ''));
     }
     if (!bin.length) return;
-    const grp = new THREE.Group(); grp.userData.flat = true;
-    for (const m of mergeBin(bin)) { warpGeo(m.geometry); grp.add(m); }
-    scene.add(grp);
+    addChunked(bin, true);
   });
 }
 function scatterDecor() {
