@@ -1051,7 +1051,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c54';
+const BUILD = 'c55';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8388,7 +8388,11 @@ function showObstacles() {
     const gy = groundY(o.x, o.z);
     const inf = !isFinite(o.top);
     const h = inf ? 14 : Math.max(.35, o.top - gy);
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(o.r, o.r, h, 20, 1, true), inf ? cap : mat);
+    // The LIVE radius, so the ring is the thing that actually stops you rather than the
+    // thing it will one day be. A drawer that shows the adult circle round a sprout is a
+    // drawer that agrees with the bug.
+    const rr = obRad(o);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rr, rr, h, 20, 1, true), inf ? cap : mat);
     m.position.set(o.x, gy + h * .5, o.z);
     scene.add(m); out.push(m);
   }
@@ -12523,16 +12527,27 @@ function obSay(o, d) {
   if (world.clock - t < 5) return;
   OBSAY.set(key, world.clock);
   logMsg('blocked by ' + (o.tag || (o.owner ? o.owner.constructor.name : 'unknown'))
-    + '  r ' + o.r.toFixed(1) + '  top ' + (o.top === Infinity ? 'inf' : o.top.toFixed(1))
+    + '  r ' + obRad(o).toFixed(1) + (Math.abs(obRad(o) - o.r) > .05 ? ' of ' + o.r.toFixed(1) + ' grown' : '') + '  top ' + (o.top === Infinity ? 'inf' : o.top.toFixed(1))
     + '  you are ' + d.toFixed(1) + ' from its centre');
 }
 function resolvePlayer(x, z, feetY) {
   let nx = 0, nz = 0;
   for (let pass = 0; pass < 3; pass++) {
     obNear(x, z, player.rad + 6, o => {
-      if (o.r < OB_PLAYER.minOb) return;
+      // obRad, NOT o.r, AND THIS IS THE PHANTOM WALL. `r` is the collider's ADULT radius;
+      // obRad scales it by how grown the thing actually is (.12 + .88 * growth). Every other
+      // reader in the file goes through obRad -- the creatures, the bolt, the net, obClear,
+      // standOn, even the debug drawer -- and this one function, the one that stops the
+      // PLAYER, read the raw number.
+      // So a seed that took an hour ago is a sprout you can barely see with a full-grown
+      // tree's collider round it. The island plants continuously; that is a new invisible
+      // wall in open ground every few minutes, in a different place each time, which is
+      // exactly "random invisible geometry". The minOb filter had it too, so a sapling whose
+      // ADULT radius clears .9 was being collided with at 12% of its size.
+      const rr = obRad(o);
+      if (rr < OB_PLAYER.minOb) return;
       if (feetY + OB_PLAYER.climb > o.top) return;   // low enough to walk up onto: nothing to hit
-      const r = o.r + player.rad;
+      const r = rr + player.rad;
       let dx = x - o.x, dz = z - o.z, d = Math.hypot(dx, dz);
       if (d < r) {
         if (d < 1e-3) { dx = 1; dz = 0; d = 1; }
