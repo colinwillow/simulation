@@ -1033,7 +1033,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c40';
+const BUILD = 'c41';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -1601,12 +1601,14 @@ const TOON = {
   k: 1,            // 0 = the old smooth falloff, 1 = fully banded
   bands: 2,        // two steps is the Wind Waker read: a lit side and a shadow side
   soft: .055,      // how hard each step's edge is. Toward 0 it is ink; toward .3 it is a fade
-  floor: .42,      // what the shadow band keeps of full light -- the "everything at 50%" idea
+  // .42 was most of why a flat meadow read as one bright sheet: with two bands and a floor
+  // that high there is no shape in level ground at all, whatever colour it is.
+  floor: .34,      // what the shadow band keeps of full light -- the "everything at 50%" idea
   rim: .26, rimP: 3.4,          // and a lit edge where the surface turns away from the lens,
   rimCol: col('#dcefff'),       // which is what reads as an outline without drawing one
 };
 const TOON_UNI = {
-  uToonK: { value: 1 }, uToonN: { value: 2 }, uToonSoft: { value: .055 }, uToonFloor: { value: .42 },
+  uToonK: { value: 1 }, uToonN: { value: 2 }, uToonSoft: { value: .055 }, uToonFloor: { value: .34 },
   uRim: { value: .26 }, uRimP: { value: 3.4 }, uRimCol: { value: TOON.rimCol },
 };
 function toonSync() {
@@ -2309,13 +2311,19 @@ const DEEP = (() => {
 // the only thing about it that matters, and stating it that way means the distance can move
 // without re-tuning anything. `yaw` is a bearing in the local frame and `pit` a height above
 // the horizon, so nothing here is below the sea or behind the world.
+// SIZES ARE FOR A TITLE SCREEN OR FOR A SKY, AND THOSE ARE NOT THE SAME NUMBERS. The title
+// frames a whole planet from six hundred units out and saturn can take a quarter of it; from
+// the ground the lens is a 46-degree portrait crop, so .150 of angular radius put a dark
+// brown mass across two thirds of the frame width with the sky behind it gone. A third of
+// that: still enormous next to a moon, still unmistakably not Earth, and the sky is a sky
+// again. Pitches raised with them, so nothing sits in the band you walk toward.
 const SKY_BODIES = [
-  { yaw: 0.62, pit: .30, ang: .150, model: 'models/saturn.glb', tilt: [.16, 0, .12] },  // the anchor, as it is up there
-  { yaw: 4.40, pit: .40, ang: .052, model: 'models/earth_planet.glb' },
-  { yaw: 2.45, pit: .17, ang: .068, model: 'models/purple_moon.glb' },
-  { yaw: 1.70, pit: .50, ang: .019, model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },
-  { yaw: 3.50, pit: .09, ang: .013, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },
-  { yaw: 5.35, pit: .22, ang: .028, model: 'models/purple_moon.glb' },
+  { yaw: 0.62, pit: .46, ang: .055, model: 'models/saturn.glb', tilt: [.16, 0, .12] },
+  { yaw: 4.40, pit: .52, ang: .022, model: 'models/earth_planet.glb' },
+  { yaw: 2.45, pit: .30, ang: .027, model: 'models/purple_moon.glb' },
+  { yaw: 1.70, pit: .62, ang: .009, model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },
+  { yaw: 3.50, pit: .22, ang: .007, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },
+  { yaw: 5.35, pit: .38, ang: .013, model: 'models/purple_moon.glb' },
 ];
 const SKYB = { g: null, mats: [] };
 function buildSkyBodies() {
@@ -2384,9 +2392,18 @@ function buildSkyBodies() {
 // recognising -- which is exactly the wrong sky for the shot the title screen makes, and it is
 // the second thing after the tint that made the island look like a different game. It is
 // turned down rather than off: above the horizon it is also the only distant land there is.
+// THE GROUND, which is half of every frame and was the palest thing in it. The terrain's
+// albedo is built out of P -- deliberately near-neutral, because the plan was for the region
+// to supply the colour -- and then the region gets a stain of only BIOME_LOOK.k times the
+// region strength on top, which on the coast is about a quarter. So three quarters of the
+// biggest surface in the game was a grey-tan with the saturation taken out of it on purpose,
+// and no amount of work on the props was ever going to answer that.
+// `gsat` pushes the saturation back up and `gmul` takes the brightness down, both in the
+// terrain's own shader rather than in the baked vertex colour, so they are live: gsat 1 and
+// gmul 1 is the ground exactly as it was.
 const LOOKS = {
-  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0 },
-  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .30, plate: .55 },
+  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0, gsat: 1, gmul: 1 },
+  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .30, plate: .55, gsat: 1.85, gmul: .78 },
 };
 const LOOK = Object.assign({ mode: 'title' }, LOOKS.title);
 function setLook(m) { if (LOOKS[m]) { LOOK.mode = m; Object.assign(LOOK, LOOKS[m]); } return LOOK.mode; }
@@ -2577,7 +2594,26 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
   terrainGeo.setAttribute('hgt', new THREE.BufferAttribute(hgt, 1));
   terrainGeo.computeVertexNormals();
 }
+// The one place the ground's colour can be changed without rebuilding the whole vertex
+// buffer. worldTint does the opposite of this to every prop -- pulls it toward grey and
+// stains it -- and the terrain never went through it at all, which is why turning that off
+// in c37 made every model vivid and left the ground exactly as washed as it always was.
+const GROUND_UNI = { uGSat: { value: 1 }, uGMul: { value: 1 } };
+function groundPatch(sh) {
+  sh.uniforms.uGSat = GROUND_UNI.uGSat; sh.uniforms.uGMul = GROUND_UNI.uGMul;
+  sh.fragmentShader = 'uniform float uGSat, uGMul;\n' + sh.fragmentShader
+    .replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        // Away from grey rather than toward it, and darker with it: saturating alone only
+        // makes a pale colour a pale colour with a tint, and this ground is pale because it
+        // is bright, not because it is neutral.
+        float glum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+        diffuseColor.rgb = max(vec3(0.0), mix(vec3(glum), diffuseColor.rgb, uGSat)) * uGMul;
+      }`);
+}
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 });
+terrainMat.userData.shaderTag = 'ground';
+terrainMat.onBeforeCompile = sh => { toonPatch(sh); groundPatch(sh); };
 const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 terrain.material.userData.noHole = true;
 terrain.receiveShadow = true; terrain.userData.flat = true; scene.add(terrain);   // built on the sphere already
@@ -2830,6 +2866,12 @@ const grassUni = { uT: { value: 0 }, uWind: { value: new THREE.Vector3(1, 0, 0) 
 const grassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: .92 });
 grassMat.userData.shaderTag = 'grass';
 grassMat.onBeforeCompile = s => {
+  // AND IT NEVER HAD EITHER OF THESE. An instance hook shadows the prototype's completely,
+  // which is the landmine written up in CLAUDE.md, and this material has carried one since
+  // long before the toon ramp existed -- so the blades have been the one surface on the
+  // island lit the old smooth way, and the one thing the see-through hole could not cut.
+  // They take the ground's lift too, or they read as pale straw over a green field.
+  toonPatch(s); holePatch(s); groundPatch(s);
   s.uniforms.uT = grassUni.uT; s.uniforms.uWind = grassUni.uWind;
   s.vertexShader = 'uniform float uT; uniform vec3 uWind;\n' + s.vertexShader.replace('#include <begin_vertex>', `
     #include <begin_vertex>
@@ -8643,6 +8685,7 @@ function updateSky() {
   M.skimmer.emissiveIntensity = lerp(.2, 1.4, world.night);
   M.drifter.emissiveIntensity = lerp(.15, 1.2, world.night);
   M.burrower2.emissiveIntensity = lerp(.2, 1.3, world.night);
+  GROUND_UNI.uGSat.value = LOOK.gsat; GROUND_UNI.uGMul.value = LOOK.gmul;
   for (const g of GLOW_UNI) {
     g.uni.uK.value = g.k * lerp(.55, 1.35, world.night);
     g.uni.uKeep.value = lerp(g.keep0, 1, LOOK.vivid);
