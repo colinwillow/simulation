@@ -1003,7 +1003,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c05';
+const BUILD = 'c06';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -5737,6 +5737,15 @@ class Ship {
   constructor(x, z, face) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.open = 0; this.bones = null;
     this.pad = this.pos.clone(); this.face = face;
+    // ITS HOME. The pad used to be wherever the last flight happened to put it down, so every
+    // sortie moved the ship -- and since the lap ends by falling out of the sky onto whatever
+    // is underneath, "wherever" was frequently the side of a hill. A ship has a berth. The
+    // site chosen at worldgen is the flattest of nine hundred candidates, and an unpiloted
+    // flight now always comes back to exactly it.
+    //
+    // Flying it yourself is the exception, and deliberately so: put it down somewhere new and
+    // that becomes the new berth. Relocating the ship is a thing you do, not a thing it does.
+    this.home = this.pos.clone(); this.homeFace = face;
     this.g = new THREE.Group(); this.g.position.copy(this.pos);
     alignTo(this.g, x, z, .9); this.g.rotateY(face);
     this.q0 = this.g.quaternion.clone();              // how it sits on the ground
@@ -5892,6 +5901,10 @@ class Ship {
       else this.hop = SHIP.hop;
     }
   }
+  // Put the pad back on the berth before an unpiloted flight. planFlight builds the whole
+  // path off this.pad, and the descent comes straight down onto it, so setting it here is
+  // the entire mechanism by which the lap ends where it started.
+  goHome() { this.pad.copy(this.home); this.face = this.homeFace; }
   begin(state) { this.state = state; this.t = 0; }
   // Climb in. The wanderer goes with the ship — his position rides along so everything
   // that follows him (fairy, motes, camera) follows the ship — and the hatch shuts.
@@ -6012,6 +6025,7 @@ class Ship {
         this.sagV = -1.6 - Math.abs(this.vel.y) * .12; this.vel.set(0, 0, 0);
         world.effects.push(new Burst(this.g.position.x, g2 + .4, this.g.position.z, '#cdbf9c', 12, 1.5));
         this.pos.copy(this.g.position); this.pad.copy(this.pos); this.pad.y = g2; this.face = this.heading;
+        this.home.copy(this.pad); this.homeFace = this.face;      // you flew it here; here is where it lives now
         const q = this.g.quaternion.clone(); this.g.quaternion.identity(); alignTo(this.g, this.pad.x, this.pad.z, .9); this.g.rotateY(this.face); this.q0.copy(this.g.quaternion); this.g.quaternion.copy(q);
         logMsg('Down. The jets wind down.');
       }
@@ -6048,6 +6062,7 @@ class Ship {
     if (this.state === 'landed') {
       c.throttle = 0; c.yaw = 0; c.pitch = 0; c.strafe = 0; c.gear = 0;
       if (SHIP.sortie && t > this.next && playerNear > SHIP.near + 4 && this.open < .05) {
+        this.goHome();
         this.planFlight(); this.begin('lift'); obRemove(this.ob); this.ob = null;
       }
     } else if (this.state === 'piloted') {
@@ -7635,12 +7650,49 @@ function layZones(M) {
   scene.add(grp);
 }
 
+// THE SHIP'S BERTH, worked out before anything else is placed and worked out the same way
+// every time. The site used to be the flattest of nine hundred Math.random draws -- and
+// nothing in this file is seeded, so the ship stood somewhere new on every page load, which
+// is exactly why it kept turning up halfway down a hillside. The terrain itself IS
+// deterministic (height() is fbm over a fixed function); it is only the placement that was
+// not. Scanning that terrain on a fixed lattice gives the same answer every time, so the
+// berth becomes a property of the world instead of a property of the reload.
+//
+// What it wants is what a pilot wants: above the tide, off the hills, flat underfoot, and
+// nothing rising within ten units of the feet.
+function findBerth() {
+  let best = -1e9, sp = null;
+  const S = 56, span = W * .60;
+  for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) {
+    const x = (i / (S - 1) - .5) * 2 * span, z = (j / (S - 1) - .5) * 2 * span;
+    const h = height(x, z);
+    if (h < 2.2 || h > 9.5) continue;
+    const sl = slope(x, z);
+    if (sl > .20) continue;
+    if (Math.hypot(x - SPIRE.x, z - SPIRE.z) < 60) continue;
+    let rough = 0;
+    for (let k = 0; k < 8; k++) {
+      const a = k / 8 * Math.PI * 2;
+      rough = Math.max(rough, Math.abs(height(x + Math.cos(a) * 10, z + Math.sin(a) * 10) - h));
+    }
+    if (rough > 2.4) continue;
+    const score = -sl * 12 - rough - Math.abs(h - 5) * .3;
+    if (score > best) { best = score; sp = { x, z }; }
+  }
+  return sp;
+}
+
 function populate() {
-  // the Elderwillow first, so everything else grows around it
+  // The berth first: everything else may be rolled fresh each load, but the one thing the
+  // player navigates by should be where they left it.
+  world.berth = findBerth();
+  const bp = world.berth;
+  // the Elderwillow next, so everything else grows around it
   let gp = null;
   for (let i = 0; i < 400 && !gp; i++) {
     const x = rnd(-W * .7, W * .7), z = rnd(-W * .7, W * .7), h = height(x, z);
-    if (h > 2.5 * RELIEF && h < 10 * RELIEF && slope(x, z) < .35 && Math.hypot(x - SPIRE.x, z - SPIRE.z) > 55) gp = { x, z };
+    if (h > 2.5 * RELIEF && h < 10 * RELIEF && slope(x, z) < .35 && Math.hypot(x - SPIRE.x, z - SPIRE.z) > 55
+      && (!bp || Math.hypot(x - bp.x, z - bp.z) > 46)) gp = { x, z };   // not on top of the pad
   }
   if (!gp) gp = randomLand(2.5, 10, .45, 400, 0);
   if (gp) { world.greatTree = new GreatTree(gp.x, gp.z); world.plants.push(world.greatTree); }
@@ -7664,20 +7716,24 @@ function populate() {
   for (let i = 0; i < 42; i++) { const p = randomLand(1.2, 12, .9); if (p) world.creatures.push(new Hopper(p.x, p.z)); }
   for (let i = 0; i < 3; i++) { const p = randomWater(SEA - 12); world.creatures.push(new Leviathan(p.x, p.z)); }
   // the camp, on a beach shelf
-  const cp = randomLand(1.3, 5, .5, 900, 6) || randomLand(1.2, 7, .7, 900, 4) || randomLand(1, 9, .9, 900, 2.5);
+  // and keep it off the pad: the ship is placed after this and adds its own collider then, so
+  // there is nothing here for obClear to have found.
+  let cp = null;
+  for (let a = 0; a < 40 && !cp; a++) {
+    const q = randomLand(1.3, 5, .5, 900, 6) || randomLand(1.2, 7, .7, 900, 4) || randomLand(1, 9, .9, 900, 2.5);
+    if (!q) break;
+    if (!bp || Math.hypot(q.x - bp.x, q.z - bp.z) > 30) cp = q;
+  }
   if (cp) { world.camp = new Campfire(cp.x, cp.z); world.structures.push(world.camp); }
-  // the ship, set down on the flattest open ground we can find near the camp
+  // The ship, on the berth found above. Its facing is off the terrain too -- turned to look
+  // back toward the middle of the island -- so nothing about where it sits or which way it
+  // points changes between one load and the next.
   {
-    let sp = null, best = 1e9;
-    for (let i = 0; i < 900; i++) {
-      const p = randomLand(1.6, 8, .28, 1, 7); if (!p) continue;
-      const d = cp ? Math.hypot(p.x - cp.x, p.z - cp.z) : 40;
-      if (d < 26 || d > 95 * RS) continue;         // the camp is further off on a bigger island
-      if (world.greatTree && Math.hypot(p.x - world.greatTree.pos.x, p.z - world.greatTree.pos.z) < 40) continue;   // it has to climb out past the crown
-      const sl = slope(p.x, p.z);
-      if (sl < best) { best = sl; sp = p; }
+    const sp = world.berth || randomLand(1.6, 8, .28, 900, 7);
+    if (sp) {
+      world.ship = new Ship(sp.x, sp.z, Math.atan2(-sp.x, -sp.z));
+      world.structures.push(world.ship);
     }
-    if (sp) { world.ship = new Ship(sp.x, sp.z, rnd(Math.PI * 2)); world.structures.push(world.ship); }
   }
   // the cave, on the steepest flank of the massif we can find
   let cv = null, cvS = 0;
@@ -7694,7 +7750,12 @@ function populate() {
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (height(x, z) < SEA - 9 && height(x + 38, z) < SEA - 4 && height(x - 38, z) < SEA - 4) ip = { x, z };
   }
-  if (ip) world.isle = new FloatingIsle(ip.x, ip.z, 78, Math.atan2(-ip.z, -ip.x));
+  // THERE ARE TWO OF THESE, and that is deliberate -- this one out over open water, and the
+  // one the title stands on over the hills inland. What was not deliberate is that they came
+  // out of the same generator at the same size, so from the title camera, which sees a very
+  // wide swathe of the world, they read as one island drawn twice. Smaller and lower fixes
+  // that: two landmarks at different scales, not a mirror.
+  if (ip) world.isle = new FloatingIsle(ip.x, ip.z, 54, Math.atan2(-ip.z, -ip.x), { R: 21 });
   // embers rising out of the chasm
   {
     const cx = CHASM.x, cz = CHASM.z, cy = height(cx, cz);
@@ -7731,11 +7792,22 @@ const blurMat = new THREE.ShaderMaterial({ uniforms: { tD: { value: null }, uDir
     c += (texture2D(tD,vUv+t*1.3846).rgb+texture2D(tD,vUv-t*1.3846).rgb)*0.3162;
     c += (texture2D(tD,vUv+t*3.2308).rgb+texture2D(tD,vUv-t*3.2308).rgb)*0.0702;
     gl_FragColor=vec4(c,1.0); }` });
+// WHAT COLOUR THE DARK IS. Now that the lift only reaches the shadows it can carry a real
+// hue without milking the picture, so this is a genuine choice rather than a fudge factor.
+// Violet by default, because it is what the sky is already doing overhead and the shadows
+// agreeing with the sky is how a night frame holds together. Swap the triple for another
+// mood -- they are linear RGB, so they look more saturated on screen than they read here:
+//   amber   [.052, .026, .008]      a warm dark, campfire and desert
+//   teal    [.008, .034, .042]      cold and wet, good over the swamp
+//   rose    [.048, .012, .032]      the crystal flats, pushed
+// `k` is the whole effect's volume: halve it if the blacks still read as too open, and
+// `knee` is how far up the picture it is allowed to climb before it stops.
+const DARK = { col: [.030, .012, .052], k: 1.0, knee: .17 };
 const compMat = new THREE.ShaderMaterial({ uniforms: {
     tD: { value: null }, tB: { value: null }, uStr: { value: .85 }, uVig: { value: .5 }, uNight: { value: 0 }, uT: { value: 0 },
-    uLift: { value: new THREE.Color(0, 0, 0) }
+    uLift: { value: new THREE.Color(0, 0, 0) }, uKnee: { value: .17 }
   }, vertexShader: VS, fragmentShader: `
-  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT; uniform vec3 uLift; varying vec2 vUv;
+  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT,uKnee; uniform vec3 uLift; varying vec2 vUv;
   float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
   void main(){
     vec3 c = texture2D(tD,vUv).rgb;
@@ -7755,13 +7827,19 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
     c = mix(vec3(l), c, 1.2 + uNight*0.14);               // saturation
     vec2 q = vUv-0.5; float v = 1.0 - dot(q,q)*(0.85+uVig*0.9);
     c *= clamp(v,0.0,1.0);
-    // THE BLACK POINT. Unlit ground was resolving to actual zero, and a screen full of pure
-    // black reads as a hole in the image rather than as somewhere dark -- there is nothing in
-    // it for the eye to hold. This lifts the floor to a colour instead: at c = 0 the frame
-    // sits on uLift, at c = 1 nothing has moved, and everything between is compressed by that
-    // much. A print black rather than a void. Deep violet-blue, because that is what the sky
-    // is doing overhead, and it comes up with the night -- daylight shadow keeps its depth.
-    c = c * (1.0 - uLift) + uLift;
+    // THE BLACK POINT, and it only touches the black. The first version of this was
+    // c * (1 - uLift) + uLift, which moves the WHOLE range: a highlight at 1.0 stays put but
+    // everything beneath it rises, so the midtones lose their separation and the picture goes
+    // milky. That is the wash -- not the colour, the reach.
+    //
+    // Keyed off luminance with a knee instead, the lift lands on the shadows and leaves the
+    // rest of the frame exactly as it was, so the bright things go back to being bright. And
+    // that is what buys the room to make it a real HUE rather than a grey nudge: a grey lift
+    // takes contrast away and gives nothing back, where a coloured one trades contrast for
+    // something to look at. Squared, so it is gone well before the midtones.
+    float sl = dot(c, vec3(0.2126,0.7152,0.0722));
+    float shd = 1.0 - smoothstep(0.0, uKnee, sl);
+    c += uLift * shd * shd;
     c = pow(max(c, 0.0), vec3(1.0/2.2));
     // DITHER BELONGS AFTER THE ENCODE. It used to sit above this line, in linear light, and
     // that is the whole of the "old fuzzy TV": a flat +/-0.006 of LINEAR is nothing in the
@@ -7813,7 +7891,8 @@ function renderPost() {
     // true black background is the subject rather than a hole in the picture -- lifting it
     // put a milky blue wash behind the planet. The lift is for standing on dark ground.
     const k = (.34 + .66 * world.night) * (1 - cave * .88) * (INTRO.on ? .12 : 1);
-    compMat.uniforms.uLift.value.setRGB(.014 * k, .017 * k, .034 * k);
+    compMat.uniforms.uLift.value.setRGB(DARK.col[0] * DARK.k * k, DARK.col[1] * DARK.k * k, DARK.col[2] * DARK.k * k);
+    compMat.uniforms.uKnee.value = DARK.knee;
   }
   renderer.setRenderTarget(null); renderer.render(quadScene, quadCam);
 }
@@ -8244,7 +8323,7 @@ function introFrame(dt) {
   // ship now, and is exactly the right thing for a title screen.
   const sh = world.ship;
   if (sh && sh.bones && sh.state === 'landed' && !player.aboard) {
-    sh.planFlight(); sh.begin('lift');
+    sh.goHome(); sh.planFlight(); sh.begin('lift');
     if (sh.ob) { obRemove(sh.ob); sh.ob = null; }
   }
 }
