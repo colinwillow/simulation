@@ -1040,7 +1040,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c46';
+const BUILD = 'c47';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3501,6 +3501,10 @@ function cullFar(dt) {
       const r = FAR[o.constructor.name];
       if (!r || !o.alive || !o.g) continue;
       if (tiny && TINY[o.constructor.name]) { o.g.visible = false; continue; }
+      // Never hide one that is in the air or in his arms: those two are the moments you are
+      // certainly looking at it, and a distance test on a body that is being moved by
+      // something other than its own legs is a test on a number that is mid-change.
+      if (o.fling || o.carried) { o.g.visible = true; continue; }
       const dx = o.pos.x - x, dz = o.pos.z - z;
       o.g.visible = dx * dx + dz * dz < r * r;
     }
@@ -4730,6 +4734,10 @@ const CREATURE_RIGS = {
 // there are no death clips and no ragdoll, and a tumbling rigid body reads better than a
 // walk cycle playing while something slides backwards.
 const _kbA = new THREE.Vector3(), _kbB = new THREE.Vector3();
+// Put ?knock on the URL and every thrown animal reports itself to the on-screen log three
+// times a second: how far it has actually travelled, how high it is, whether it is being
+// drawn, and what pivot it is turning about. Four numbers, on the phone, no console.
+const KDBG = /[?&]knock\b/.test(location.search);
 const KNOCK = {
   // Range goes as speed times airtime, and both used to divide by the animal's size -- so a
   // tinker went thirty-four units and a mossback went one, off numbers only 1.8x apart. The
@@ -4870,6 +4878,9 @@ class Creature {
   // 15.5 was the ceiling when the island's relief was a quarter shallower; left alone it now
   // fences every creature onto the coastal shelf.
   terrainOK(x, z) { if (Math.hypot(x, z) > PLANET.wander) return false; const h = height(x, z); if (this.flying) return true; if (this.aquatic) return h < SEA - 1.6; return h > SEA + .6 && h < 20 && slope(x, z) < 1.25; }
+  // Where a body IN THE AIR may be, which is a different question and has one answer: on the
+  // chart. Everything else terrainOK cares about is a fact about walking.
+  flyOK(x, z) { return Math.hypot(x, z) < PLANET.wander; }
   valid(x, z) { return this.terrainOK(x, z) && !this.blocked(x, z); }
   blocked(x, z, pad = 0) {
     if (this.flying) return false;
@@ -5045,18 +5056,39 @@ class Creature {
       // Skid along the edge rather than stopping dead on it: a straight step into the sea
       // still leaves the step along the shore available, and a mossback knocked near the
       // waterline used to travel one unit because both were thrown away together.
+      // AND THIS IS WHY THEY DO NOT FLY. terrainOK is a WALKING test -- above the tideline,
+      // under twenty units of height, and off anything steeper than 1.25 -- and it was being
+      // asked, every step, of a body in mid-air. Stand a creature anywhere in the highland,
+      // on any real slope, or within one step of the waterline, and EVERY candidate fails:
+      // both axes, every frame. So it never translates. It goes straight up off the hit,
+      // comes straight back down on the spot it was standing, and the arc that should have
+      // carried it thirty units happens entirely inside its own footprint.
+      // A thrown animal may pass over water it could not swim and rock it could not climb.
+      // What has to be somewhere it can stand is where it COMES DOWN, and that is checked at
+      // the landing instead.
       const nx = k.x + k.vx * dt, nz = k.z + k.vz * dt;
-      if (this.terrainOK(nx, nz)) { k.x = nx; k.z = nz; }
-      else if (this.terrainOK(nx, k.z)) { k.x = nx; k.vz *= -.2; }
-      else if (this.terrainOK(k.x, nz)) { k.z = nz; k.vx *= -.2; }
+      if (this.flyOK(nx, nz)) { k.x = nx; k.z = nz; }
+      else if (this.flyOK(nx, k.z)) { k.x = nx; k.vz *= -.2; }
+      else if (this.flyOK(k.x, nz)) { k.z = nz; k.vx *= -.2; }
       // Thrown flat into a cliff: it stops there and drops, rather than reversing a quarter of
       // its speed every substep, which just oscillates in place. A creature that reports being
       // thrown nowhere was pinned against something, which is a real thing to be.
       else { k.vx = k.vz = 0; if (!k.thud) { k.thud = 1; world.effects.push(new Burst(k.x, k.y + .5, k.z, '#cdbf9c', 7, .6)); } }
       k.y += k.vy * dt;
       k.rx += k.sx * dt; k.rz += k.sz * dt;
-      const g = groundY(k.x, k.z);
+      let g = groundY(k.x, k.z);
       if (k.y <= g && k.vy < 0) {
+        // Where it TOUCHES has to be ground this animal could stand on. It was allowed to
+        // fly over the sea; it is not allowed to come down in it. Walk back along the line it
+        // arrived on until the ground is somewhere it could have walked to.
+        if (!this.terrainOK(k.x, k.z)) {
+          for (let t = .12; t <= 1.0001; t += .12) {
+            const bx = lerp(k.x, this.lastGood.x, t), bz = lerp(k.z, this.lastGood.z, t);
+            if (this.terrainOK(bx, bz)) { k.x = bx; k.z = bz; break; }
+          }
+          g = groundY(k.x, k.z);
+          k.vx *= .3; k.vz *= .3;
+        }
         if (++k.hops < K.hops && -k.vy > K.stop) {
           k.y = g; k.vy = -k.vy * K.bounce; k.vx *= K.friction; k.vz *= K.friction;
           k.sx *= K.friction; k.sz *= K.friction;
@@ -5080,12 +5112,29 @@ class Creature {
     // its feet, which reads as a model on a stick: the head swings a body-length while the
     // toes stay put. Hold the hips where the upright body had them and let the rest swing
     // round that instead.
-    const hy = this.pivotY();
+    // A pivot that is not a number puts NaN into the group's position, and a group at NaN is
+    // not drawn at all -- for exactly as long as the fling lasts, and then pose() puts it back.
+    // That is what an animal that "disappears and slingshots back" looks like from here, so it
+    // is worth a guard and a line in the log rather than a silent hole in the world.
+    let hy = this.pivotY();
+    if (!(hy >= 0 && hy < 1e4)) {
+      if (!this._pvWarn) { this._pvWarn = 1; console.warn('[knock] ' + this.constructor.name + ' has no usable pivot (' + hy + '); falling back to its radius.'); }
+      hy = (this.rad || 1) * .8;
+    }
     _kbA.set(0, hy, 0).applyQuaternion(this.g.quaternion);
     this.g.rotateX(k.rx); this.g.rotateZ(k.rz);
     _kbB.set(0, hy, 0).applyQuaternion(this.g.quaternion);
     this.g.position.add(_kbA).sub(_kbB);
     if (this.g.position.y < gy) this.g.position.y = gy;    // and never let the shift bury it
+    // Last line of defence. Whatever went wrong upstream, a creature is never allowed to be
+    // drawn at a coordinate that does not exist: put it back on its own chart position.
+    const gp = this.g.position;
+    if (!(isFinite(gp.x) && isFinite(gp.y) && isFinite(gp.z))) gp.set(k.x, Math.max(k.y, gy), k.z);
+    if (KDBG && (this._kdbg = (this._kdbg || 0) + dt) > .3) {
+      this._kdbg = 0;
+      logMsg(this.constructor.name + ' flung ' + Math.hypot(k.x - this.lastGood.x, k.z - this.lastGood.z).toFixed(1)
+        + 'u out, y ' + k.y.toFixed(1) + ', vis ' + (this.g.visible ? 1 : 0) + ', pivot ' + hy.toFixed(2));
+    }
     if (this.rig) this.rig.mixer.update(dt);      // keep the skin ticking so it is not a statue
     return true;
   }
