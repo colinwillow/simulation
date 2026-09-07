@@ -1017,7 +1017,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c34';
+const BUILD = 'c35';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8569,9 +8569,11 @@ function titleMarkFrame(k, cam3) {
   }
   c3.getWorldDirection(_tcF);
   _tcU.set(0, 1, 0).applyQuaternion(c3.quaternion);
-  // Reference title spans sy .626 to .91, so its centre is at .768 of the half-frame -- which
-  // is fh * .384, since fh here is the FULL height.
-  _tcP.copy(c3.position).addScaledVector(_tcF, D).addScaledVector(_tcU, fh * .384);
+  // Reference title spans sy .626 to .91, so its centre is at .768 of the half-frame -- and
+  // fh here is the FULL height, so the offset is half of that. It rides DIO.shiftY with
+  // everything else, or the name would stay behind while the world moved.
+  _tcP.copy(c3.position).addScaledVector(_tcF, D)
+    .addScaledVector(_tcU, fh * (.768 + DIO.shiftY) * .5);
   TCARD.g.position.copy(_tcP);
   TCARD.g.quaternion.copy(c3.quaternion);
 }
@@ -8627,6 +8629,17 @@ const DIO = {
   // which is .784 and solves to a fill of .771. Set a little past that, since bigger was the
   // ask -- and the ball still clears the wordmark above and the control below.
   fill: .80, drop: -.157,        // centre at 960 of 1660 down, which is sy -.157 exactly
+  // THE WHOLE COMPOSITION, MOVED AS ONE. Since the canvas went to inset:0 it fills the entire
+  // viewport, which is right -- space should run behind the notch rather than stopping at a
+  // grey line -- but it means the picture is laid out over a frame whose top strip you cannot
+  // actually see. Everything was composed for the full height and then had its head hidden.
+  //
+  // This slides the planet, the wordmark, the ship and every background body down together,
+  // in half-frame units: -.10 is five per cent of the frame height, which is about a notch.
+  // It has to be one number applied in one place, because the world is positioned by aiming
+  // the camera while everything else is positioned in frame coordinates -- move those two
+  // separately and the composition comes apart.
+  shiftY: -.10,
   // The world itself. Set to null and dioPlanet builds the vertex-coloured sphere it always
   // has -- green cap, sand shore, sunk bay, craggy underside -- which is what everything else
   // on the surface was placed against. With a model here that procedural terrain is gone, so
@@ -9247,7 +9260,7 @@ function dioramaFrame(dt, k) {
   const d = DIO.R / Math.max(.02, DIO.fill * th);
   // And it is pushed DOWN the frame by aiming above it, which is cheaper and steadier than
   // moving the camera: the lens keeps pointing at the same place while the world drops.
-  const up = -DIO.drop * tv * d;
+  const up = -(DIO.drop + DIO.shiftY) * tv * d;
   cam3.position.set(Math.sin(DIO.t * .035) * d * .035, up + Math.sin(DIO.t * .06) * .4, d);
   cam3.lookAt(0, up, 0);
   cam3.updateMatrixWorld(true);
@@ -9260,7 +9273,7 @@ function dioramaFrame(dt, k) {
   const place = (o, sx, sy, dist, rf) => {
     const hh = dist * tv, hw = hh * cam3.aspect;
     o.position.copy(cam3.position).addScaledVector(_dfF, dist)
-      .addScaledVector(_dfR, sx * hw).addScaledVector(_dfU, sy * hh);
+      .addScaledVector(_dfR, sx * hw).addScaledVector(_dfU, (sy + DIO.shiftY) * hh);
     if (rf !== undefined) o.scale.setScalar(rf * hw);
   };
   for (const b of DIO.bodies) place(b.m, b.spec.sx, b.spec.sy, b.spec.d, b.spec.rf);
