@@ -113,7 +113,7 @@ function uphill(minS){
   const e2=1.1, seen=(H(q.x+ux*e2,q.z+uz*e2)-H(q.x,q.z))/e2;
   return {sampledGradient:+gl.toFixed(2), gradeTheGameReads:+seen.toFixed(2),
     degrees:+(Math.atan(seen)*57.3).toFixed(0), upSpeed:up, downSpeed:down,
-    fractionOfFlat:+(up/M.max).toFixed(2), predicted:+Math.max(M.hillMin, 1-seen*M.hill).toFixed(2)};
+    fractionOfFlat:+(up/M.max).toFixed(2), predicted:+Math.max(M.hillMin, 1-seen*M.hill-seen*seen*M.hill2).toFixed(2)};
 }
 for(const s of [.25,.55,.9]) { const r=uphill(s); if(r) console.log('walking a slope          ', JSON.stringify(r)); }
 

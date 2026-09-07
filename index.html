@@ -958,7 +958,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b95';
+const BUILD = 'b96';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -7975,7 +7975,17 @@ const MOVE = {
   // fast it can be lengthened. A right angle at full speed takes about a third of a second.
   turn: 52, airTurn: 9, swimTurn: 16,
   // Uphill is work: the fraction of top speed left, against the gradient he is walking into.
-  hill: .58, hillMin: .34, dip: .13, dipMax: 1.12,
+  // The cost of a hill was LINEAR and floored early, so a gentle rise and a wall cost nearly
+  // the same and neither cost much: 22 degrees took a fifth off him, 37 took less than half,
+  // and everything past 40 was identical. Adding a square term makes the two ends behave
+  // differently, which is the whole point -- a slope you would not notice on foot stays
+  // free, and one you would have to lean into really does stop him: .71 of flat at 22
+  // degrees, .35 at 37, and the floor at 46.
+  hill: .58, hill2: .34, hillMin: .22, dip: .13, dipMax: 1.12,
+  // And he leans into it. Radians of forward pitch per unit of gradient, scaled by how hard
+  // he is actually pushing -- standing on a slope is not climbing one -- and less going down,
+  // because leaning back down a hill is a brace rather than an effort.
+  lean: .34, leanMax: .40, leanDown: .5,
 };
 const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1, leadT: 0, landT: 0, airT: 0, vx: 0, vz: 0, pushX: 0, pushZ: 0 };
 // The rig: a real model stands in for the placeholder. RIG.height is the only
@@ -8352,7 +8362,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null,
   throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
-  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0 });
+  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0 });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -9882,8 +9892,11 @@ function updatePlayer(dt) {
     if (!inW && player.wmag > .1) {
       const e = 1.1, x0 = player.pos.x, z0 = player.pos.z;
       const grade = (height(x0 + player.wx * e, z0 + player.wz * e) - height(x0, z0)) / e;
-      hillK = clamp(1 - Math.max(0, grade) * MOVE.hill + Math.max(0, -grade) * MOVE.dip, MOVE.hillMin, MOVE.dipMax);
-    }
+      const up = Math.max(0, grade);
+      hillK = clamp(1 - up * MOVE.hill - up * up * MOVE.hill2 + Math.max(0, -grade) * MOVE.dip,
+        MOVE.hillMin, MOVE.dipMax);
+      player.grade = grade;
+    } else player.grade = 0;
     const max = (inW ? MOVE.swimMax : MOVE.max) * hillK;
     const want = player.wmag > .1 ? max * player.wmag : 0;
     const tvx = want ? player.wx * want : 0, tvz = want ? player.wz * want : 0;
@@ -9979,7 +9992,20 @@ function updatePlayer(dt) {
   // heading is where the stick points; faceH is where the body has got round to yet
   { let d = player.heading - player.faceH; d = Math.atan2(Math.sin(d), Math.cos(d));
     player.faceH += d * Math.min(1, dt * (player.aiming || player.shootT > 0 || player.throwAim ? 17 : 9)); }
-  if (!player.fly && player.swim < .5) { alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.faceH); }
+  // The climb, in the body. alignTo already sits him on the ground's plane, but a figure
+  // walking up a hill at the same upright angle he walks a lawn is the whole reason a slope
+  // read as flat ground tilted -- the effort was in the numbers and nowhere in the picture.
+  // This is the lean: forward into a rise, back down a fall, and only while he is pushing.
+  {
+    const g0 = player.grade || 0;
+    const want = clamp(g0 * MOVE.lean * (g0 > 0 ? 1 : MOVE.leanDown), -MOVE.leanMax, MOVE.leanMax)
+      * clamp(player.moving, 0, 1) * (player.swim > .5 || player.fly ? 0 : 1);
+    player.leanK = lerp(player.leanK || 0, want, Math.min(1, dt * 4));
+  }
+  if (!player.fly && player.swim < .5) {
+    alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.faceH);
+    if (Math.abs(player.leanK) > 1e-4) g.rotateX(player.leanK);
+  }
   else if (!player.fly) {   // in the water: lie along the wave, a little more so at speed
     const n = waveNormal(player.pos.x, player.pos.z);
     g.quaternion.setFromUnitVectors(_wup, n.lerp(_wup, 1 - lerp(.4, .8, player.moving)).normalize());
