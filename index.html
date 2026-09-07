@@ -1040,7 +1040,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c48';
+const BUILD = 'c49';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4891,6 +4891,13 @@ class Creature {
   // Where a body IN THE AIR may be, which is a different question and has one answer: on the
   // chart. Everything else terrainOK cares about is a fact about walking.
   flyOK(x, z) { return Math.hypot(x, z) < PLANET.wander; }
+  // AND WHAT IT LANDS ON, which for anything that cannot swim is the SEA, not the seabed.
+  // groundY out over the water is twenty-odd units down, so a creature knocked off a beach
+  // kept falling -- under the surface, out of sight, for as long as it took to reach the
+  // bottom -- and only then did the landing walk it back to the shore. From the beach that is
+  // an animal that disappears and then slingshots home, which is exactly the report. It hits
+  // the water now, splashes, and is walked back from there.
+  flingFloor(x, z) { const g = groundY(x, z); return this.aquatic ? g : Math.max(g, SEA + .15); }
   valid(x, z) { return this.terrainOK(x, z) && !this.blocked(x, z); }
   blocked(x, z, pad = 0) {
     if (this.flying) return false;
@@ -5086,8 +5093,9 @@ class Creature {
       else { k.vx = k.vz = 0; if (!k.thud) { k.thud = 1; world.effects.push(new Burst(k.x, k.y + .5, k.z, '#cdbf9c', 7, .6)); } }
       k.y += k.vy * dt;
       k.rx += k.sx * dt; k.rz += k.sz * dt;
-      let g = groundY(k.x, k.z);
+      let g = this.flingFloor(k.x, k.z);
       if (k.y <= g && k.vy < 0) {
+        const wet = !this.aquatic && groundY(k.x, k.z) < SEA;
         // Where it TOUCHES has to be ground this animal could stand on. It was allowed to
         // fly over the sea; it is not allowed to come down in it. Walk back along the line it
         // arrived on until the ground is somewhere it could have walked to.
@@ -5096,9 +5104,10 @@ class Creature {
             const bx = lerp(k.x, this.lastGood.x, t), bz = lerp(k.z, this.lastGood.z, t);
             if (this.terrainOK(bx, bz)) { k.x = bx; k.z = bz; break; }
           }
-          g = groundY(k.x, k.z);
+          g = this.flingFloor(k.x, k.z);
           k.vx *= .3; k.vz *= .3;
         }
+        if (wet && !k.splash) { k.splash = 1; world.effects.push(new Burst(k.x, SEA + .3, k.z, '#bfe8ff', 9, .8)); }
         if (++k.hops < K.hops && -k.vy > K.stop) {
           k.y = g; k.vy = -k.vy * K.bounce; k.vx *= K.friction; k.vz *= K.friction;
           k.sx *= K.friction; k.sz *= K.friction;
@@ -5113,7 +5122,7 @@ class Creature {
         }
       }
     }
-    const gy = groundY(k.x, k.z);
+    const gy = this.flingFloor(k.x, k.z);
     this.pos.set(k.x, Math.max(k.y, gy), k.z);
     this.rx = k.x; this.rz = k.z; this.px0 = k.x; this.pz0 = k.z; this.animK = 0; this.moving = 0;
     this.g.position.set(k.x, Math.max(k.y, gy), k.z);
