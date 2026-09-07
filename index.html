@@ -1033,7 +1033,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c39';
+const BUILD = 'c40';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4883,7 +4883,7 @@ class Creature {
     const K = KNOCK, k = this.fling;
     if (k.rest > 0) {                              // down, gathering itself up
       k.rest -= dt;
-      k.rx = lerp(k.rx, 0, Math.min(1, dt * 7)); k.zz = 0;
+      k.rx = lerp(k.rx, 0, Math.min(1, dt * 7));
       k.sz = lerp(k.sz, 0, Math.min(1, dt * 7));
       k.rz = lerp(k.rz, 0, Math.min(1, dt * 7));
       if (k.rest <= 0) { this.fling = null; this.spook(this.pos, 0); return false; }
@@ -4911,7 +4911,14 @@ class Creature {
           k.y = g; k.vy = -k.vy * K.bounce; k.vx *= K.friction; k.vz *= K.friction;
           k.sx *= K.friction; k.sz *= K.friction;
           world.effects.push(new Burst(k.x, g + .3, k.z, '#cdbf9c', 6, .55));
-        } else { k.y = g; k.vy = 0; k.vx = k.vz = 0; k.rest = K.rest; }
+        } else {
+          k.y = g; k.vy = 0; k.vx = k.vz = 0; k.rest = K.rest;
+          // Where it is NOW is where it came from. lastGood is what the pinned-retreat walks
+          // back to, and left alone it was still the spot it was standing on when it was shot
+          // -- so an animal that landed against a rock spent the next two seconds trudging
+          // back toward the blast.
+          if (this.terrainOK(k.x, k.z)) this.lastGood.set(k.x, 0, k.z);
+        }
       }
     }
     const gy = groundY(k.x, k.z);
@@ -7753,6 +7760,18 @@ const ZONES = [
   { fn: 'track', biome: 'pasture',  n: 4, maxSl: .35, slab: ['sp_stone01', 'sp_stone02'] },
   { fn: 'track', biome: 'coast',    n: 3, maxSl: .35, slab: ['sp_stone02'] },
   { fn: 'track', biome: 'scrub',    n: 3, maxSl: .35, slab: ['sp_stone01'] },
+  // THE FALLS ROCK, which was built for the title screen and had never been in the game. It
+  // is the one model in the batch that is all footprint -- a single wet mass with a shelf --
+  // so it gets a formation of its own rather than a slot in `ridge`, where it would have been
+  // sized like a boulder. Three regions, three different skirts.
+  { fn: 'crag', biome: 'highland', n: 3, maxSl: .95, rock: ['waterfall_rock'], scree: ['sp_rock01', 'sp_rock09'], plant: ['sp_plant01'] },
+  { fn: 'crag', biome: 'jungle',   n: 2, maxSl: .85, rock: ['waterfall_rock'], scree: ['sp_rock02'], plant: ['sp_plant07'] },
+  { fn: 'crag', biome: 'wetland',  n: 2, maxSl: .80, rock: ['waterfall_rock'], scree: ['sp_rock06'], plant: ['sp_plant02'] },
+  // THE ORANGE CRYSTAL, and it goes in the DESERT rather than in the crystal flats on purpose.
+  // The flats are already cyan; a region that has crystal does not need a second kind, and the
+  // rule that makes a border feel like a border is one species per region.
+  { fn: 'burst', biome: 'desert',  n: 4, maxSl: .5, hub: 'orange_crystal', shard: 'orange_crystal' },
+  { fn: 'burst', biome: 'scrub',   n: 2, maxSl: .5, hub: 'orange_crystal', shard: 'orange_crystal' },
   // LANDMARKS: something big enough to steer by, with its own skirt of fallen rock.
   { fn: 'peak',  biome: 'highland', n: 3, maxSl: .9, peak: ['sp_mountain01', 'sp_mountain02'], rock: ['sp_rock01', 'sp_rock09'] },
   { fn: 'peak',  biome: 'desert',   n: 2, maxSl: .9, peak: ['sp_mountain03'], rock: ['sp_rock05'] },
@@ -7770,7 +7789,7 @@ function buildZones() {
   // and no zones are built at all -- which is the right failure: a half-laid grove is worse
   // than none, and everything else in the world is untouched either way.
   const want = new Set();
-  for (const z of ZONES) for (const k of ['tall', 'broad', 'floor', 'rock', 'plant', 'slab', 'peak', 'base', 'hut', 'cap'])
+  for (const z of ZONES) for (const k of ['tall', 'broad', 'floor', 'rock', 'plant', 'slab', 'peak', 'base', 'hut', 'cap', 'scree'])
     if (z[k]) for (const nm of z[k]) want.add(nm);
   for (const z of ZONES) for (const k of ['hub', 'shard', 'mast']) if (z[k]) want.add(z[k]);
   const names = [...want], M = {};
@@ -7926,6 +7945,27 @@ const ZFN = {
       zPut(B.small, M[pick(z0.slab)], x, zz, rnd(2.2, 3.6), rnd(6.3), .9, 0, { sink: .32 });
     }
   },
+  // One big mass with its scree fanned out DOWNHILL of it and green at its foot. Downhill is
+  // where the rock that came off it ended up and where the water off it would run, so the fan
+  // goes there rather than in a ring -- that is the whole difference between a crag and a
+  // boulder with decoration round it.
+  crag(B, M, cx, cz, z0) {
+    if (!obClear(cx, cz, 6)) return;
+    // The fall line first: normalAt hands back a shared vector and zPut uses the same one.
+    const nn = normalAt(cx, cz), nx = nn.x, nz = nn.z;
+    const a0 = Math.hypot(nx, nz) > 1e-3 ? Math.atan2(nx, nz) : rnd(6.3);
+    zPut(B.big, M[pick(z0.rock)], cx, cz, rnd(15, 24), a0 + Math.PI, .10, .30, { sink: .14 });
+    for (let i = 0, n = 5 + (Math.random() * 4 | 0); i < n; i++) {
+      const a = a0 + rnd(-.85, .85), r = rnd(11, 20);
+      const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
+      if (isLand(x, zz)) zPut(B.big, M[pick(z0.scree)], x, zz, rnd(2.2, 5.2), rnd(6.3), .4, .5, { sink: .22 });
+    }
+    for (let i = 0, n = 7 + (Math.random() * 7 | 0); i < n; i++) {
+      const a = a0 + rnd(-1.35, 1.35), r = rnd(9, 17);
+      const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
+      if (isLand(x, zz)) zPut(B.small, M[pick(z0.plant)], x, zz, rnd(.9, 2.1), rnd(6.3), .6, 0);
+    }
+  },
   // Something to steer by, with its own skirt of fallen rock.
   peak(B, M, cx, cz, z0) {
     // Bedded well in rather than perched: these are twenty-odd units across and the ground
@@ -7956,7 +7996,7 @@ const ZFN = {
 // way arrive stacked on each other. Anchors here are random within the region's core instead,
 // and rejected if anything already placed is inside the gap.
 const ZGAP = { grove: 40, burst: 24, ridge: 30, bed: 18, track: 26, peak: 58, mast: 16,
-  outpost: 90, caps: 26 };   // an outpost wants a lot of room, and gets it by going first
+  outpost: 90, caps: 26, crag: 54 };   // an outpost wants a lot of room, and gets it by going first
 function zAnchor(biome, maxSl, used, gap) {
   for (let i = 0; i < 700; i++) {
     const p = randomLand(1.6, 20, maxSl, 1, 4); if (!p) continue;
@@ -9921,6 +9961,16 @@ const DRONE = {
   // spring that normally holds it beside him is slackened while it flies so it actually
   // travels instead of being yanked back on the next frame.
   knock: { push: 17, lift: 7.5, time: 1.5, spin: 14, slack: .1, at: 5 },
+  // THE LEASH, AND THE TELEPORT IT USED TO BE. It is on a spring beside him, and something
+  // has to stop a sprint stranding it half a field away -- but that stop was one line with a
+  // STEP in it: forty units of slack while a knock was live, five and a half the instant the
+  // knock timed out, applied as pos.lerp, which is a position snap and not a force. So shoot
+  // the drone and it goes properly flying, which is right, and then on one frame two and a
+  // quarter seconds later it is standing next to you again. That is the whole of "they shoot
+  // off sooooo far then teleport back": both halves of it were the same expression.
+  // Now the far leash DECAYS back to the near one, and the pull is a speed, so the worst case
+  // is a fast flight home you can watch instead of a cut.
+  leash: { far: 40, near: 5.5, ease: 22, home: 30 },
   // ---- the fins ----
   // Six bones came with the model: one fin out each side, two antennae on top, two small
   // stabilisers underneath. The file carries no clips at all, so none of this is playback --
@@ -12378,8 +12428,21 @@ function updateFairy(dt) {
   }
   // a leash, so a dart during a sprint can never strand it half a field away -- but a drone
   // that has just been shot is allowed to be a long way off for a moment
-  const away = f.pos.distanceTo(f.want), leash = f.hit > 0 ? 40 : 5.5;
-  if (away > leash) { f.pos.lerp(f.want, 1 - leash / away); f.vel.multiplyScalar(.5); }
+  {
+    const L = DRONE.leash;
+    // While it is flying it may be a long way out; once the knock is spent the allowance
+    // closes at a fixed rate rather than in one frame.
+    f.leash = f.hit > 0 ? L.far : Math.max(L.near, (f.leash === undefined ? L.near : f.leash) - L.ease * dt);
+    const away = f.pos.distanceTo(f.want);
+    if (away > f.leash) {
+      // A step toward home, capped -- and bigger the further out it is, so a drone parked
+      // three hundred units away by something unforeseen still comes back in a second or two
+      // rather than crawling. Nothing here can move it more than it could fly.
+      const step = Math.min(away - f.leash, (L.home + (away - f.leash) * .8) * dt);
+      f.pos.lerp(f.want, step / away);
+      f.vel.multiplyScalar(Math.pow(.5, dt));      // and it stops fighting the way home
+    }
+  }
   const fl = groundY(f.pos.x, f.pos.z) + .5; if (f.pos.y < fl) { f.pos.y = fl; f.vel.y = Math.abs(f.vel.y) * .4; }
   p.lamp.position.copy(f.pos);
   p.lamp.visible = !p.free;
