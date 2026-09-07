@@ -32,11 +32,18 @@
      one makes body the viewport as far as this whole file is concerned -- and body is sized
      and offset from visualViewport in syncSize, in one place. translate(0,0) is what it is
      nearly all the time; it is not a no-op, it is what creates the containing block. */
-  body{width:var(--vvw,100%);height:var(--vvh,100%);
-    transform:translate(var(--vvl,0px),var(--vvt,0px));
-    /* visible, not hidden: the canvas below is deliberately bigger than this box and has to
-       be allowed to paint past it. html still clips, so nothing can be scrolled to. */
-    overflow:visible}
+  /* NO TRANSFORM ON BODY, AND THAT IS THE WHOLE FIX. c39 gave body one so that it would be
+     the containing block for every fixed panel, and it worked -- but a canvas with inset:0 is
+     a fixed panel too, so from that moment the LENS was also being sized to the box you can
+     see rather than to the screen, and the strip of browser chrome under it showed as a
+     rectangle of html. Every pass since has tried to make some measured height big enough to
+     cover that strip; none could, because the containing block was the wrong box.
+     Body is the viewport again. `position:fixed; inset:0` on the canvas resolves against the
+     LAYOUT viewport, which with viewport-fit=cover is the whole glass, always, with no number
+     involved. What the panels needed from c39 they get from --uit / --uib instead: the height
+     of the chrome at each end, added to their own offsets. The lens covers the screen; the
+     interface sits inside the part of it you can see. Those were always two questions. */
+  body{overflow:hidden}
   </style>
   <script>
   // BEFORE THE FIRST PAINT, not on the first animation frame. syncSize sets these, and it
@@ -47,10 +54,11 @@
   (function () {
     var set = function () {
       var vv = window.visualViewport, d = document.documentElement.style;
-      d.setProperty('--vvw', Math.round(vv ? vv.width : innerWidth) + 'px');
-      d.setProperty('--vvh', Math.round(vv ? vv.height : innerHeight) + 'px');
-      d.setProperty('--vvl', (vv ? vv.offsetLeft : 0) + 'px');
-      d.setProperty('--vvt', (vv ? vv.offsetTop : 0) + 'px');
+      // How much of the layout viewport the browser's own furniture is sitting over, at each
+      // end. This is the only thing the interface needs to know; the lens needs nothing at all
+      // now that it is measured against the viewport itself.
+      var top = vv ? vv.offsetTop : 0;
+      var vish = vv ? vv.height : innerHeight;
       // AND THE CANVAS IS NOT THE INTERFACE. --vv* is the box you can SEE, which is what the
       // panels want. The lens wants the whole SCREEN: sized to the visual viewport it leaves
       // a strip of html showing under it whenever the two disagree, which on iOS is most of
@@ -77,6 +85,8 @@
       }
       if (pr) { lw = Math.max(lw, pr.offsetWidth); lh = Math.max(lh, pr.offsetHeight); }
       d.setProperty('--cvw', Math.round(lw) + 'px'); d.setProperty('--cvh', Math.round(lh) + 'px');
+      d.setProperty('--uit', Math.max(0, Math.round(top)) + 'px');
+      d.setProperty('--uib', Math.max(0, Math.round(lh - top - vish)) + 'px');
     };
     set();
     addEventListener('resize', set);
@@ -98,8 +108,7 @@
      screen, over the clock, since the day this rule got `fixed` in it, instead of sitting in
      #ui with the buttons where it is written to. The renderer's canvas is the only direct
      child of body, so the child combinator says exactly what was meant all along. */
-  body > canvas{position:fixed;left:calc(-1 * var(--vvl,0px));top:calc(-1 * var(--vvt,0px));
-    width:var(--cvw,100vw);height:var(--cvh,100vh);display:block;z-index:0;touch-action:none}
+  body > canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -107,15 +116,15 @@
     background:linear-gradient(rgba(4,8,16,.62),rgba(4,8,16,.28) 55%,rgba(4,8,16,0))}
   #scrimB{position:fixed;left:0;right:0;bottom:0;height:190px;z-index:1;pointer-events:none;
     background:linear-gradient(rgba(4,8,16,0),rgba(4,8,16,.5))}
-  #hud{position:fixed;left:calc(16px + env(safe-area-inset-left));top:calc(14px + env(safe-area-inset-top));pointer-events:none;z-index:2;text-shadow:0 1px 5px rgba(0,0,0,.95)}
+  #hud{position:fixed;left:calc(16px + env(safe-area-inset-left));top:calc(14px + env(safe-area-inset-top) + var(--uit,0px));pointer-events:none;z-index:2;text-shadow:0 1px 5px rgba(0,0,0,.95)}
   #hud h1{margin:0;font-size:22px;font-weight:normal;letter-spacing:.04em}
   #hud .era{font-style:italic;font-size:14px;opacity:.85;margin:2px 0 8px}
   #perf{font-size:12px;line-height:1.5;opacity:.75;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:6px}
   #stats{font-size:12px;line-height:1.55;opacity:.92;font-family:ui-monospace,Menlo,Consolas,monospace}
-  #log{position:fixed;left:16px;bottom:14px;z-index:2;font-size:13px;line-height:1.5;pointer-events:none;max-width:78vw;text-shadow:0 1px 4px rgba(0,0,0,.85)}
+  #log{position:fixed;left:16px;bottom:calc(14px + var(--uib,0px));z-index:2;font-size:13px;line-height:1.5;pointer-events:none;max-width:78vw;text-shadow:0 1px 4px rgba(0,0,0,.85)}
   #log div{animation:fade 11s forwards}
   @keyframes fade{0%{opacity:0;transform:translateY(4px)}6%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
-  #hint{position:fixed;right:16px;bottom:14px;font-size:12px;opacity:.5;pointer-events:none;text-align:right;line-height:1.5}
+  #hint{position:fixed;right:16px;bottom:calc(14px + var(--uib,0px));font-size:12px;opacity:.5;pointer-events:none;text-align:right;line-height:1.5}
   #mapv{position:fixed;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;justify-content:center;
     background:radial-gradient(ellipse at 50% 46%,rgba(6,10,18,.34),rgba(4,8,14,.72) 78%);
     -webkit-backdrop-filter:blur(2px) saturate(.75);backdrop-filter:blur(2px) saturate(.75)}
@@ -123,7 +132,7 @@
   #mapv h2 span{font-style:italic;font-size:13px;opacity:.6;letter-spacing:.02em;margin-left:8px}
   #mapwrap{position:relative;width:min(92vw,62vh);aspect-ratio:1;border-radius:3px;overflow:hidden;touch-action:none;
     border:1px solid rgba(240,228,200,.3);box-shadow:0 10px 44px rgba(0,0,0,.62),inset 0 0 60px rgba(0,0,0,.4)}
-  #mapclose{position:fixed;right:calc(15px + env(safe-area-inset-right));top:calc(13px + env(safe-area-inset-top));z-index:7}
+  #mapclose{position:fixed;right:calc(15px + env(safe-area-inset-right));top:calc(13px + env(safe-area-inset-top) + var(--uit,0px));z-index:7}
   #mapzoom{position:absolute;left:7px;bottom:7px;font-size:10px;letter-spacing:.08em;opacity:.82;
     font-family:ui-monospace,Menlo,Consolas,monospace;pointer-events:none;
     background:rgba(6,10,18,.55);border-radius:9px;padding:3px 8px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
@@ -153,7 +162,7 @@
   #boot img{max-width:min(86vw,760px);max-height:60vh;width:auto;height:auto;
     filter:drop-shadow(0 8px 40px rgba(0,0,0,.6))}
   #boot span{opacity:.62;font-size:14px}
-  #sticks .stick{position:fixed;bottom:calc(26px + env(safe-area-inset-bottom));
+  #sticks .stick{position:fixed;bottom:calc(26px + env(safe-area-inset-bottom) + var(--uib,0px));
     width:132px;height:132px;border-radius:50%;z-index:4;touch-action:none;
     background:radial-gradient(circle,rgba(255,214,150,.09),rgba(240,235,220,.04) 58%,rgba(240,235,220,0) 74%);
     border:1px solid rgba(240,228,200,.2);box-shadow:inset 0 0 26px rgba(255,196,128,.07);
@@ -206,7 +215,7 @@
   /* `column`, not `column-reverse`. Reversed, the rack rendered BELOW the key -- so sliding a
      thumb up moved it away from the slots and nothing could ever be chosen. */
   #wdock{position:fixed;z-index:6;right:calc(166px + env(safe-area-inset-right));
-    bottom:calc(61px + env(safe-area-inset-bottom));
+    bottom:calc(61px + env(safe-area-inset-bottom) + var(--uib,0px));
     display:flex;flex-direction:column;align-items:center;gap:13px}
   /* An inline SVG with only a viewBox lays out at 300x150 unless something says otherwise. */
   .wico svg{width:100%;height:100%;display:block}
@@ -325,7 +334,7 @@
     -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);transition:background .16s,border-color .16s}
   .tog.on{background:rgba(255,190,110,.28);border-color:rgba(255,200,130,.66)}
   .tog.icon{padding:6px 11px;letter-spacing:.06em}
-  #ui{position:fixed;right:calc(15px + env(safe-area-inset-right));top:calc(13px + env(safe-area-inset-top));
+  #ui{position:fixed;right:calc(15px + env(safe-area-inset-right));top:calc(13px + env(safe-area-inset-top) + var(--uit,0px));
     z-index:4;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
   #mini{width:104px;height:104px;display:block;border-radius:4px;border:1px solid rgba(240,228,200,.24);
     box-shadow:0 5px 20px rgba(0,0,0,.5),inset 0 0 24px rgba(0,0,0,.4);background:rgba(8,14,24,.5)}
@@ -339,10 +348,10 @@
   #bld{font-size:11px;opacity:.5;letter-spacing:.1em;margin-top:2px;
     font-family:ui-monospace,Menlo,Consolas,monospace}
   #stale{position:fixed;left:50%;transform:translateX(-50%);z-index:9;pointer-events:auto;
-    top:calc(12px + env(safe-area-inset-top));font-size:12px;letter-spacing:.06em;
+    top:calc(12px + env(safe-area-inset-top) + var(--uit,0px));font-size:12px;letter-spacing:.06em;
     background:rgba(255,190,110,.24);border-color:rgba(255,200,130,.7)}
-  #log{bottom:46px}
-  @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:206px}#mini{width:92px;height:92px}}
+  #log{bottom:calc(46px + var(--uib,0px))}
+  @media (max-width:640px){#hint{display:none}#log{font-size:12px;bottom:calc(206px + var(--uib,0px))}#mini{width:92px;height:92px}}
   /* The title screen is the game, seen from a long way off, so the interface has to get
      out of the way of it -- and come back on its own once you are in. */
   body.intro #sticks,body.intro #ui,body.intro #wdock,body.intro #log,body.intro #hint,body.intro #hud{
@@ -1108,7 +1117,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c69';
+const BUILD = 'c70';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -13674,11 +13683,10 @@ function syncSize() {
   // the containing block for every fixed panel here (see the CSS), so these four properties
   // are the whole of what keeps the interface over the part of the screen you can see.
   const ds = document.documentElement.style;
-  ds.setProperty('--vvw', Math.round(vv ? vv.width : innerWidth) + 'px');
-  ds.setProperty('--vvh', Math.round(vv ? vv.height : innerHeight) + 'px');
-  ds.setProperty('--vvl', (vv ? vv.offsetLeft : 0) + 'px');
-  ds.setProperty('--vvt', (vv ? vv.offsetTop : 0) + 'px');
+  const vTop = vv ? vv.offsetTop : 0, vH = vv ? vv.height : innerHeight;
   ds.setProperty('--cvw', w + 'px'); ds.setProperty('--cvh', h + 'px');
+  ds.setProperty('--uit', Math.max(0, Math.round(vTop)) + 'px');
+  ds.setProperty('--uib', Math.max(0, Math.round(h - vTop - vH)) + 'px');
   if (w === _vw && h === _vh) return;
   _vw = w; _vh = h;
   camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -13942,6 +13950,12 @@ function drawMap() { drawMapTo(document.getElementById('mapc'), false); }
 // userData.what is set on the handful of things big enough to be mistaken for scenery; for
 // anything else it falls back to the geometry and the material's own colour, which is enough
 // to recognise it by.
+// The chrome insets, read back for the readout. getComputedStyle is a browser-only thing and
+// the headless harnesses do not have it -- which check:intro said, immediately, again.
+function _uiInset(k) {
+  try { return getComputedStyle(document.documentElement).getPropertyValue(k).trim() || '0px'; }
+  catch (e) { return '?'; }
+}
 const _lkR = new THREE.Raycaster();
 function lookingAt() {
   try {
@@ -14104,7 +14118,8 @@ function updateHUD() {
     // the lens is actually being drawn at. Whichever of the first four is smaller than the
     // last is the browser's own chrome, and the last one is what has to cover the glass.
     `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}<br>` +
-    `doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight} scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'} lens ${_vw}x${_vh}<br>` +
+    `doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight} scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'}<br>` +
+    `lens ${_vw}x${_vh} \u00b7 canvas ${renderer.domElement.clientWidth}x${renderer.domElement.clientHeight} \u00b7 chrome ${_uiInset('--uit')}/${_uiInset('--uib')}<br>` +
     // The four numbers that decide whether the background is his galaxy or a black hole:
     // how much plate is being asked for, whether the texture arrived, and the two terms that
     // open its roll-off. If plate reads 0.00 the image has not loaded; if space and high are
