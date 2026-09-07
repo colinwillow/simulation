@@ -1039,7 +1039,7 @@
   <canvas id="mini" title="open the map"></canvas>
   <button id="logT" class="tog icon" title="the island's notes">notes</button>
   <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
-  <div id="btns" hidden><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
+  <div id="btns" hidden><button id="ejectB" class="tog">eject</button><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
 </div>
 <div id="mapv" hidden><h2>Plutopia<span id="mapera"></span></h2>
 <div id="mapwrap"><canvas id="mapc"></canvas><div id="mapzoom"></div></div><button id="mapclose" class="tog icon">close</button>
@@ -1098,7 +1098,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c65';
+const BUILD = 'c66';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -3060,6 +3060,8 @@ grassMat.onBeforeCompile = s => {
 // half a unit at the origin, so culling it as-is would hide the whole field from everywhere
 // except standing on the origin. Each chunk therefore gets its own clone of the leaf with the
 // sphere set BY HAND to cover the blades in that cell.
+// The elder willow's two dials. { tall: 1, alien: 0 } is the tree exactly as it was.
+const GREAT = { tall: 2, alien: 1 };
 const GRASS_CELL = 70;
 const grass = (() => {
   const n = Q.grass;
@@ -3489,7 +3491,13 @@ class GreatTree {
     this.alive = true; this.great = true; this.pos = new THREE.Vector3(x, height(x, z), z);
     this.g = new THREE.Group(); this.g.position.copy(this.pos); alignTo(this.g, x, z, .2); this.g.rotateY(rnd(Math.PI * 2));
     this.vines = []; this.tufts = []; this.lanterns = [];
-    const H = this.H = rnd(31, 37), bark = M.elderBark;
+    // TWICE THE HEIGHT, and the old numbers are one dial away: isle.great = { tall: 1, alien: 0 }
+    // and a reload is the tree exactly as it was, which is worth keeping because it was fine.
+    // `alien` is what stops it reading as an oak at twice the scale -- a slimmer bole for its
+    // height, the crown carried higher up it, limbs that sweep UP rather than out, and rings
+    // of lit pods climbing the trunk. Height alone makes a big tree; proportion makes a
+    // strange one.
+    const H = this.H = rnd(31, 37) * GREAT.tall, bark = M.elderBark;
     // buttress roots sweeping out of the trunk into the ground
     for (let i = 0; i < 9; i++) {
       const a = i / 9 * Math.PI * 2 + rnd(-.12, .12), out = rnd(9, 15), up = rnd(6, 12);
@@ -3500,7 +3508,8 @@ class GreatTree {
       const t = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, rnd(.8, 1.35), 7, false), i % 2 ? bark : M.elderBark2);
       t.castShadow = true; t.receiveShadow = true; this.g.add(t);
     }
-    const trunk = mesh(pick(G.trunk), bark, 7.4, H, 7.4, 0, H / 2, 0);
+    const bw = 7.4 * (GREAT.alien ? .74 : 1);
+    const trunk = mesh(pick(G.trunk), bark, bw, H, bw, 0, H / 2, 0);
     trunk.castShadow = true; trunk.receiveShadow = true; this.g.add(trunk);
     // a ring of moss and stones gathered at the base
     for (let i = 0; i < 12; i++) {
@@ -3508,9 +3517,21 @@ class GreatTree {
       const m = mesh(pick(G.blob), i % 3 ? M.moss : M.stone2, rnd(.8, 1.8), rnd(.3, .7), rnd(.8, 1.8), Math.cos(a) * r, rnd(-.1, .3), Math.sin(a) * r);
       m.rotation.set(rnd(1), rnd(3), rnd(1)); m.receiveShadow = true; this.g.add(m);
     }
-    this.crown = new THREE.Group(); this.crown.position.y = H * .68; this.g.add(this.crown);
-    const nMain = 5;
-    for (let i = 0; i < nMain; i++) this.limb(this.crown, rnd(9, 12), rnd(1.3, 1.7), 2, rnd(.55, .95), i / nMain * Math.PI * 2 + rnd(-.25, .25));
+    // Rings of lit pods up the bole: the one thing that says "not a tree from here" from a
+    // distance, and they read at night from right across the valley.
+    if (GREAT.alien) for (let r = 0; r < 5; r++) {
+      const ly = H * (.22 + r * .13), rr = lerp(bw, bw * .55, ly / H) * 1.02, n = 5 + (r % 2);
+      for (let i = 0; i < n; i++) {
+        const a2 = i / n * Math.PI * 2 + r * .5;
+        const pod = mesh(G.sph, M.lantern, .5, .8, .5, Math.cos(a2) * rr, ly, Math.sin(a2) * rr);
+        pod.rotation.z = -Math.cos(a2) * .4; pod.rotation.x = Math.sin(a2) * .4;
+        pod.castShadow = false; this.g.add(pod);
+      }
+    }
+    this.crown = new THREE.Group(); this.crown.position.y = H * (GREAT.alien ? .78 : .68); this.g.add(this.crown);
+    const nMain = GREAT.alien ? 6 : 5;
+    for (let i = 0; i < nMain; i++) this.limb(this.crown, rnd(9, 12) * (GREAT.alien ? 1.25 : 1), rnd(1.3, 1.7),
+      2, GREAT.alien ? rnd(.22, .5) : rnd(.55, .95), i / nMain * Math.PI * 2 + rnd(-.25, .25));
     // Fifty limb meshes, nine root tubes, a trunk and a ring of stones: none of it moves
     // except as a whole, and it was a tenth of the island's draw calls on its own.
     flatten(this.crown, c => c.userData.dyn);
@@ -6720,6 +6741,62 @@ class Ship {
     logMsg('He climbs in. Hold up to lift off.');
     hintEl.innerHTML = MOBILE ? 'left stick: thrust · strafe &nbsp; right stick: turn · climb' : 'W S thrust · A D turn · Space / Shift climb · Q E strafe · B leave';
   }
+  // OUT OF THE BELLY HATCH, IN THE AIR. leave() needs the ship on the ground because it puts
+  // him down beside it; this puts him UNDER it with the ground a long way off and lets gravity
+  // have him. The ship does not just stop -- it flies itself home and lands, which is the only
+  // sane thing for a machine whose pilot has just jumped out of it.
+  eject() {
+    const p = world.player; if (!p || !p.aboard) return;
+    if (this.grounded) return this.leave();
+    p.aboard = false; p.g.visible = true;
+    p.pos.set(this.pos.x, this.pos.y - 3.4, this.pos.z);
+    p.gy = groundY(p.pos.x, p.pos.z);
+    p.vy = -3; p.grounded = 0; p.swim = 0; p.vx = p.vz = 0; p.wmag = 0; p.jump = 0; p.leadT = 0;
+    p.heading = p.faceH = this.heading;
+    this.outT = 1.8;
+    cam.r = cam.rWalk || cam.r;
+    world.effects.push(new Burst(p.pos.x, p.pos.y, p.pos.z, '#bfe8ff', 9, .7));
+    logMsg('He drops out of the belly hatch.');
+    hintEl.innerHTML = hint0;
+    // Straight into the route home rather than through summonTo, which refuses a piloted
+    // ship on purpose -- and until this line runs, that is still what it is.
+    this.goHome(); this.summon = null;
+    this.planTo(); this.dist = 0; this.begin('cruise');
+  }
+  // A path from wherever it is now to wherever the pad has been put: up, across at an
+  // altitude that clears the ground and both great trees, and down. planFlight builds a LAP,
+  // which is the right shape for a sortie and the wrong one for being called.
+  planTo() {
+    const from = this.g.position.clone(), to = this.pad.clone();
+    let alt = Math.max(from.y, to.y) + 18;
+    for (let i = 0; i <= 28; i++) {
+      const q = new THREE.Vector3().lerpVectors(from, to, i / 28);
+      alt = Math.max(alt, height(q.x, q.z) + 26);
+    }
+    if (world.greatTree) alt = Math.max(alt, world.greatTree.pos.y + world.greatTree.H * 1.05 + 16);
+    if (world.motherTree) alt = Math.max(alt, world.motherTree.pos.y + MTREE.H + 18);
+    this.hop = Math.max(SHIP.hop, alt - to.y);
+    const a = from.clone(); a.y = alt, this.hopRaised = false;
+    const b = to.clone(); b.y = alt;
+    this.curve = new THREE.CatmullRomCurve3([from.clone(), a,
+      new THREE.Vector3().lerpVectors(a, b, .5), b, to.clone().setY(to.y + this.hop)], false, 'centripetal', .5);
+    this.curveLen = this.curve.getLength();
+    this.face = Math.atan2(to.x - from.x, to.z - from.z);
+  }
+  // Called. From the ground it lifts first and then routes; already up, it simply re-routes.
+  summonTo(x, z) {
+    if (this.state === 'piloted') return false;
+    const y = deckY(x, z, height(x, z) + 1.5);
+    if (this.state === 'landed') {
+      this.summon = new THREE.Vector3(x, y, z);
+      this.begin('lift'); this.hop = SHIP.hop;
+      if (this.ob) { obRemove(this.ob); this.ob = null; }
+    } else {
+      this.pad.set(x, y, z); this.summon = null;
+      this.planTo(); this.dist = 0; this.begin('cruise');
+    }
+    return true;
+  }
   // Out again, onto the ground beside it. Wherever it came down is its pad now.
   leave() {
     const p = world.player; if (!p || !p.aboard || !this.grounded) return;
@@ -6877,7 +6954,9 @@ class Ship {
       this.g.position.set(this.pad.x, this.pad.y + this.hop * e, this.pad.z);
       this.heading = this.face; c.throttle = .55 + .45 * (1 - k); c.pitch = .35 * (1 - k); c.yaw = 0; c.strafe = 0;
       c.gear = k > .28 ? 1 : 0;
-      if (k >= 1) { this.begin('cruise'); this.dist = 0; }
+      // A summon set while it was on the ground: the lift comes off the OLD pad -- that is
+      // what it is standing on -- and the new one is only adopted once it is clear of it.
+      if (k >= 1) { if (this.summon) { this.pad.copy(this.summon); this.summon = null; this.planTo(); } this.begin('cruise'); this.dist = 0; }
     } else if (this.state === 'cruise') {
       // ease the speed in and out of the lap, and read every control off the path
       const s0 = this.dist / this.curveLen, sp = SHIP.speed * (.35 + .65 * smooth(0, .07, s0) * smooth(1, .93, s0));
@@ -6896,6 +6975,7 @@ class Ship {
       this.heading = this.face; c.throttle = .6 - .45 * k; c.pitch = -.3 * (1 - k); c.yaw = 0; c.strafe = 0;
       c.gear = k > .18 ? 0 : 1;
       if (k >= 1) { this.begin('landed'); this.next = t + rnd(SHIP.every[0], SHIP.every[1]);
+        if (world.shipBeacon) { world.shipBeacon.alive = false; }
         this.g.position.copy(this.pad); this.ob = obAdd(this.pad.x, this.pad.z, SHIP.rad, this, this.pad.y + 3.4); }
     }
     // Velocity, for the exhaust to trail from, and the previous heading for the yaw rate.
@@ -8923,13 +9003,24 @@ const blurMat = new THREE.ShaderMaterial({ uniforms: { tD: { value: null }, uDir
 // `k` is the volume. Toward 0 is true black, 1.6 is about where it was when it hazed.
 const DARK = { col: [.0113, .0004, .0333], k: 1.0, knee: .028 };
 const compMat = new THREE.ShaderMaterial({ uniforms: {
-    tD: { value: null }, tB: { value: null }, uStr: { value: .85 }, uVig: { value: .5 }, uNight: { value: 0 }, uT: { value: 0 },
+    tD: { value: null }, tB: { value: null }, uStr: { value: .85 }, uVig: { value: .5 }, uNight: { value: 0 }, uT: { value: 0 }, uRush: { value: 0 },
     uLift: { value: new THREE.Color(0, 0, 0) }, uKnee: { value: .17 }
   }, vertexShader: VS, fragmentShader: `
-  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT,uKnee; uniform vec3 uLift; varying vec2 vUv;
+  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT,uKnee,uRush; uniform vec3 uLift; varying vec2 vUv;
   float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
   void main(){
     vec3 c = texture2D(tD,vUv).rgb;
+    // THE RUSH. Six taps smeared toward the middle of the frame, weighted out from it so the
+    // centre -- where he is -- stays sharp and the edges streak. This is what a game does to
+    // say fast, and it is the whole effect: the lens also opens up seven degrees, which is
+    // the other half. Branch-guarded, so it costs one comparison when he is walking.
+    if (uRush > 0.002) {
+      vec2 d = (vUv - 0.5);
+      float e = smoothstep(0.06, 0.5, length(d));
+      vec3 sm = c;
+      for (int i = 1; i <= 6; i++) sm += texture2D(tD, vUv - d * (float(i) * 0.016 * uRush)).rgb;
+      c = mix(c, sm / 7.0, e * uRush);
+    }
     vec3 b = texture2D(tB,vUv).rgb;
     c += b*uStr;
     // gentle filmic grade: lift shadows cool, warm the highs
@@ -9286,8 +9377,12 @@ function updateSky() {
   waterMat.opacity = lerp(.72, .9, dayK); waterMat.color.copy(col('#2b7fa4')).lerp(col('#12304a'), world.night * .75);
   waterUni.uSky.value.copy(tmpC.mid);
   foamUni.uOp.value = lerp(.55, 1, dayK) * (1 + WX.storm * .5);
+  compMat.uniforms.uRush.value = (player.sprint || 0) * SPRINT.rush;
   compMat.uniforms.uStr.value = lerp(.34, .95, world.night);
-  compMat.uniforms.uVig.value = lerp(.4, .85, world.night);
+  compMat.uniforms.uVig.value = lerp(.4, .85, world.night) + (player.sprint || 0) * .12;
+  // The lens opens as he winds up. Cheap, and it is half of what reads as speed.
+  { const want = 46 + SPRINT.fov * (player.sprint || 0);
+    if (Math.abs(camera.fov - want) > .05) { camera.fov = want; camera.updateProjectionMatrix(); } }
   renderer.toneMappingExposure = lerp(1.0, .92, world.night) * (1 - oc * .12) + WX.flash * .35;
 }
 function eraName() {
@@ -11014,6 +11109,11 @@ const NET = {
 const WEAPONS = {
   blaster: { label: 'blaster', charge: 1, cool: () => WEAPON.cool,
     icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13h15l6 3-6 3H4z"/><path d="M9 19l-2 7h5l1-7"/><path d="M25 16h4"/><circle cx="7.5" cy="16" r="1.3" fill="currentColor" stroke="none"/></svg>' },
+  // CALL THE SHIP. Not a weapon at all, but this is the only wheel he has and a thing you
+  // aim and throw belongs on it. It lands where you are pointing, plants a lit marker, and
+  // the ship lifts, routes over whatever is between, and sets down on it.
+  beacon: { label: 'beacon', charge: 0, cool: () => BEACON.cool,
+    icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4v9"/><circle cx="16" cy="16" r="3.2"/><path d="M9 26l5-7M23 26l-5-7"/><path d="M6.5 9.5a13 13 0 0 0 0 13M25.5 9.5a13 13 0 0 1 0 13"/></svg>' },
   net: { label: 'net', charge: 0, cool: () => NET.cool,
     // A slack net hanging from a rim, with knots on it: nothing about that silhouette can be
     // mistaken for a gun at thirty pixels, which the old circle-and-crosshairs could.
@@ -11033,6 +11133,11 @@ const FLICK = { at: .72, within: .28 };     // what counts: this much travel, re
 // The move then owns him for (1.208 - .12) / 1.35 = 0.81 s, which is a dodge rather than a
 // manoeuvre. `time` is only the fallback for a rig with no roll clip at all.
 const ROLL = { speed: 21, skip: .12, rate: 1.35, time: .7, cool: .28, turn: 1 };
+// THE RUN. `k` is how much faster than his own top speed a sprint is; `at` is how far up the
+// right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
+// most of what a game does to say "fast" and costs nothing. in/out are how quickly it comes on
+// and lets go -- fast in, slower out, so a stumble over a rock does not drop him out of it.
+const SPRINT = { k: .55, at: .62, in: 5, out: 2.6, fov: 7, rush: .85 };
 function flickRoll(x, y) {
   const p = player;
   if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5 || p.rollT > 0 || p.rollCool > 0) return;
@@ -11045,6 +11150,64 @@ function flickRoll(x, y) {
   p.rollCool = p.rollT + ROLL.cool;
   p.jump = 0; p.leadT = 0;
   cam.idle = 0;
+}
+
+// WHERE THE BEACON GOES and how long it stands. `range` is how far down the aim it can be
+// put; past that the ground is further than he can throw and it lands short, which is honest
+// and needs no message. It is a marker, not an obstacle: nothing collides with it.
+const BEACON = { range: 46, cool: 2.2, life: 90, col: '#8ff0d8' };
+class ShipBeacon {
+  constructor(x, z) {
+    this.alive = true; this.t = 0;
+    this.pos = new THREE.Vector3(x, groundY(x, z), z);
+    this.g = new THREE.Group(); this.g.position.copy(this.pos);
+    alignTo(this.g, x, z, .7); scene.add(this.g);
+    const c = col(BEACON.col);
+    const m = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 2.2, roughness: .4 });
+    m.userData.noHole = true;
+    this.g.add(mesh(G.cylT, m, .5, 1.1, .5, 0, .55, 0));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.9, .09, 6, 28), m);
+    ring.rotation.x = Math.PI / 2; ring.position.y = .14; this.g.add(ring);
+    this.beam = new THREE.Mesh(new THREE.CylinderGeometry(.42, 1.0, 26, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: .3, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+    this.beam.material.userData.noHole = true;
+    this.beam.position.y = 13; this.g.add(this.beam);
+    this.gl = glow(BEACON.col, 6, .6); this.gl.position.y = 1.2; this.g.add(this.gl);
+    this.mat = m;
+  }
+  update(dt) {
+    this.t += dt;
+    const k = .7 + .3 * Math.sin(this.t * 3.2);
+    this.mat.emissiveIntensity = 2.2 * k;
+    this.beam.material.opacity = .3 * k * clamp(1 - this.t / BEACON.life, 0, 1);
+    this.gl.scale.setScalar(6 * k);
+    this.g.rotateY(dt * .5);
+    if (this.t > BEACON.life) this.alive = false;
+  }
+  dispose() { scene.remove(this.g); this.beam.material.dispose(); this.mat.dispose(); }
+}
+function fireBeacon() {
+  const p = player;
+  if (p.cool > 0) return;
+  p.cool = BEACON.cool; p.shootT = WEAPON.hold;
+  // Down the aim, on the ground, and never in the sea or off the chart: walk out from him
+  // until it stops being somewhere the ship could put its legs, and stand it at the last
+  // spot that was.
+  const sx = Math.sin(p.aimH), sz = Math.cos(p.aimH);
+  let bx = p.pos.x, bz = p.pos.z;
+  for (let d = 3; d <= BEACON.range; d += 2.5) {
+    const x = p.pos.x + sx * d, z = p.pos.z + sz * d;
+    if (!isLand(x, z) || Math.hypot(x, z) > PLANET.rim) break;
+    if (height(x, z) < SEA + 1) break;
+    bx = x; bz = z;
+  }
+  if (world.shipBeacon) world.shipBeacon.alive = false;
+  const b = new ShipBeacon(bx, bz);
+  world.shipBeacon = b; world.effects.push(b);
+  world.effects.push(new Burst(bx, b.pos.y + 1, bz, BEACON.col, 10, .8));
+  const sh = world.ship;
+  if (sh && sh.bones && sh.summonTo(bx, bz)) logMsg('The beacon takes. Somewhere behind him the ship comes off its pad.');
+  else logMsg(sh && sh.state === 'piloted' ? 'He is already flying it.' : 'The beacon stands, and nothing answers it.');
 }
 
 const weap = { model: null, bone: null, tip: null, ready: false, lastMuzzle: new THREE.Vector3(), fx: null };
@@ -11100,7 +11263,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null,
   throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
-  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0 });
+  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0 });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -11665,7 +11828,7 @@ function stepWeapon(dt, rx, ry) {
     if (p.aiming) {
       // Released from inside the arc: it goes.
       if (p.lock && p.lock.alive) { p.aimH = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z); p.heading = p.aimH; }
-      if (p.wpn === 'net') fireNet(); else fireBolt(p.charge);
+      if (p.wpn === 'net') fireNet(); else if (p.wpn === 'beacon') fireBeacon(); else fireBolt(p.charge);
     }
     p.aiming = 0; p.charge = 0; p.lock = null; p.aimAdj = 0; p.armT = 0;
   }
@@ -12556,7 +12719,16 @@ fold('hudHead', 'hudBody', false);
 fold('ctlT', 'btns', false);
 fold('logT', 'log', true);
 const hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
-addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm(); if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.leave(); else world.ship.board(); } });
+addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm(); if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.eject(); else world.ship.board(); } });
+// EJECT. On the ground it is the ordinary way out; in the air it is the belly hatch and a
+// drop. Same button and the same B key either way, because from the pilot's seat "get out" is
+// one intention and the ship already knows which one it is.
+document.getElementById('ejectB').addEventListener('click', e => {
+  e.stopPropagation();
+  const sh = world.ship;
+  if (sh && player.aboard) sh.eject();
+  else logMsg('He is not in the ship.');
+});
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
 startB.addEventListener('click', e => { e.stopPropagation(); startGame(); });
 const _prevP = new THREE.Vector3(), _shipR = new THREE.Vector3();
@@ -12578,8 +12750,17 @@ function updatePlayer(dt) {
   // the throw. Neither can be true at once -- he cannot draw with something in his hands --
   // but both are asked every frame so each gets to clear its own state on the way out.
   const winding = stepThrow(dt, rx, ry);
-  if (!stepWeapon(dt, rx, ry) && !winding && (rx || ry)) { cam.az -= rx * dt * 2.2; cam.idle = 0; }
+  const aiming = stepWeapon(dt, rx, ry);
+  if (!aiming && !winding && (rx || ry)) { cam.az -= rx * dt * 2.2; cam.idle = 0; }
   const mag = Math.hypot(lx, ly);
+  // SPRINT. Hands empty, feet on the ground, moving, and the right stick pushed hard UP. Deep
+  // on purpose -- .62 of full travel -- because the same stick is the look, and a glance up
+  // must not break into a run. Nothing else reads the right stick's Y while he is unarmed, so
+  // this costs nothing that was being used.
+  const wantRun = !aiming && !winding && !player.carry && !player.drag && !player.aboard && !player.free
+    && player.swim < .5 && player.grounded && mag > .5 && (-ry > SPRINT.at || !!keys.shift);
+  player.sprint = lerp(player.sprint || 0, wantRun ? 1 : 0, Math.min(1, dt * (wantRun ? SPRINT.in : SPRINT.out)));
+  if (wantRun) cam.idle = 0;
   player.moving = lerp(player.moving, mag > .1 ? Math.min(1, mag) : 0, Math.min(1, dt * 9));
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
   if (player.free) {
@@ -12660,7 +12841,7 @@ function updatePlayer(dt) {
         MOVE.hillMin, MOVE.dipMax);
       player.grade = grade;
     } else player.grade = 0;
-    const max = (inW ? MOVE.swimMax : MOVE.max) * hillK;
+    const max = (inW ? MOVE.swimMax : MOVE.max * (1 + SPRINT.k * player.sprint)) * hillK;
     const want = player.wmag > .1 ? max * player.wmag : 0;
     const tvx = want ? player.wx * want : 0, tvz = want ? player.wz * want : 0;
     const sp0 = Math.hypot(player.vx, player.vz);
@@ -13162,7 +13343,9 @@ function updateRig(dt) {
   if (sp > .4) { const c = Math.cos(p.faceH), s2 = Math.sin(p.faceH);
     mf = (p.vx * s2 + p.vz * c) / sp; mr = (-p.vx * c + p.vz * s2) / sp; }
   stepRig(p.rigH, dt, p.speed, !p.fly && p.swim < .5 && p.grounded, {
-    top: p.swim > .5 ? MOVE.swimMax : MOVE.max,
+    // The clip's own top speed rises with him, or the run plays at its normal rate against
+    // ground going past half again as fast and he skates.
+    top: p.swim > .5 ? MOVE.swimMax : MOVE.max * (1 + SPRINT.k * (p.sprint || 0)),
     swim: p.swim, air: !p.fly && !p.grounded && p.leadT <= 0 && p.swim < .5,
     mf, mr, roll: p.rollT > 0, rollSkip: ROLL.skip, rollRate: ROLL.rate,
     // The stoop ramps in and out rather than switching, because the ramp IS the bend.
