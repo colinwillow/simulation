@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c22';
+const BUILD = 'c23';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -9159,7 +9159,12 @@ const GIMBAL = {
   // Everything else about the drone stays: the slow vertical follow that smooths a rock and
   // catches a cliff, the climb over ridges, the tilt for the ground ahead. Those never touch
   // the azimuth. Set either number above zero to have the old behaviour back.
-  lead: 0, leadMax: 7,
+  // `lead` is back on, small. It aims the mount a little in front of him rather than at him,
+  // which is the "average of in front of him" part -- and it is only half of what was turned
+  // off before. `recentre` stays at zero: that was the one that swung the whole boom round
+  // behind him when he walked, and THAT is what made the view answer the left stick. Aiming
+  // ahead does not move the azimuth. If it still slides too much, this is the number.
+  lead: .14, leadMax: 3.2,
   recentre: 0, recentreAt: 1.1,
   clear: 2.5,                        // how far off the ground the boom flies
   // The climb. `maxK` is how far straight up it will go to clear a ridge, as a fraction of
@@ -9169,6 +9174,18 @@ const GIMBAL = {
   // Past `off` the boom is a look at the island rather than a shot of him, and the solver
   // stands down entirely: nothing is between you and the ground from up there.
   lift: { maxK: .7, min: 14, max: 120, up: 6, down: 1.8, pull: .55, off: [70, 120] },
+  // WHAT THE CLIMB IS ALLOWED TO SEE. It read the height field and nothing else, which is why
+  // the mount sailed over every hill and straight through everything standing ON one -- a
+  // tree, a crystal spire, a six-unit mushroom. The obstacle grid already knows where all of
+  // those are and, better, how tall each one is: `top` is precisely the number a camera wants.
+  //   obPad   how much room round a prop counts as being in the way
+  //   obLead  seconds of his travel to look ahead by. A drone that begins its climb once it
+  //           is already inside the tree is not avoiding anything -- the real ones look ahead,
+  //           and this is the whole difference between clearing a thing and colliding with it
+  //   obMax   the tallest thing it will TRY to climb. Past that it is a cliff, not an
+  //           obstacle: it stops climbing and lets the see-through hole do the work instead,
+  //           which is the other half of what was asked for and already built
+  obPad: 1.7, obLead: .5, obMax: 30,
   // The gimbal's tilt, read off the ground ahead rather than the slope underfoot -- which
   // would pitch just as hard running along a contour as straight up the face.
   pitch: { ahead: 17, k: .34, max: .30, rate: 1.8 },
@@ -9224,15 +9241,37 @@ function camClear(pol, r) {
 // and the lift the boom needs is the largest of those. A continuous number eases; the old
 // ladder of seven fixed pitch rungs could only pop between them, which is what made a walk
 // along a ridge look like the camera was being kicked.
+// The floor under one point of the boom: the ground there, and anything STANDING there that
+// the mount would have to get over.
+//
+// Obstacles with an infinite top are skipped deliberately. Those are the things you go around
+// rather than over -- a trunk, a cliff face, a court wall -- and they have no top to clear;
+// where one is made of ground, the deck sample underneath has already accounted for it.
+function boomFloor(x, z, y, pad) {
+  let f = deckY(x, z, y);
+  obNear(x, z, pad + 4, o => {
+    if (!isFinite(o.top) || o.top <= f || o.top - f > GIMBAL.obMax) return;
+    const r = obRad(o) + pad, dx = x - o.x, dz = z - o.z;
+    if (dx * dx + dz * dz < r * r) f = o.top;
+  });
+  return f;
+}
 function boomLift(pol, r) {
   const sx = Math.sin(cam.az) * Math.sin(pol) * r, sy = Math.cos(pol) * r, sz = Math.cos(cam.az) * Math.sin(pol) * r;
+  // Sampled where the mount WILL be, not where it is. The lens trails him, so a thing he has
+  // just walked past arrives at the boom a moment later -- looking ahead by half a second of
+  // his travel is what turns "climbing out of a mushroom" into "going over one".
+  const lx = player.vx * GIMBAL.obLead, lz = player.vz * GIMBAL.obLead;
   let need = 0;
-  for (let i = 3; i <= 10; i++) {
+  // Past the lens as well as up to it (t runs to 1.1), so the far side of something tall is
+  // seen before the boom is standing on it.
+  for (let i = 3; i <= 11; i++) {
     const t = i / 10;
-    const x = cam.tgt.x + sx * t, z = cam.tgt.z + sz * t, y = cam.tgt.y + sy * t;
-    // the last sample is the lens itself and wants the full standoff; the shaft only wants
-    // enough not to be buried
-    const want = deckY(x, z, y) + (i === 10 ? GIMBAL.clear : GIMBAL.clear * .55);
+    const x = cam.tgt.x + sx * t + lx, z = cam.tgt.z + sz * t + lz, y = cam.tgt.y + sy * t;
+    // the lens itself wants the full standoff; the shaft only wants enough not to be buried
+    const lens = i >= 10;
+    const want = boomFloor(x, z, y, lens ? GIMBAL.obPad : GIMBAL.obPad * .6)
+      + (lens ? GIMBAL.clear : GIMBAL.clear * .55);
     if (want > y) need = Math.max(need, (want - y) / t);
   }
   return need;
