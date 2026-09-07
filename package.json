@@ -11,6 +11,7 @@
     "check:gait": "node tools/gait.js index.html",
     "check:net": "node tools/net.js",
     "pack": "node tools/pack.js",
+    "unpack": "node tools/unpack.js",
     "check:swirl": "node tools/swirl.js index.html",
     "icons": "node tools/icons.js"
   },
