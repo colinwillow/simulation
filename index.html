@@ -1051,7 +1051,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c53';
+const BUILD = 'c54';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3212,8 +3212,11 @@ function obRad(o) { return o.owner && o.owner.growth !== undefined ? o.r * (.12 
 // `top` is the world Y of the highest point of the thing. Default Infinity: a trunk, a
 // cliff, a cairn — something you go round. Anything that gives a real number is a shape
 // you can be above, and once your feet clear it the collider stops existing for you.
-function obAdd(x, z, r, owner, top = Infinity) {
-  const o = { x, z, r, owner, top, _cells: [], _s: -1 }, c = OB.cell;
+// `tag` is what put it here, and it exists for one reason: a collider with no visible thing
+// on it is impossible to argue about from a phone. With a tag, ?obs can say "sp_rock03, ridge
+// / desert, r 4.3" the moment you walk into it, which turns a phantom wall into a filename.
+function obAdd(x, z, r, owner, top = Infinity, tag) {
+  const o = { x, z, r, owner, top, tag, _cells: [], _s: -1 }, c = OB.cell;
   for (let cx = Math.floor((x - r) / c); cx <= Math.floor((x + r) / c); cx++)
     for (let cz = Math.floor((z - r) / c); cz <= Math.floor((z + r) / c); cz++) {
       const k = cx + ',' + cz; let a = OB.map.get(k); if (!a) { a = []; OB.map.set(k, a); }
@@ -4778,6 +4781,7 @@ const _kbA = new THREE.Vector3(), _kbB = new THREE.Vector3();
 // times a second: how far it has actually travelled, how high it is, whether it is being
 // drawn, and what pivot it is turning about. Four numbers, on the phone, no console.
 const KDBG = /[?&]knock\b/.test(location.search);
+const KOBS = /[?&]obs\b/.test(location.search);
 const KNOCK = {
   // Range goes as speed times airtime, and both used to divide by the animal's size -- so a
   // tinker went thirty-four units and a mossback went one, off numbers only 1.8x apart. The
@@ -4822,6 +4826,12 @@ const THROW = {
   chargeT: 1.7,      // a standing hold takes this long to fill the bar
   min: .26,          // nothing leaves his hands slower than this
   speed: [15, 54],   // launch speed at no power and at full
+  // A FLICK MAY NOT OUT-THROW A WIND-UP. The swipe's power came off stick speed and a hard
+  // flick saturates it instantly, so it reached the same 54 the bar takes 1.7 seconds to
+  // fill -- which makes the charge throw pointless and sends the animal out of sight.
+  // Range goes as the SQUARE of the launch speed, so half the distance is 1/sqrt(2) of the
+  // speed: 38 of 54, which is a power of .60. That is the cap.
+  quickMax: .60,
   lift: .40,         // and the share of it that goes up, which is the arc
   spin: 11,          // how hard it tumbles once it is out of his hands
   cool: .5,          // before he can pick anything up again
@@ -7329,7 +7339,12 @@ function placeProp(url, x, z, yaw, H, blend = .75) {
     } });
     envUse(inst, .45);
     g.add(inst); scene.add(g);
-    obAdd(x, z, Math.max(sz.x, sz.z) * k * .40, null, gy + sz.y * k * .92);
+    // The MEAN of the two horizontal extents, not the larger -- the same fix zPut got and the
+    // same bug: a circle drawn round the LENGTH of an elongated model circumscribes it, so a
+    // seven-unit-long, one-unit-deep prop stops you three units out from thin air. This one
+    // was missed when the other was fixed, and placeProp is what puts the huts, the masts and
+    // most of the built things on the island.
+    obAdd(x, z, (sz.x + sz.z) * .5 * k * .40, null, gy + sz.y * k * .92, 'prop:' + url.replace(/^.*\//, '').replace(/\.glb$/, ''));
   });
 }
 // Worn ground. A hard-edged brown quad on grass reads as a sticker, however many of them
@@ -7387,7 +7402,7 @@ function siteAt(x, z, yaw) {
       bin.push({ geo, mat, matrix: m.matrix.clone() });
       return m;
     },
-    block(px, pz, r, top) { const w = site.world(px, pz); obAdd(w.x, w.z, r, null, top === undefined ? Infinity : base + top); return w; },
+    block(px, pz, r, top) { const w = site.world(px, pz); obAdd(w.x, w.z, r, null, top === undefined ? Infinity : base + top, 'site:' + (site.kind || site.name || '?')); return w; },
     // A member running from one local point to another -- a landing leg, a strut, a mast.
     // `put` takes Euler angles, which is fine for a box lying flat and miserable for anything
     // that has to reach between two places, so this takes the two places instead.
@@ -8053,6 +8068,7 @@ const ZONES = [
 ];
 
 const ZPAINT = { v: null };
+const ZTAG = { v: null };      // which zone entry is being laid, for the collider tags
 const _zq = new THREE.Quaternion(), _zs = new THREE.Quaternion(), _zax = new THREE.Vector3();
 const _zp = new THREE.Vector3(), _zsc = new THREE.Vector3(), _zn = new THREE.Vector3(), _zm = new THREE.Matrix4();
 
@@ -8077,7 +8093,7 @@ function buildZones() {
     // 1.4 deep once scaled -- got a radius drawn round its LENGTH, and with the 1.1 the
     // player's own test adds on top you were stopped 5.0 units out by 4.3 units of thin air.
     // The mean inscribes far closer: same 5.0 for a round boulder, 3.4 for that slab.
-    M[nm] = { parts, box: e.box, sz, big: Math.max(sz.x, sz.y, sz.z), foot: (sz.x + sz.z) * .5 };
+    M[nm] = { name: nm, parts, box: e.box, sz, big: Math.max(sz.x, sz.y, sz.z), foot: (sz.x + sz.z) * .5 };
     if (++got === names.length) layZones(M);
   });
 }
@@ -8107,7 +8123,7 @@ function zPut(bin, m, x, z, span, yaw, tilt, obK, opt) {
   const reg = biomeAt(x, z).name;
   for (const pt of m.parts) bin.push({ geo: pt.geo, mat: tintFor(pt.mat, reg, { keep: .38, k: .7, paint: opt && opt.paint }), matrix: _zm.clone().multiply(pt.m) });
   const r = m.foot * s * obK;
-  if (r > .4) obAdd(x, z, r, null, gy - sink + m.sz.y * s * .94);
+  if (r > .4) obAdd(x, z, r, null, gy - sink + m.sz.y * s * .94, (ZTAG.v || 'zone') + ':' + (m.name || '?'));
 }
 
 const ZFN = {
@@ -8298,8 +8314,9 @@ function layZones(M) {
       const p = zAnchor(z.biome, z.maxSl, used, ZGAP[z.fn] || 20);
       if (!p) continue;
       ZPAINT.v = z.paint || null;               // read by zPut, cleared the moment this zone is laid
+      ZTAG.v = z.fn + '/' + z.biome;
       fn(B, M, p.x, p.z, z);
-      ZPAINT.v = null;
+      ZPAINT.v = null; ZTAG.v = null;
     }
   }
   const grp = new THREE.Group(); grp.userData.flat = true;
@@ -11156,7 +11173,7 @@ function stepThrow(dt, rx, ry) {
     const power = quick
       ? (p.throwRise - THROW.rise[0]) / (THROW.rise[1] - THROW.rise[0])
       : p.throwK;
-    hurlCarried(clamp(power, THROW.min, 1), quick);
+    hurlCarried(clamp(power, THROW.min, quick ? THROW.quickMax : 1), quick);
     p.throwK = 0; setChargeRing(0); throwMarkStep(false);
     return true;
   }
@@ -12495,6 +12512,20 @@ const fairyTrail = new PSys({
 });
 // Same hard push-out the creatures use: correct only the radial overlap, so motion along
 // the surface survives and you slide round a trunk instead of sticking to it.
+// Under ?obs, whatever is actually stopping him says so. One line per collider per five
+// seconds, on the on-screen log, naming the model and the formation that placed it and how
+// big its circle is against how big the thing looks. A phantom wall becomes a filename.
+const OBSAY = new Map();
+function obSay(o, d) {
+  if (!KOBS) return;
+  const key = o.tag + '@' + o.x.toFixed(0) + ',' + o.z.toFixed(0);
+  const t = OBSAY.get(key) || -99;
+  if (world.clock - t < 5) return;
+  OBSAY.set(key, world.clock);
+  logMsg('blocked by ' + (o.tag || (o.owner ? o.owner.constructor.name : 'unknown'))
+    + '  r ' + o.r.toFixed(1) + '  top ' + (o.top === Infinity ? 'inf' : o.top.toFixed(1))
+    + '  you are ' + d.toFixed(1) + ' from its centre');
+}
 function resolvePlayer(x, z, feetY) {
   let nx = 0, nz = 0;
   for (let pass = 0; pass < 3; pass++) {
@@ -12507,6 +12538,7 @@ function resolvePlayer(x, z, feetY) {
         if (d < 1e-3) { dx = 1; dz = 0; d = 1; }
         x = o.x + dx / d * r; z = o.z + dz / d * r;
         nx += dx / d; nz += dz / d;
+        if (pass === 0) obSay(o, d);
       }
     });
   }
@@ -12993,7 +13025,7 @@ if (window.visualViewport) {
 const statsEl = document.getElementById('stats'), eraEl = document.getElementById('era'), perfEl = document.getElementById('perf');
 // and the build, where it can be read without opening anything. `+ knock` when the throw
 // readout is armed, so a flag that did not take is visible rather than silently absent.
-{ const b = document.getElementById('bld'); if (b) b.textContent = BUILD + (KDBG ? ' + knock' : '') + '  ·  tap the title for stats'; }
+{ const b = document.getElementById('bld'); if (b) b.textContent = BUILD + (KDBG ? ' + knock' : '') + (KOBS ? ' + obs' : '') + '  ·  tap the title for stats'; }
 // AND IT ASKS WHETHER IT IS THE CURRENT ONE. Pages caches index.html and a phone caches it
 // harder; three times now a report and its fix have crossed in the air because the build on
 // screen was two behind the build on the server, and there is no way to tell by looking.
