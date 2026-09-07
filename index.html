@@ -958,7 +958,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b94';
+const BUILD = 'b95';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2082,6 +2082,53 @@ const stars = (() => {
       void main(){ vec2 c=gl_PointCoord-0.5; float a=smoothstep(0.5,0.0,length(c)); gl_FragColor=vec4(vec3(1.0,0.97,0.92)*vS*0.4, a*uOp); }`
   }));
   skyRig.add(m); return m;
+})();
+
+// ---------- deep space ----------
+// What is out there besides this world. Four bodies and a few nebula veils, hung on the sky
+// rig at eight hundred units so they sit outside everything and never move with the camera --
+// they are meant to be unreachably far, not scenery you could fly to. Invisible from the
+// ground and full strength out at the title, which is where the composition needs them.
+const DEEP = (() => {
+  const g = new THREE.Group(); g.visible = false; skyRig.add(g);
+  const R = 760;
+  const at = (yaw, pit, d) => new THREE.Vector3(
+    Math.cos(pit) * Math.sin(yaw) * d, Math.sin(pit) * d, Math.cos(pit) * Math.cos(yaw) * d);
+  const mats = [];
+  // The bodies. Basic materials with no lighting: a planet a light-hour away is lit by its
+  // own star, not by ours, and faking that with a real light would cost a shader variant.
+  const body = (yaw, pit, rad, hex, ring) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(rad, 26, 18),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(hex), transparent: true, opacity: 0, fog: false }));
+    m.position.copy(at(yaw, pit, R)); m.renderOrder = -3; mats.push(m.material); g.add(m);
+    // A night side: a hemisphere-and-a-bit of dark shell over each body, turned at random, so
+    // they read as lit spheres rather than as flat dots.
+    const sh = new THREE.Mesh(new THREE.SphereGeometry(rad * 1.006, 26, 18, 0, Math.PI * 1.06),
+      new THREE.MeshBasicMaterial({ color: 0x05060d, transparent: true, opacity: 0, fog: false }));
+    sh.rotation.set(rnd(-.5, .5), rnd(0, 6.283), 0);
+    mats.push(sh.material); m.add(sh);
+    if (ring) {
+      const rg = new THREE.Mesh(new THREE.RingGeometry(rad * 1.5, rad * 2.3, 48),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(ring), transparent: true, opacity: 0,
+          side: THREE.DoubleSide, fog: false, depthWrite: false }));
+      rg.rotation.set(1.15, .5, .3); mats.push(rg.material); m.add(rg);
+    }
+    return m;
+  };
+  body(0.6, .30, 34, '#b98cf0', '#e9c9a0');    // a banded giant with a ring, the anchor of the frame
+  body(2.5, .12, 15, '#5fd6c0');
+  body(4.4, .42, 21, '#e0806a');
+  body(3.5, -.22, 9, '#9fb6e8');
+  // Nebula: a few big soft additive cards, drifting apart in colour so it does not read as
+  // one stain. They are the cheapest possible depth cue and the most effective.
+  for (let i = 0; i < 7; i++) {
+    const sp = glow(pick(['#7a4fd0', '#a03fd0', '#2f6fd0', '#c05fa8', '#3fa89a']), rnd(340, 620), rnd(.05, .12));
+    sp.position.copy(at(rnd(0, 6.283), rnd(-.5, .7), R * 1.06));
+    sp.renderOrder = -4; sp.material.fog = false; sp.material.depthWrite = false;
+    sp.userData.op0 = sp.material.opacity; sp.material.opacity = 0;
+    mats.push(sp.material); g.add(sp);
+  }
+  return { g, mats, veils: g.children.filter(c => c.isSprite) };
 })();
 
 // ---------- lights ----------
@@ -5429,7 +5476,11 @@ const SHIP = {
   // and off now that somebody can -- watching your own ship take itself for a lap while you
   // stand there reads as a bug, not as a world going on without you. The code stays: it
   // exercises every joint, tools/sortie.js still runs it, and other ships will want it.
-  sortie: false, firstAt: 55, every: [DAY * 1.4, DAY * 2.8],
+  // On. It was off, so the ship has been sitting on its pad since the day it was built and
+  // "make sure we see the ship flying" was never going to happen. `firstAt` is short enough
+  // that the lap happens while the title screen is still up, which is the one moment the
+  // whole planet is in frame and a ship crossing it is worth having.
+  sortie: true, firstAt: 7, every: [DAY * 1.4, DAY * 2.8],
   cruise: 62, speed: 30, hop: 26, liftT: 6, landT: 8, radius: W * .5,
 };
 // Flying it yourself. Everything here is an acceleration or a rate, never a speed set
@@ -7066,9 +7117,14 @@ function buildSites() {
   const RUNGS = [[.12, 32], [.12, 26], [.12, 22], [.16, 18], [.20, 14], [.28, 10], [.40, 5], [.60, 0]];
   let pad = null;
   for (const [sl, c] of RUNGS) {
+    // It kept SETTLING -- the console said so on most loads: slope .16, clearance 18, which
+    // is a knoll with things on it. Not because no flat open ground exists, but because six
+    // tries per biome is not enough to find it on an island this size. These are height-field
+    // samples at load time and cost nothing worth measuring, so it now looks properly before
+    // it gives anything up.
     for (const nm of ['pasture', 'scrub', 'highland'])
-      for (let i = 0; i < 6 && !pad; i++) { const q = randomBiome(nm, 3, 26, sl, 400, c); if (reachable(q)) pad = q; }
-    for (let i = 0; i < 60 && !pad; i++) { const q = randomLand(3, 26, sl, 400, c); if (reachable(q)) pad = q; }
+      for (let i = 0; i < 40 && !pad; i++) { const q = randomBiome(nm, 3, 26, sl, 400, c); if (reachable(q)) pad = q; }
+    for (let i = 0; i < 400 && !pad; i++) { const q = randomLand(3, 26, sl, 400, c); if (reachable(q)) pad = q; }
     if (pad) { if (c < 22) console.info('[site] the lander had to settle for slope ' + sl + ', clearance ' + c); break; }
   }
   if (pad) { world.structures.push(new Lander(pad.x, pad.z, rnd(Math.PI * 2))); out.push({ x: pad.x, z: pad.z }); }
@@ -7437,7 +7493,10 @@ function updateSky() {
   // behind it rather than a blue afternoon. The HDRI skyline goes with it, for the same
   // reason: a horizon is a thing you have from the ground.
   const camUp = camera.position.length() - PLANET.R;
-  const spaceK = smooth(PLANET.R * .35, PLANET.R * 1.5, camUp);
+  // The title screen is six hundred units out. It is space, and it should read as space
+  // whatever o'clock the world happens to be -- a blue afternoon behind a whole planet is
+  // the one thing that composition cannot survive.
+  const spaceK = INTRO.on ? 1 : smooth(PLANET.R * .35, PLANET.R * 1.5, camUp);
   if (spaceK > .001) for (const k of ['top', 'mid', 'low']) tmpC[k].lerp(SKY.space, spaceK);
   skyUni.uEnvK.value = SKY.envK * (1 - spaceK) * (ENV.map ? 1 : 0);
   skyUni.uTop.value.copy(tmpC.top); skyUni.uMid.value.copy(tmpC.mid); skyUni.uLow.value.copy(tmpC.low);
@@ -7462,7 +7521,11 @@ function updateSky() {
   // for a glow to sit against.
   // Less fill than it had, because the old rig lit every face of everything and left no dark
   // side for anything to be read against -- but not so little that the island goes gloomy.
-  hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg); hemi.intensity = lerp(.44, .58, dayK)   // the night floor: below this the ground is a silhouette * (1 - oc * .3) + WX.flash * 1.5;
+  hemi.color.copy(tmpC.hs); hemi.groundColor.copy(tmpC.hg);
+  // .44 is the night floor: below it the ground is a silhouette with a torch on it. (Do NOT
+  // put that sentence at the end of the next line -- it is one expression on one line, and a
+  // trailing // comment eats the rest of it. That is twice now.)
+  hemi.intensity = lerp(.44, .58, dayK) * (1 - oc * .3) + WX.flash * 1.5;
   sun.intensity *= 1 - oc * .8; sun.castShadow = sun.castShadow && sun.intensity > .2;
   fitShadow(camS.r);
   sun.color.copy(tmpC.sun); bounce.intensity = lerp(.04, .17, dayK); fill.intensity = lerp(.08, .34, dayK);
@@ -7477,6 +7540,17 @@ function updateSky() {
   // Two pixels of star is a speck on a phone from the ground and nothing at all against a
   // whole planet. Out in space they are the only thing in the frame besides the world.
   stars.material.uniforms.uBig.value = 1 + spaceK * 1.8;
+  // The neighbours come in with the stars, and go out again on the way down.
+  {
+    const k = spaceK * spaceK;
+    DEEP.g.visible = k > .004;
+    if (DEEP.g.visible) {
+      for (const m of DEEP.mats) m.opacity = (m.userData.deep0 === undefined
+        ? (m.userData.deep0 = m.color.getHex() === 0x05060d ? .92 : .95) : m.userData.deep0) * k;
+      for (const v of DEEP.veils) v.material.opacity = v.userData.op0 * k;
+      DEEP.g.rotation.y = world.clock * .0016;      // barely: they are a long way off
+    }
+  }
   stars.material.uniforms.uT.value = world.clock; stars.rotation.y = world.clock * .004;
   M.lantern.emissiveIntensity = lerp(.4, 3.2, world.night);
   for (const m of M.bloom) m.emissiveIntensity = lerp(.3, 1.6, world.night);
