@@ -1117,7 +1117,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c70';
+const BUILD = 'c71';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -13717,7 +13717,7 @@ if (window.visualViewport) {
 const statsEl = document.getElementById('stats'), eraEl = document.getElementById('era'), perfEl = document.getElementById('perf');
 // and the build, where it can be read without opening anything. `+ knock` when the throw
 // readout is armed, so a flag that did not take is visible rather than silently absent.
-{ const b = document.getElementById('bld'); if (b) b.textContent = BUILD + (KDBG ? ' + knock' : '') + (KOBS ? ' + obs' : '') + '  ·  tap the title for stats'; }
+const bldEl = document.getElementById('bld');
 // AND IT ASKS WHETHER IT IS THE CURRENT ONE. Pages caches index.html and a phone caches it
 // harder; three times now a report and its fix have crossed in the air because the build on
 // screen was two behind the build on the server, and there is no way to tell by looking.
@@ -14127,6 +14127,12 @@ function updateHUD() {
     `plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}<br>` +
     `centre of frame: ${lookingAt()}`;
   const era = eraName(); if (era !== world.lastEra) { world.lastEra = era; eraEl.textContent = era; }
+  // THE CENTRE OF THE FRAME, ON THE ALWAYS-VISIBLE LINE. It was in the folded stats panel,
+  // which means a screenshot of the thing you are pointing at does not contain the name of the
+  // thing you are pointing at unless the panel happened to be open. Every screenshot has it
+  // now.
+  if (bldEl) bldEl.textContent = BUILD + (KDBG ? '+knock' : '') + (KOBS ? '+obs' : '')
+    + '  \u00b7  ' + (INTRO.on ? 'tap the title for stats' : lookingAt());
 }
 setInterval(updateHUD, 600); updateHUD();
 setTimeout(() => logMsg('Nothing here yet but moss, motes and a few lantern trees.'), 1400);
