@@ -18,6 +18,22 @@
   html,body{margin:0;height:100%;overflow:hidden;background:#070a13;font-family:Georgia,"Iowan Old Style",serif;color:#f0e7d4;
     touch-action:none;overscroll-behavior:none;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
     -webkit-user-select:none;user-select:none}
+  /* ONE BOX, AND IT IS THE ONE YOU CAN SEE.
+     "The screen moves up": at the very beginning nothing is wrong, and then the whole picture
+     shifts and leaves a band along the bottom. That is iOS moving its URL bar, and the reason
+     it reaches the game at all is that a `position:fixed` element does NOT resolve inset:0
+     against what is on screen -- it resolves it against the LAYOUT viewport, which on iOS is a
+     different height from the visual one for as long as that bar is in motion. syncSize has
+     read visualViewport for the render buffer since c33, so the drawing was already the right
+     shape; the boxes it was being shown in were not, and neither was anything else fixed --
+     the boot card, the studio splash, the sticks, the HUD.
+     Fixing them one at a time would be nine rules and a tenth one missed. Instead: an element
+     with a TRANSFORM becomes the containing block for every fixed descendant, so giving body
+     one makes body the viewport as far as this whole file is concerned -- and body is sized
+     and offset from visualViewport in syncSize, in one place. translate(0,0) is what it is
+     nearly all the time; it is not a no-op, it is what creates the containing block. */
+  body{width:var(--vvw,100%);height:var(--vvh,100%);
+    transform:translate(var(--vvl,0px),var(--vvt,0px))}
   /* FIXED AND FILLING, rather than a block in flow that three.js sizes in pixels. In flow, the
      canvas is exactly as tall as the number syncSize last handed it -- and on iOS innerHeight
      and the actually-visible viewport disagree whenever the URL bar moves, so a stale number
@@ -1017,7 +1033,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c38';
+const BUILD = 'c39';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -11582,7 +11598,7 @@ function drawReticle() {
   if (vz > -1 || Math.abs(_wr.x) > 1.2 || Math.abs(_wr.y) > 1.2) { reticEl.hidden = true; return; }
   reticEl.hidden = false;
   const sc = clamp(34 / Math.max(8, -vz) + .55, .55, 1.5);
-  reticEl.style.transform = `translate(${(_wr.x * .5 + .5) * innerWidth}px,${(-_wr.y * .5 + .5) * innerHeight}px) scale(${sc.toFixed(3)})`;
+  reticEl.style.transform = `translate(${(_wr.x * .5 + .5) * (_vw || innerWidth)}px,${(-_wr.y * .5 + .5) * (_vh || innerHeight)}px) scale(${sc.toFixed(3)})`;
   reticEl.style.opacity = p.cool > 0 ? .45 : 1;
 }
 
@@ -12541,8 +12557,8 @@ function dpanStep() {
   _dpW.project(camera);
   if (vz > -1 || Math.abs(_dpW.x) > 1.15 || Math.abs(_dpW.y) > 1.15) { dpan.hidden = true; return; }
   dpan.hidden = false;
-  dpan.style.transform = 'translate(' + ((_dpW.x * .5 + .5) * innerWidth).toFixed(1) + 'px,'
-    + ((-_dpW.y * .5 + .5) * innerHeight).toFixed(1) + 'px)';
+  dpan.style.transform = 'translate(' + ((_dpW.x * .5 + .5) * (_vw || innerWidth)).toFixed(1) + 'px,'
+    + ((-_dpW.y * .5 + .5) * (_vh || innerHeight)).toFixed(1) + 'px)';
   dpanPaint();
 }
 // Is that tap on the drone? Screen-space, against its projected position -- raycasting a
@@ -12554,7 +12570,7 @@ function tappedDrone(cx, cy) {
   const vz = _wv.copy(_dpW).applyMatrix4(camera.matrixWorldInverse).z;
   if (vz > -1) return false;
   _dpW.project(camera);
-  const sx = (_dpW.x * .5 + .5) * innerWidth, sy = (-_dpW.y * .5 + .5) * innerHeight;
+  const sx = (_dpW.x * .5 + .5) * (_vw || innerWidth), sy = (-_dpW.y * .5 + .5) * (_vh || innerHeight);
   const r = clamp(DPAN.pick * 34 / Math.max(6, -vz) + 18, 22, 74);
   return Math.hypot(cx - sx, cy - sy) < r;
 }
@@ -12564,7 +12580,7 @@ function tap(cx, cy) {
   if (INTRO.on) { startGame(); return; }             // on the title screen, a tap is the start
   if (DPAN.open) { dpanClose(); return; }            // a tap anywhere else closes the wheel
   if (tappedDrone(cx, cy)) { dpanOpen(); return; }
-  ray.setFromCamera({ x: cx / innerWidth * 2 - 1, y: -(cy / innerHeight) * 2 + 1 }, camera);
+  ray.setFromCamera({ x: cx / (_vw || innerWidth) * 2 - 1, y: -(cy / (_vh || innerHeight)) * 2 + 1 }, camera);
   const hit = ray.intersectObject(terrain)[0]; if (!hit) return;
   const p = hit.point;
   if (height(p.x, p.z) < SEA) { world.effects.push(new Burst(p.x, SEA + .3, p.z, '#cff4ff', 10, 1)); return; }
@@ -12581,6 +12597,14 @@ function syncSize() {
   // a camera whose aspect does not match the box its picture is shown in.
   const vv = window.visualViewport;
   const w = Math.round(vv ? vv.width : innerWidth), h = Math.round(vv ? vv.height : innerHeight);
+  // The page's own box first, and every frame rather than only when the size changes: the
+  // offset moves on its own while the bar slides, without the height ever differing. Body is
+  // the containing block for every fixed panel here (see the CSS), so these four properties
+  // are the whole of what keeps the interface over the part of the screen you can see.
+  const ds = document.documentElement.style;
+  ds.setProperty('--vvw', w + 'px'); ds.setProperty('--vvh', h + 'px');
+  ds.setProperty('--vvl', (vv ? vv.offsetLeft : 0) + 'px');
+  ds.setProperty('--vvt', (vv ? vv.offsetTop : 0) + 'px');
   if (w === _vw && h === _vh) return;
   _vw = w; _vh = h;
   camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -12598,7 +12622,12 @@ function syncSize() {
 addEventListener('resize', syncSize);
 addEventListener('orientationchange', syncSize);
 if (window.visualViewport) {
-  visualViewport.addEventListener('resize', syncSize);
+  // The studio splash sizes its own canvas off cv.clientWidth/Height and re-fits on `resize`
+  // and nothing else -- it is a lifted block and it predates any of this. Now that its box
+  // follows the visual viewport, the one thing it still needs is to be told. syncSize's own
+  // early-out makes the second pass free, and dispatching a window event cannot come back
+  // round as a visualViewport one, so there is no loop here.
+  visualViewport.addEventListener('resize', () => { syncSize(); dispatchEvent(new Event('resize')); });
   visualViewport.addEventListener('scroll', syncSize);
 }
 
