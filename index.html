@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c17';
+const BUILD = 'c18';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8419,7 +8419,7 @@ const DIO = {
   // reference: the world takes about three quarters of the width and sits a little low, which
   // is what leaves the top of the picture to the name and the ship.
   fill: .74, drop: -.13,
-  scene: null, cam: null, t: 0, built: false, mix: null,
+  scene: null, cam: null, t: 0, built: false, mixes: [],
   ball: null, alien: null, ship: null, own: [], bodies: [],
 };
 // WHAT THE DIORAMA IS ALLOWED TO THROW AWAY. cloneModel shares geometry AND materials with
@@ -8454,7 +8454,7 @@ function dioDir(lat, lon, out) {
 // water inside it, a shore ring just outside, the pier on its edge, the grove opposite. The
 // reference's planet reads as a place rather than a texture because it has one big feature and
 // everything else defers to it, which is the same rule the world's zones follow.
-const DIO_BAY = new THREE.Vector3(.62, .40, .68).normalize();
+const DIO_BAY = new THREE.Vector3(.60, .22, .77).normalize();
 
 function dioPlanet() {
   const R = DIO.R;
@@ -8552,12 +8552,15 @@ const DIO_BODIES = [
   // widths across and swept the whole picture -- that is the big arc behind everything.
   { sx:  1.10, sy:  .34, d: 235, rf: .52, c: '#c87a45', ring: '#d9b083' },       // the ringed giant, off the right edge
   { sx: -1.08, sy:  .36, d: 285, rf: .50, c: '#4c7f93' },                   // the blue-green one, off the left
-  { sx:   .50, sy:  .66, d: 320, rf: .13, c: '#a9a6ae' },                   // a small moon, upper right
-  { sx:  -.90, sy: -.98, d:  64, rf: .60, c: '#7c6b57', rock: 1 },          // the big brown lump, bottom left
-  { sx:  1.00, sy:-1.02, d:  76, rf: .64, c: '#8a7ea6', rock: 1 },          // the purple moon, bottom right
-  { sx:  -.82, sy: -.34, d: 170, rf: .075, c: '#6d6660', rock: 1 },
-  { sx:   .90, sy: -.60, d: 185, rf: .085, c: '#6b6371', rock: 1 },
-  { sx:  -.62, sy: -.80, d: 210, rf: .055, c: '#5f584f', rock: 1 },
+  // The corners are the owner's cratered asteroid now. `tint` multiplies its own texture, so
+  // one model is the brown lump bottom left, the purple moon bottom right and the little grey
+  // ones -- which is also how the reference does it: the same rock at four sizes.
+  { sx:  -.90, sy: -.98, d:  64, rf: .60,  model: 'models/cratered_asteroid.glb', tint: '#b09678' },
+  { sx:  1.00, sy:-1.02, d:  76, rf: .64,  model: 'models/cratered_asteroid.glb', tint: '#9b8cc4' },
+  { sx:   .50, sy:  .66, d: 320, rf: .13,  model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },
+  { sx:  -.82, sy: -.34, d: 170, rf: .075, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },
+  { sx:   .90, sy: -.60, d: 185, rf: .085, model: 'models/cratered_asteroid.glb', tint: '#968ea0' },
+  { sx:  -.62, sy: -.80, d: 210, rf: .055, model: 'models/cratered_asteroid.glb', tint: '#8d867c' },
 ];
 
 function dioSky(g) {
@@ -8576,12 +8579,29 @@ function dioSky(g) {
   };
   for (const b of DIO_BODIES) {
     // Unit radius, scaled per frame: the size is a share of the picture, not a world number.
-    const geo = b.rock ? craggy(1) : dioOwn(new THREE.SphereGeometry(1, 34, 24));
-    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(b.c), roughness: 1, metalness: 0 });
-    mat.userData.noHole = true;
-    const m = new THREE.Mesh(geo, mat);
+    const m = new THREE.Group();
     m.rotation.set(rnd(3), rnd(3), rnd(3));
     m.frustumCulled = false;
+    if (b.model) {
+      loadModel(b.model, e => {
+        const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
+        const k = 2 / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));    // to unit RADIUS, not unit size
+        inst.scale.setScalar(k);
+        inst.position.set(-(e.box.max.x + e.box.min.x) * .5 * k,
+          -(e.box.max.y + e.box.min.y) * .5 * k, -(e.box.max.z + e.box.min.z) * .5 * k);
+        inst.traverse(o => {
+          if (!o.isMesh) return;
+          dioMat(o);
+          if (b.tint) for (const mm of [].concat(o.material)) mm.color.set(b.tint);
+        });
+        m.add(inst);
+      });
+    } else {
+      const geo = b.rock ? craggy(1) : dioOwn(new THREE.SphereGeometry(1, 34, 24));
+      const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(b.c), roughness: 1, metalness: 0 });
+      mat.userData.noHole = true;
+      m.add(new THREE.Mesh(geo, mat));
+    }
     if (b.ring) {
       const rg = new THREE.Mesh(dioOwn(new THREE.RingGeometry(1.34, 1.86, 80)),
         new THREE.MeshBasicMaterial({ color: new THREE.Color(b.ring), transparent: true, opacity: .62,
@@ -8597,6 +8617,16 @@ function dioSky(g) {
 // antenna, our alien, our ship -- laid out the way the reference lays its planet out: a base
 // on one shoulder, a grove on the other, crystals behind, the pier on the bay, and the alien
 // standing on top of the world at a size no real body would be.
+// WHAT STANDS ON IT, and this is a LAYOUT rather than a scatter. Every previous pass here
+// picked random latitudes and longitudes and threw twenty of everything at the ball, which is
+// why six mushrooms came up when the reference has three, and why the surface read as litter
+// instead of as a place. The reference is a composition: one base on the left shoulder, the
+// alien on top, three big caps in three specific spots, one spray of crystals, a handful of
+// named creatures, and low cover only along the line where the green meets the rock.
+//
+// Bearings, since every position below is one: the lens is out along +Z, so lon 1.57 faces the
+// camera, lon 0 is the right limb, lon 3.14 the left. lat is the sine of the latitude, 1 at the
+// pole. Anything in the front half wants a lon between about 0.3 and 2.8.
 function dioDress(g) {
   const put = (url, lat, lon, span, spin, lift) => loadModel(url, e => {
     const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
@@ -8607,248 +8637,59 @@ function dioDress(g) {
     const holder = new THREE.Group(); holder.add(inst);
     dioStand(holder, dioDir(lat, lon), DIO.R * (1 + (lift || 0)) * 1.012, spin || 0);
     g.add(holder);
+    return inst;
   });
-  // the base, its dish and its mast, on the left shoulder
-  // EVERYTHING IS BIGGER THAN IT WAS. On a fourteen-unit planet a three-unit tree is a speck
-  // once the ball is three quarters of the frame; the reference's mushrooms are a third of
-  // the planet's radius and its base half of it. Storybook scale is the whole point.
-  put('models/space_base.glb', .70, 2.52, 8.6, .35);
-  put('models/sp_sci_fi_antenna.glb', .58, 3.02, 6.4, 0);
-  put('models/alien_building_01.glb', .54, 2.10, 4.2, 1.1);
-  // the grove opposite, tall and varied
-  for (let i = 0; i < 7; i++)
-    put(pick(['models/sp_tree03.glb', 'models/sp_tree04.glb', 'models/sp_tree01.glb']),
-      rnd(.34, .76), rnd(4.8, 6.20), rnd(5.2, 8.4), rnd(6.3));
-  // umbrella growth flanking it, the reference's big mushroom caps
-  for (let i = 0; i < 6; i++)
-    put(pick(['models/fantasy_mushroom_colorful.glb', 'models/fantasy_mushroom_colorful.glb',
-      'models/sp_plant06.glb', 'models/sp_plant01.glb']),
-      rnd(.26, .68), rnd(0.0, 1.6), rnd(4.2, 6.6), rnd(6.3));
-  // a crystal stand behind the base
+  // A creature, facing roughly out of the picture and breathing. They are the only things on
+  // this planet that are supposed to look back at you.
+  const beast = (url, lat, lon, span) => loadModel(url, e => {
+    const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
+    const s = span / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));
+    inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; dioMat(o); } });
+    const holder = new THREE.Group(); holder.add(inst);
+    const dir = dioDir(lat, lon);
+    dioStand(holder, dir, DIO.R * 1.012, 0);
+    dioFace(holder, dir, _dfCam.set(0, 0, 1));
+    g.add(holder);
+    const idle = pickClip(e.anims || [], 'idle', 'idle', 'walk|run|die');
+    if (idle) { const mx = new THREE.AnimationMixer(inst); mx.clipAction(idle).play(); DIO.mixes.push(mx); }
+  });
+
+  // ---- the base, on the left shoulder ----
+  put('models/space_base.glb', .64, 2.46, 9.4, .28);
+  put('models/sp_sci_fi_antenna.glb', .54, 2.84, 6.0, 0);
+
+  // ---- THREE big caps, in the three places the reference puts them ----
+  put('models/fantasy_mushroom_colorful.glb', .60, 0.95, 5.4, rnd(6.3));   // beside the alien, right
+  put('models/fantasy_mushroom_colorful.glb', .27, 0.12, 6.2, rnd(6.3));   // out on the right limb
+  put('models/fantasy_mushroom_colorful.glb', .37, 2.10, 7.0, rnd(6.3));   // front left, the biggest
+
+  // ---- one spray of crystals, not five scattered ones ----
   for (let i = 0; i < 5; i++)
-    put('models/sp_crystal01.glb', rnd(.50, .78), rnd(3.3, 4.3), rnd(2.8, 4.6), rnd(6.3));
-  // low cover scattered over the green, and rock round the shoulders
-  for (let i = 0; i < 26; i++)
-    put(pick(['models/sp_plant02.glb', 'models/sp_plant04.glb', 'models/sp_plant07.glb', 'models/sp_plant09.glb']),
-      rnd(.24, .94), rnd(0, 6.283), rnd(1.4, 2.8), rnd(6.3));
-  for (let i = 0; i < 12; i++)
-    put(pick(['models/sp_rock02.glb', 'models/sp_rock05.glb', 'models/sp_rock09.glb']),
-      rnd(-.14, .42), rnd(0, 6.283), rnd(2.0, 4.4), rnd(6.3));
-  // and a few of the island's own creatures, oversize like the reference's
-  for (const [lat, lon, sp] of [[.60, 5.05, 4.4], [.50, 0.55, 3.8], [.66, 1.15, 3.4]])
-    put('models/purple_horny.glb', lat, lon, sp, rnd(6.3));
-}
+    put('models/sp_crystal01.glb', .48 + rnd(-.05, .05), 0.52 + rnd(-.14, .14), rnd(2.2, 3.8), rnd(6.3));
 
-// ---------- the bay: a headland, a fall, a pier and a mill ----------
-// Everything down here is placed relative to DIO_BAY rather than at absolute latitudes,
-// because the bay is the planet's one big feature and the rest of the shore is only
-// interesting in relation to it. `dioBayDir` gives a direction `ang` radians from the middle
-// of the bay on a compass `bear` around it, so "just outside the water on the north side" is
-// a thing that can be written down -- and the water's edge is at acos(0.90) = 0.451 radians,
-// which is the number every placement below is measured against.
-const _bbE = new THREE.Vector3(), _bbN = new THREE.Vector3(), _bbT = new THREE.Vector3();
-function dioBayDir(ang, bear, out) {
-  _bbE.set(0, 1, 0).cross(DIO_BAY).normalize();
-  _bbN.crossVectors(DIO_BAY, _bbE);
-  return (out || new THREE.Vector3()).copy(DIO_BAY).multiplyScalar(Math.cos(ang))
-    .addScaledVector(_bbE, Math.sin(ang) * Math.cos(bear))
-    .addScaledVector(_bbN, Math.sin(ang) * Math.sin(bear)).normalize();
-}
-// Stand a thing on the surface AND turn it so its own +Z faces `toward`. dioStand alone
-// leaves the yaw arbitrary, which is fine for a rock and useless for a waterfall.
-const _bfZ = new THREE.Vector3(), _bfC = new THREE.Vector3();
-function dioFace(o, dir, toward) {
-  _bbT.copy(toward).addScaledVector(dir, -toward.dot(dir)).normalize();   // the tangent that points at it
-  _bfZ.set(0, 0, 1).applyQuaternion(o.quaternion);
-  o.rotateY(Math.atan2(_bfC.crossVectors(_bfZ, _bbT).dot(dir), _bfZ.dot(_bbT)));
-}
+  // ---- the creatures the reference has looking out of it ----
+  beast('models/purple_horny.glb', .56, 1.14, 3.6);
+  beast('models/tucann.glb', .42, 1.92, 3.0);
+  for (let i = 0; i < 3; i++) beast('models/creature_green.glb', .30 - i * .08, 2.72 + i * .19, 2.0 + i * .2);
 
-// Falling water, as a texture rather than as geometry: vertical streaks that fade out at both
-// edges and thin toward the bottom. Two of these on slightly different planes, scrolling at
-// different speeds, is the whole waterfall -- and it is one 48x128 canvas.
-function dioFallTex() {
-  const W = 48, H = 128, c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const g = c.getContext('2d'), img = g.createImageData(W, H);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const u = x / (W - 1), v = y / (H - 1);
-    // streaks along the fall, and a soft edge left and right so it has no hard sides
-    const streak = .55 + .45 * Math.sin(u * 41.0 + Math.sin(u * 13.0) * 2.0);
-    const edge = Math.sin(Math.PI * u);
-    const a = streak * edge * edge * (1 - v * .45) * (v < .06 ? v / .06 : 1);
-    const i = (y * W + x) * 4;
-    img.data[i] = 236; img.data[i + 1] = 250; img.data[i + 2] = 255;
-    img.data[i + 3] = Math.round(255 * clamp(a, 0, 1) * .92);
+  // ---- and the planting. A BAND along the line where the green gives out, plus a few bushes
+  // up on the grass -- which is where the reference has all of its, and nowhere else.
+  for (let i = 0; i < 10; i++) {
+    const lon = 0.25 + i / 9 * 2.55 + rnd(-.10, .10);
+    put(pick(['models/sp_tree01.glb', 'models/sp_tree03.glb']), rnd(.34, .62), lon, rnd(2.0, 3.2), rnd(6.3));
   }
-  g.putImageData(img, 0, 0);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-
-function dioBayWorks(g) {
-  const R = DIO.R;
-  const M = {
-    rock: new THREE.MeshStandardMaterial({ color: 0x8b8378, roughness: 1, metalness: 0 }),
-    wood: new THREE.MeshStandardMaterial({ color: 0xa97c4e, roughness: .95, metalness: 0 }),
-    post: new THREE.MeshStandardMaterial({ color: 0x8a6339, roughness: .95, metalness: 0 }),
-    trim: new THREE.MeshStandardMaterial({ color: 0xe08a34, roughness: .8, metalness: 0 }),
-    foam: new THREE.MeshStandardMaterial({ color: 0xf4fbff, roughness: 1, metalness: 0 }),
-  };
-  for (const k in M) M[k].userData.noHole = true;
-  const box = (par, mat, sx, sy, sz, px, py, pz, rx, ry, rz) => {
-    const m = new THREE.Mesh(dioOwn(new THREE.BoxGeometry(sx, sy, sz)), mat);
-    m.position.set(px, py, pz); m.rotation.set(rx || 0, ry || 0, rz || 0);
-    m.castShadow = m.receiveShadow = true; par.add(m); return m;
-  };
-  const cyl = (par, mat, r0, r1, h, px, py, pz, seg) => {
-    const m = new THREE.Mesh(dioOwn(new THREE.CylinderGeometry(r0, r1, h, seg || 10)), mat);
-    m.position.set(px, py, pz); m.castShadow = m.receiveShadow = true; par.add(m); return m;
-  };
-
-  // ---- the headland and the fall ----
-  // The bay is only sunk four per cent of the radius, which is not a cliff -- so the cliff is
-  // BUILT rather than carved: a shelf standing on the shore with the water coming over its
-  // lip. Carving it into the sphere would have meant a deeper bay everywhere.
-  {
-    const dir = dioBayDir(.50, 2.30);
-    const hold = new THREE.Group();
-    dioStand(hold, dir, R * .995, 0);
-    dioFace(hold, dir, DIO_BAY);
-    g.add(hold);
-    box(hold, M.rock, 4.6, 2.3, 3.0, 0, .9, -1.0);
-    box(hold, M.rock, 3.0, 1.5, 1.4, -2.4, .5, -.3, 0, .3, .12);
-    box(hold, M.rock, 2.4, 1.2, 1.3, 2.5, .4, -.4, 0, -.25, -.1);
-    const tex = dioFallTex();
-    DIO.fallTex = [];
-    for (let i = 0; i < 2; i++) {
-      const t = i ? tex.clone() : tex; t.needsUpdate = true;
-      const mat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false,
-        side: THREE.DoubleSide, opacity: i ? .55 : .95, toneMapped: false });
-      mat.userData.noHole = true;
-      const w = 2.5 - i * .5;
-      const m = new THREE.Mesh(dioOwn(new THREE.PlaneGeometry(w, 3.1)), mat);
-      m.position.set(0, .55, .52 + i * .07);
-      m.rotation.x = -.06;
-      hold.add(m);
-      DIO.fallTex.push({ t, sp: 1.5 + i * .7 });
-    }
-    // and the churn where it lands
-    for (let i = 0; i < 5; i++) {
-      const s = rnd(.42, .78);
-      const p = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(s, 12, 9)), M.foam);
-      p.position.set(rnd(-1.2, 1.2), rnd(-1.2, -.7), rnd(.5, 1.5));
-      hold.add(p);
-    }
+  for (let i = 0; i < 16; i++) {
+    const lon = 0.15 + i / 15 * 2.75 + rnd(-.08, .08);
+    put(pick(['models/sp_plant02.glb', 'models/sp_plant04.glb', 'models/sp_plant07.glb']),
+      rnd(.10, .30), lon, rnd(1.2, 2.2), rnd(6.3));
   }
-
-  // ---- the pier, the dome and the mill ----
-  {
-    const dir = dioBayDir(.26, -.62);
-    const hold = new THREE.Group();
-    dioStand(hold, dir, R * .972, 0);          // the water sits at .972 of the radius
-    dioFace(hold, dir, DIO_BAY);
-    g.add(hold);
-    // a walkway running out over the water, on its own legs
-    for (let i = 0; i < 6; i++) {
-      box(hold, M.wood, 2.4, .16, .62, 0, .92, -1.9 + i * .66);
-      if (i % 2 === 0) {
-        cyl(hold, M.post, .11, .11, 1.9, -.95, 0, -1.9 + i * .66, 7);
-        cyl(hold, M.post, .11, .11, 1.9, .95, 0, -1.9 + i * .66, 7);
-      }
-    }
-    // the deck it ends on
-    box(hold, M.wood, 4.2, .18, 3.0, 0, .92, 3.0);
-    for (const [px, pz] of [[-1.7, 1.8], [1.7, 1.8], [-1.7, 4.2], [1.7, 4.2]])
-      cyl(hold, M.post, .13, .13, 1.9, px, 0, pz, 7);
-    // a rail down one side, so it reads as somewhere you walk rather than a raft
-    for (let i = 0; i < 5; i++) cyl(hold, M.post, .06, .06, .7, -1.9, 1.35, 1.9 + i * .58, 6);
-    box(hold, M.post, .1, .09, 2.6, -1.9, 1.68, 3.0);
-    // The hut is the owner's model now rather than six primitives doing an impression of one.
-    // It arrives normalised to a unit with its base on zero, so it needs a scale and nothing
-    // else -- and it loads late, which is why it goes on by callback rather than in sequence.
-    loadModel('models/dome_hut.glb', e => {
-      const inst = cloneModel(e.root), bs = e.box.getSize(new THREE.Vector3());
-      const k = 3.1 / Math.max(1e-4, Math.max(bs.x, bs.z));
-      inst.scale.setScalar(k);
-      inst.position.set(.5, 1.0 - e.box.min.y * k, 3.2);
-      inst.rotation.y = -.35;
-      inst.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; dioMat(o); } });
-      hold.add(inst);
-    });
-    // the mill on the corner of the deck
-    const mill = new THREE.Group(); mill.position.set(-1.5, 1.0, 4.0); hold.add(mill);
-    cyl(mill, M.post, .1, .13, 2.9, 0, 1.45, 0, 8);
-    const hub = new THREE.Group(); hub.position.set(0, 2.85, .22); mill.add(hub);
-    for (let i = 0; i < 4; i++) {
-      const b = box(hub, M.wood, .18, 1.5, .05, 0, .82, 0);
-      b.rotation.z = i / 4 * Math.PI * 2;
-      b.position.set(Math.sin(-i / 4 * Math.PI * 2) * .82, Math.cos(i / 4 * Math.PI * 2) * .82, 0);
-    }
-    cyl(hub, M.trim, .14, .14, .22, 0, 0, 0, 10).rotation.x = Math.PI * .5;
-    DIO.mill = hub;
-  }
-}
-
-// ---------- shooting stars ----------
-// In frame coordinates like everything else in the sky, because a meteor is a thing that
-// crosses the PICTURE. Each one waits, then draws itself across in a second and a half on a
-// shallow diagonal, and the tail is a stretched quad rather than a trail of particles: one
-// draw, no allocation, and it looks the same.
-function dioMeteorTex() {
-  const W = 128, H = 8, c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const g = c.getContext('2d'), img = g.createImageData(W, H);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const u = x / (W - 1), v = Math.abs(y / (H - 1) - .5) * 2;
-    const a = Math.pow(u, 2.6) * (1 - v) * (1 - v);
-    const i = (y * W + x) * 4;
-    img.data[i] = 210; img.data[i + 1] = 244; img.data[i + 2] = 255;
-    img.data[i + 3] = Math.round(255 * clamp(a, 0, 1));
-  }
-  g.putImageData(img, 0, 0);
-  return new THREE.CanvasTexture(c);
-}
-function dioMeteors(sc) {
-  const tex = dioMeteorTex();
-  DIO.meteors = [];
-  for (let i = 0; i < 3; i++) {
-    // ONE MATERIAL EACH. They share a texture but not a material: each streak fades on its own
-    // clock, and opacity lives on the material -- shared, the last one to be stepped would
-    // set the alpha for all three and they would blink in unison.
-    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false,
-      blending: THREE.AdditiveBlending, toneMapped: false });
-    mat.userData.noHole = true;
-    const m = new THREE.Mesh(dioOwn(new THREE.PlaneGeometry(1, .10)), mat);
-    // depthTest stays ON: these are in the sky, so the planet has to be able to pass in front
-    // of one. With it off a meteor draws over the world it is meant to be behind.
-    m.frustumCulled = false; m.visible = false;
-    sc.add(m);
-    DIO.meteors.push({ m, wait: rnd(1, 9), t: -1, sx: 0, sy: 0, dx: 0, dy: 0, len: 1 });
-  }
-}
-function dioMeteorStep(dt, place) {
-  if (!DIO.meteors) return;
-  for (const s of DIO.meteors) {
-    if (s.t < 0) {
-      if ((s.wait -= dt) > 0) { s.m.visible = false; continue; }
-      // start off one edge, run down and across: the reference's all fall the same way
-      s.sx = rnd(-1.3, .9); s.sy = rnd(.35, 1.15);
-      const a = rnd(-.95, -.55);
-      s.dx = Math.cos(a) * 2.6; s.dy = Math.sin(a) * 2.6;
-      s.len = rnd(.10, .18); s.t = 0;
-    }
-    s.t += dt;
-    const T = 1.35;
-    if (s.t > T) { s.t = -1; s.wait = rnd(3, 11); s.m.visible = false; continue; }
-    const k = s.t / T;
-    s.m.visible = true;
-    s.m.material.opacity = Math.sin(k * Math.PI) * .9;
-    place(s.m, s.sx + s.dx * k, s.sy + s.dy * k, 330);
-    s.m.scale.set(s.len * 330 * .7, s.len * 330 * .7, 1);
-    s.m.quaternion.copy(DIO.cam.quaternion);
-    s.m.rotateZ(Math.atan2(s.dy, s.dx));
-  }
+  // the pink flowers along the bottom of the green, right on the rock line
+  for (let i = 0; i < 7; i++)
+    put('models/sp_plant05.glb', rnd(-.02, .12), 0.5 + i / 6 * 2.1 + rnd(-.10, .10), rnd(1.0, 1.8), rnd(6.3));
+  // and moss and rock clinging to the cliffs under it
+  for (let i = 0; i < 8; i++)
+    put(pick(['models/sp_rock02.glb', 'models/sp_rock09.glb']), rnd(-.30, -.02), rnd(0.2, 2.9), rnd(1.6, 3.0), rnd(6.3));
 }
 
 function buildDiorama() {
@@ -8906,7 +8747,7 @@ function buildDiorama() {
     dioFace(holder, dir, _dfCam.set(0, 0, 1));
     DIO.spin.add(holder); DIO.alien = inst;
     const idle = pickClip(e.anims || [], 'idle', 'idle', 'walk|run|rifle');
-    if (idle) { DIO.mix = new THREE.AnimationMixer(inst); DIO.mix.clipAction(idle).play(); }
+    if (idle) { const mx = new THREE.AnimationMixer(inst); mx.clipAction(idle).play(); DIO.mixes.push(mx); }
   });
   // and our ship, up on the left where the reference puts its saucer
   loadModel(SHIP.url, e => {
@@ -8960,7 +8801,7 @@ function dioramaFrame(dt, k) {
   // IT DOES NOT TURN. A spinning planet swings the base, the bay and the grove out of the
   // frame they were composed for, and takes the alien's facing with it. The shot is a fixed
   // composition; the camera's drift, the mill, the fall and the meteors are what move.
-  if (DIO.mix) DIO.mix.update(dt);
+  for (const mx of DIO.mixes) mx.update(dt);
   if (DIO.ship) {
     // Up on the left, under the name and clear of the world -- where the reference puts its
     // saucer. In frame coordinates for the same reason everything else is.
@@ -9064,7 +8905,7 @@ function startGame() {
   if (DIO.scene) {
     for (const g of DIO.own) g.dispose();
     DIO.own.length = 0;
-    DIO.scene = null; DIO.spin = null; DIO.sky = null; DIO.mix = null;
+    DIO.scene = null; DIO.spin = null; DIO.sky = null; DIO.mixes.length = 0;
   }
   if (weap.ready) wdock.hidden = false;
   if (/[?&]obs\b/.test(location.search)) setTimeout(showObstacles, 400);
