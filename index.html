@@ -958,7 +958,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b93';
+const BUILD = 'b94';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8145,7 +8145,7 @@ const NET = {
   // and pushing was why the thing sat there as a rigid hoop instead of crumpling onto
   // anything. A trace of push is left in so it cannot fold flat into a line.
   give: .5, shove: .1,
-  rim: 2.4,                           // the outer hoop is weighted, the way a cast net's is
+  rim: 2.4, rimHeld: .55,                           // the outer hoop is weighted, the way a cast net's is
   catch: .95,                         // how much of the open radius has to pass the animal to take it
   // Zero means it never works free. It was sixteen seconds, and sixteen seconds is exactly
   // long enough to look like the net FAILING -- it wraps, it holds, and then for no visible
@@ -8163,11 +8163,24 @@ const NET = {
   // an offset in the animal's own frame and rebuilt from that each frame, so it rides the
   // body exactly and cannot slide off it however the animal thrashes. It still looks like a
   // simulated net because for the first second it was one; it just stops being able to lose.
-  bindT: .75,
+  // A net draped on a convex body slides off it. That is not a bug in the solver, it is what
+  // gravity does to a sheet on a dome, and measured it took two seconds flat: the cords ran
+  // down the flanks and pooled at the feet every time, whatever the leash and the cling were
+  // set to. Simulation alone was never going to hold it.
+  //
+  // So the wrap has a DESTINATION. Every node knows where it belongs on the animal -- the hub
+  // at the crown, each hoop a ring further down the body, the rim closing under it past the
+  // equator -- and over `wrapT` it is drawn there while the cords go on jostling, so the
+  // closing still reads as cloth rather than as a shape appearing. Then it binds. The physics
+  // supplies the life; the target supplies the outcome.
+  wrapArc: 2.5, wrapT: .9, wrapK: 7,
   // And a leash. Nothing may sit further from the animal's middle than this much of its own
   // size, so the sheet cannot spread out flat on the ground beside it -- which is what it was
   // doing, and why it looked like it fell off rather than caught.
-  leash: 2.0,
+  // Was 2.0, which let a node reach a whole body-radius BELOW the animal's feet, so the
+  // weighted rim slid down the flanks, pooled on the ground and took the sheet with it.
+  // At 1.3 there is nowhere below to pool to.
+  leash: 1.3,
   // Rope, not plasma. The cords are a real material that takes the light; only the knots
   // glow, and in a colour that is not the cord's, so it reads as fibre with something alien
   // strung through it. In flight the whole thing runs hot and cools when it lands.
@@ -9208,8 +9221,8 @@ class NetShot {
   // held above its back, slightly domed, thrown down and inward -- so it visibly snaps shut
   // rather than waiting for gravity to think about it.
   drape(o) {
-    const R = (o.rad || 1), rad = Math.max(NET.R1 * .82, R * 2.3);
-    const cx = o.pos.x, cy = o.pos.y + o.pivotY() + R * 1.35, cz = o.pos.z;
+    const R = (o.rad || 1), rad = Math.max(NET.R1 * .6, R * 1.7);
+    const cx = o.pos.x, cy = o.pos.y + o.pivotY() + R * .75, cz = o.pos.z;
     for (let i = 0; i < this.n; i++) {
       const a = this.lay[i * 2], b = this.lay[i * 2 + 1], i3 = i * 3;
       const q = a * a + b * b;                       // 0 at the hub, 1 at the rim
@@ -9276,16 +9289,37 @@ class NetShot {
     for (let i = 0; i < n; i++) {
       const i3 = i * 3;
       p0[i3] = p[i3]; p0[i3 + 1] = p[i3 + 1]; p0[i3 + 2] = p[i3 + 2];
-      v[i3 + 1] -= NET.grav * (this.heavy[i] ? NET.rim : 1) * h;
+      v[i3 + 1] -= NET.grav * (this.heavy[i] ? (o ? NET.rimHeld : NET.rim) : 1) * h;   // the lead line CATCHES; held, it is what drags it off
       p[i3] += v[i3] * h; p[i3 + 1] += v[i3 + 1] * h; p[i3 + 2] += v[i3 + 2] * h;
     }
-    if (this.prey) {
-      this.cinch = Math.min(1, (this.cinch || 0) + h / NET.cinchT);
-      this.closeT = (this.closeT || 0) + h;
-      if (this.closeT > NET.bindT) { this.bindTo(this.prey); this.ride(this.prey); return; }
-    }
-    for (let it = 0; it < NET.iters; it++) this.relax();
+    if (this.prey) this.cinch = Math.min(1, (this.cinch || 0) + h / NET.cinchT);
+    // The cords hand over. Early on they own the shape and it crumples like cloth; as the
+    // wrap closes they give way to the targets, because a cinched cord is SHORTER than the
+    // distance across the body and the two were fighting -- measured, the net could only ever
+    // reach halfway down before the cords hauled it back up.
+    const relaxK = o ? Math.max(.12, 1 - (this.closeT || 0) / NET.wrapT) : 1;
+    for (let it = 0; it < NET.iters; it++) this.relax(relaxK);
     this.collide(h);
+    if (o) {
+      // Drawn onto where it belongs, harder as it closes. See NET.wrapArc.
+      this.closeT = (this.closeT || 0) + h;
+      const k = Math.min(1, h * NET.wrapK * Math.min(1, this.closeT / NET.wrapT + .2));
+      const H = this.hull(o), R = NET.rings, S = NET.spokes;
+      for (let i = 0; i < n; i++) {
+        const i3 = i * 3;
+        let tx, ty, tz;
+        if (i === 0) { tx = o.pos.x; ty = H.cy + H.ey * 1.04; tz = o.pos.z; }
+        else {
+          const q = ((i - 1) / S | 0) + 1, pol = q / R * NET.wrapArc, a = ((i - 1) % S) / S * Math.PI * 2;
+          const sp = Math.sin(pol), cp = Math.cos(pol);
+          tx = o.pos.x + Math.cos(a) * sp * H.ex * 1.06;
+          ty = H.cy + cp * H.ey * 1.06;
+          tz = o.pos.z + Math.sin(a) * sp * H.ex * 1.06;
+        }
+        p[i3] += (tx - p[i3]) * k; p[i3 + 1] += (ty - p[i3 + 1]) * k; p[i3 + 2] += (tz - p[i3 + 2]) * k;
+      }
+      if (this.closeT > NET.wrapT) { this.bindTo(o); this.ride(o); return; }
+    }
     const inv = h > 0 ? 1 / h : 0;
     for (let i = 0; i < n; i++) {
       const i3 = i * 3;
@@ -9296,8 +9330,9 @@ class NetShot {
   }
   // One relaxation pass: every cord pulls its two ends back to the length it was cut to,
   // half the error each. Four passes a frame is enough for sixty cords to read as rope.
-  relax() {
+  relax(k) {
     const p = this.p, la = this.la, lb = this.lb, rest = this.rest;
+    const kk = k === undefined ? 1 : k;
     // While it is closing on an animal every cord is treated as shorter than it was cut, so
     // the whole mesh is trying to shrink and only the body inside it is stopping it. That is
     // what a net does; a net that merely falls on something is a tablecloth.
@@ -9309,7 +9344,7 @@ class NetShot {
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
       // A cord pulls hard and shoves barely at all. Shoving as hard as it pulls is a spring,
       // and a net of springs is a hoop that will not crumple onto anything.
-      const f = (d - r) / d * (d > r ? NET.give : NET.shove);
+      const f = (d - r) / d * (d > r ? NET.give : NET.shove) * kk;
       const ox = dx * f, oy = dy * f, oz = dz * f;
       p[i] += ox; p[i + 1] += oy; p[i + 2] += oz;
       p[j] -= ox; p[j + 1] -= oy; p[j + 2] -= oz;

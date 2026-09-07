@@ -9,6 +9,7 @@
     "check:model": "node tools/model.js",
     "check:ship": "node tools/sortie.js index.html",
     "check:gait": "node tools/gait.js index.html",
+    "check:net": "node tools/net.js",
     "pack": "node tools/pack.js",
     "check:swirl": "node tools/swirl.js index.html",
     "icons": "node tools/icons.js"
