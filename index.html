@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c14';
+const BUILD = 'c15';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8551,16 +8551,17 @@ function dioDress(g) {
   // EVERYTHING IS BIGGER THAN IT WAS. On a fourteen-unit planet a three-unit tree is a speck
   // once the ball is three quarters of the frame; the reference's mushrooms are a third of
   // the planet's radius and its base half of it. Storybook scale is the whole point.
-  put('models/alien_building_01.glb', .72, 2.55, 8.0, .4);
-  put('models/sp_sci_fi_antenna.glb', .60, 3.00, 7.0, 0);
-  put('models/alien_building_01.glb', .56, 2.16, 5.4, 1.1);
+  put('models/space_base.glb', .70, 2.52, 8.6, .35);
+  put('models/sp_sci_fi_antenna.glb', .58, 3.02, 6.4, 0);
+  put('models/alien_building_01.glb', .54, 2.10, 4.2, 1.1);
   // the grove opposite, tall and varied
   for (let i = 0; i < 7; i++)
     put(pick(['models/sp_tree03.glb', 'models/sp_tree04.glb', 'models/sp_tree01.glb']),
       rnd(.34, .76), rnd(4.8, 6.20), rnd(5.2, 8.4), rnd(6.3));
   // umbrella growth flanking it, the reference's big mushroom caps
   for (let i = 0; i < 6; i++)
-    put(pick(['models/sp_plant06.glb', 'models/sp_plant01.glb', 'models/alien_mushroom_01.glb']),
+    put(pick(['models/fantasy_mushroom_colorful.glb', 'models/fantasy_mushroom_colorful.glb',
+      'models/sp_plant06.glb', 'models/sp_plant01.glb']),
       rnd(.26, .68), rnd(0.0, 1.6), rnd(4.2, 6.6), rnd(6.3));
   // a crystal stand behind the base
   for (let i = 0; i < 5; i++)
@@ -8630,10 +8631,7 @@ function dioBayWorks(g) {
     rock: new THREE.MeshStandardMaterial({ color: 0x8b8378, roughness: 1, metalness: 0 }),
     wood: new THREE.MeshStandardMaterial({ color: 0xa97c4e, roughness: .95, metalness: 0 }),
     post: new THREE.MeshStandardMaterial({ color: 0x8a6339, roughness: .95, metalness: 0 }),
-    shell: new THREE.MeshStandardMaterial({ color: 0xe6dfcd, roughness: .82, metalness: 0 }),
     trim: new THREE.MeshStandardMaterial({ color: 0xe08a34, roughness: .8, metalness: 0 }),
-    glass: new THREE.MeshStandardMaterial({ color: 0x2ec8d8, roughness: .3, metalness: 0,
-      emissive: new THREE.Color(0x1d7f8c), emissiveIntensity: .8 }),
     foam: new THREE.MeshStandardMaterial({ color: 0xf4fbff, roughness: 1, metalness: 0 }),
   };
   for (const k in M) M[k].userData.noHole = true;
@@ -8705,17 +8703,18 @@ function dioBayWorks(g) {
     // a rail down one side, so it reads as somewhere you walk rather than a raft
     for (let i = 0; i < 5; i++) cyl(hold, M.post, .06, .06, .7, -1.9, 1.35, 1.9 + i * .58, 6);
     box(hold, M.post, .1, .09, 2.6, -1.9, 1.68, 3.0);
-    // the dome: a squashed shell with a rim, a door and two lit ports
-    const dome = new THREE.Group(); dome.position.set(.5, 1.0, 3.3); hold.add(dome);
-    const sh = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(1.5, 24, 16, 0, Math.PI * 2, 0, Math.PI * .56)), M.shell);
-    sh.castShadow = sh.receiveShadow = true; dome.add(sh);
-    cyl(dome, M.trim, 1.56, 1.62, .22, 0, .1, 0, 24);
-    const door = cyl(dome, M.trim, .42, .42, .12, 0, .5, 1.32, 14);
-    door.rotation.x = Math.PI * .5;
-    for (const [px, py, pz] of [[-.85, .78, .95], [.9, .74, .9]]) {
-      const w = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(.24, 12, 9)), M.glass);
-      w.position.set(px, py, pz); dome.add(w);
-    }
+    // The hut is the owner's model now rather than six primitives doing an impression of one.
+    // It arrives normalised to a unit with its base on zero, so it needs a scale and nothing
+    // else -- and it loads late, which is why it goes on by callback rather than in sequence.
+    loadModel('models/dome_hut.glb', e => {
+      const inst = cloneModel(e.root), bs = e.box.getSize(new THREE.Vector3());
+      const k = 3.1 / Math.max(1e-4, Math.max(bs.x, bs.z));
+      inst.scale.setScalar(k);
+      inst.position.set(.5, 1.0 - e.box.min.y * k, 3.2);
+      inst.rotation.y = -.35;
+      inst.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; dioMat(o); } });
+      hold.add(inst);
+    });
     // the mill on the corner of the deck
     const mill = new THREE.Group(); mill.position.set(-1.5, 1.0, 4.0); hold.add(mill);
     cyl(mill, M.post, .1, .13, 2.9, 0, 1.45, 0, 8);
