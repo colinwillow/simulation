@@ -108,7 +108,14 @@
      screen, over the clock, since the day this rule got `fixed` in it, instead of sitting in
      #ui with the buttons where it is written to. The renderer's canvas is the only direct
      child of body, so the child combinator says exactly what was meant all along. */
-  body > canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
+  /* OVERSCAN BY THE CHROME. inset:0 covers the layout viewport, and if the browser's own
+     furniture sits OVER part of that viewport rather than beside it, the last strip is still
+     page and still shows. --uib is exactly how much, measured; anchored at the top so the
+     extra hangs off the bottom where you cannot see it and the framing does not move. When
+     the two viewports agree it is a no-op. */
+  body > canvas{position:fixed;left:0;top:0;right:0;width:100%;
+    height:calc(100% + var(--uib,0px) + var(--uit,0px) + 2px);
+    display:block;z-index:0;touch-action:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -345,8 +352,8 @@
      what was just shipped -- and it was living in #perf, inside a panel that starts folded
      behind a tap on the title. So there was no way to tell a fixed build from a stale one,
      which is worse than useless when a bug report and a fix are crossing in the air. */
-  #bld{font-size:11px;opacity:.5;letter-spacing:.1em;margin-top:2px;
-    font-family:ui-monospace,Menlo,Consolas,monospace}
+  #bld{font-size:11px;opacity:.72;letter-spacing:.04em;margin-top:2px;line-height:1.45;
+    font-family:ui-monospace,Menlo,Consolas,monospace;text-shadow:0 1px 4px rgba(0,0,0,.9)}
   #stale{position:fixed;left:50%;transform:translateX(-50%);z-index:9;pointer-events:auto;
     top:calc(12px + env(safe-area-inset-top) + var(--uit,0px));font-size:12px;letter-spacing:.06em;
     background:rgba(255,190,110,.24);border-color:rgba(255,200,130,.7)}
@@ -1117,7 +1124,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c71';
+const BUILD = 'c72';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -13684,9 +13691,11 @@ function syncSize() {
   // are the whole of what keeps the interface over the part of the screen you can see.
   const ds = document.documentElement.style;
   const vTop = vv ? vv.offsetTop : 0, vH = vv ? vv.height : innerHeight;
+  const uib = Math.max(0, Math.round(h - vTop - vH)), uit = Math.max(0, Math.round(vTop));
   ds.setProperty('--cvw', w + 'px'); ds.setProperty('--cvh', h + 'px');
-  ds.setProperty('--uit', Math.max(0, Math.round(vTop)) + 'px');
-  ds.setProperty('--uib', Math.max(0, Math.round(h - vTop - vH)) + 'px');
+  ds.setProperty('--uit', uit + 'px'); ds.setProperty('--uib', uib + 'px');
+  // and the buffer is the element, overscan included, or the picture stretches
+  h = h + uib + uit + 2;
   if (w === _vw && h === _vh) return;
   _vw = w; _vh = h;
   camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -14131,8 +14140,20 @@ function updateHUD() {
   // which means a screenshot of the thing you are pointing at does not contain the name of the
   // thing you are pointing at unless the panel happened to be open. Every screenshot has it
   // now.
-  if (bldEl) bldEl.textContent = BUILD + (KDBG ? '+knock' : '') + (KOBS ? '+obs' : '')
-    + '  \u00b7  ' + (INTRO.on ? 'tap the title for stats' : lookingAt());
+  // BOTH ANSWERS, ALWAYS ON SCREEN, NO TAPPING. He has been asked three times for a
+  // screenshot with a panel open and it has not been possible to get one while the thing he
+  // is reporting is happening. So the two lines that settle the two open questions live here,
+  // where every screenshot already catches them: what the middle of the frame is pointing at,
+  // and every viewport number that could make the lens smaller than the glass.
+  if (bldEl) {
+    const cv = renderer.domElement;
+    bldEl.innerHTML = BUILD + (KDBG ? '+knock' : '') + (KOBS ? '+obs' : '')
+      + '  \u00b7  ' + (INTRO.on ? 'title' : lookingAt()) + '<br>'
+      + `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}`
+      + ` doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}<br>`
+      + `scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'}`
+      + ` cv ${cv.clientWidth}x${cv.clientHeight} buf ${_vw}x${_vh} chrome ${_uiInset('--uit')}/${_uiInset('--uib')}`;
+  }
 }
 setInterval(updateHUD, 600); updateHUD();
 setTimeout(() => logMsg('Nothing here yet but moss, motes and a few lantern trees.'), 1400);
