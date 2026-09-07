@@ -990,7 +990,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c01';
+const BUILD = 'c02';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -3444,13 +3444,36 @@ function loadModel(url, cb) {
 // else translating is a retarget artefact. Dropping the track leaves the bone at its bind
 // offset, which is the whole fix.
 //
-// Nulls that are not skin joints keep theirs: `weapon` and `weapon_direction` are carried 81
-// and 104 units off their rest position deliberately -- that is where the blaster and the
-// carry socket were authored to sit, and stripping those would put the gun back inside his
-// hip.
+// The rule is narrower than "every joint", though, and getting that wrong is what put the
+// blaster on the floor for a build -- see the note on the weight test below.
 function jointDrift(root, anims, url) {
+  // ONLY BONES THAT DEFORM SOMETHING. The first cut of this took every skin joint, which put
+  // the blaster on the floor: `weapon` and `weapon_direction` are in the joint list, so their
+  // tracks went with the wrist's -- and those two are carried 73 and 69 units off their rest
+  // position deliberately, because that is where the gun was authored to sit.
+  //
+  // The rule that separates them is the one that made the wrist a bug in the first place. The
+  // wrist is broken because the skin is bound to a bind pose the animation then walks away
+  // from. A joint with NO VERTICES WEIGHTED TO IT has no bind pose to disagree with -- nothing
+  // is bound to it -- so there is no drift to correct and dropping its track only destroys
+  // placement somebody meant. Measured on this rig: mixamorig_RightHand carries 110.9 of
+  // weight, `weapon` and `weapon_direction` carry 0.00.
+  //
+  // It fails safe: a mesh with no skinning attributes leaves the set empty and nothing is
+  // dropped at all, which is exactly the behaviour from before any of this existed.
   const joints = new Set();
-  root.traverse(o => { if (o.isSkinnedMesh && o.skeleton) for (const b of o.skeleton.bones) joints.add(b.name); });
+  root.traverse(o => {
+    if (!o.isSkinnedMesh || !o.skeleton) return;
+    const bones = o.skeleton.bones;
+    const si = o.geometry.attributes.skinIndex, sw = o.geometry.attributes.skinWeight;
+    if (!si || !sw) return;
+    const n = si.count, w = si.itemSize;
+    for (let i = 0; i < n; i++) for (let k = 0; k < w; k++) {
+      if (sw.array[i * w + k] <= 1e-4) continue;
+      const b = bones[si.array[i * w + k]];
+      if (b) joints.add(b.name);
+    }
+  });
   if (!joints.size || !anims || !anims.length) return;
   const isRoot = /(^|[_:.])(hips?|pelvis|root|armature)$/i;
   const hit = new Set();
@@ -3464,7 +3487,8 @@ function jointDrift(root, anims, url) {
     clip.tracks = keep;
   }
   if (hit.size) console.info('[rig] ' + url.split('/').pop() + ': dropped the translation tracks on '
-    + [...hit].join(', ') + ' -- a joint that is not the root cannot move without leaving its own skin.');
+    + [...hit].join(', ') + ' -- a WEIGHTED joint that is not the root cannot move without leaving its own skin. '
+    + 'Unweighted joints (weapon sockets, tip nulls) keep theirs.');
 }
 
 // A 4096 square texture is 67 MB of RGBA on the GPU, 89 with its mipmaps, and these models
@@ -7506,8 +7530,26 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
     // much. A print black rather than a void. Deep violet-blue, because that is what the sky
     // is doing overhead, and it comes up with the night -- daylight shadow keeps its depth.
     c = c * (1.0 - uLift) + uLift;
-    c += (h(vUv*vec2(1920.0,1080.0)+uT)-0.5)*0.012;        // dither / faint grain
-    gl_FragColor = vec4(pow(max(c,0.0), vec3(1.0/2.2)), 1.0);
+    c = pow(max(c, 0.0), vec3(1.0/2.2));
+    // DITHER BELONGS AFTER THE ENCODE. It used to sit above this line, in linear light, and
+    // that is the whole of the "old fuzzy TV": a flat +/-0.006 of LINEAR is nothing in the
+    // highlights and enormous in the darks, because the gamma curve just above is at its
+    // steepest there.
+    // At the black end it swung the output fourteen levels. Lifting the floor then parked a
+    // large flat area of every night frame in exactly that regime, which is what made a
+    // problem that had always been there suddenly the first thing you see.
+    //
+    // In output space one step IS one step, everywhere. Two hashes summed give a triangular
+    // distribution rather than a flat one, which is the shape that actually decorrelates the
+    // noise from the signal instead of just averaging out -- and at one 8-bit level it is
+    // invisible on its own while breaking up every band the lift exposes.
+    vec2 sp = vUv*vec2(1920.0,1080.0);
+    float n = h(sp+uT) + h(sp+uT+7.3) - 1.0;
+    c += n * (1.5/255.0);
+    // The grain the old line was also doing, kept -- but scaled by how much light is actually
+    // in the pixel, so it textures the image without ever touching the blacks again.
+    c += n * 0.014 * smoothstep(0.05, 0.40, dot(c, vec3(0.3333)));
+    gl_FragColor = vec4(c, 1.0);
   }` });
 function renderPost() {
   renderer.info.reset();
@@ -7535,8 +7577,11 @@ function renderPost() {
       const d = Math.hypot(player.pos.x - world.cave.pos.x, player.pos.z - world.cave.pos.z);
       cave = clamp(1 - (d - 3) / 5, 0, 1);
     }
-    const k = (.34 + .66 * world.night) * (1 - cave * .88);
-    compMat.uniforms.uLift.value.setRGB(.016 * k, .019 * k, .040 * k);
+    // And not on the title screen. That shot is deliberately a body in deep space, where a
+    // true black background is the subject rather than a hole in the picture -- lifting it
+    // put a milky blue wash behind the planet. The lift is for standing on dark ground.
+    const k = (.34 + .66 * world.night) * (1 - cave * .88) * (INTRO.on ? .12 : 1);
+    compMat.uniforms.uLift.value.setRGB(.014 * k, .017 * k, .034 * k);
   }
   renderer.setRenderTarget(null); renderer.render(quadScene, quadCam);
 }
