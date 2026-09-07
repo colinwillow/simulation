@@ -1040,7 +1040,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c43';
+const BUILD = 'c44';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2424,12 +2424,12 @@ function buildSkyBodies() {
 // terrain's own shader rather than in the baked vertex colour, so they are live: gsat 1 and
 // gmul 1 is the ground exactly as it was.
 const LOOKS = {
-  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0, gsat: 1, gmul: 1, fogSky: 0, fogSat: 1 },
+  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0, gsat: 1, gmul: 1, fogSky: 0, fogSat: 1, gpatch: 0 },
   // `fogSky` pulls the haze colour toward the sky it is standing in front of and `fogSat`
   // takes the grey back out of it. Distance should dissolve into the sky, which on this
   // world is a deep blue-violet -- not into a separate flat grey that only the far ground
   // is painted with, which is what a fog colour of its own always looks like.
-  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .30, plate: .55, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5 },
+  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .30, plate: .55, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1 },
 };
 const LOOK = Object.assign({ mode: 'title' }, LOOKS.title);
 function setLook(m) { if (LOOKS[m]) { LOOK.mode = m; Object.assign(LOOK, LOOKS[m]); } return LOOK.mode; }
@@ -2627,10 +2627,31 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
 // buffer. worldTint does the opposite of this to every prop -- pulls it toward grey and
 // stains it -- and the terrain never went through it at all, which is why turning that off
 // in c37 made every model vivid and left the ground exactly as washed as it always was.
-const GROUND_UNI = { uGSat: { value: 1 }, uGMul: { value: 1 } };
+const GROUND_UNI = { uGSat: { value: 1 }, uGMul: { value: 1 }, uGPatch: { value: 0 } };
 function groundPatch(sh) {
   sh.uniforms.uGSat = GROUND_UNI.uGSat; sh.uniforms.uGMul = GROUND_UNI.uGMul;
-  sh.fragmentShader = 'uniform float uGSat, uGMul;\n' + sh.fragmentShader
+  sh.uniforms.uGPatch = GROUND_UNI.uGPatch;
+  // The world position, because the ground's own vertex colour is the only thing it has and a
+  // pattern needs somewhere to live. The terrain is baked onto the sphere so its model matrix
+  // is identity; the grass is instanced, and its blades are hundreds of units apart inside one
+  // mesh, so that one has to go through the instance matrix or every blade samples the same
+  // square inch of pattern.
+  sh.vertexShader = 'varying vec3 vWPos;\n' + sh.vertexShader
+    .replace('#include <project_vertex>', `#include <project_vertex>
+      #ifdef USE_INSTANCING
+        vWPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+      #else
+        vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+      #endif`);
+  sh.fragmentShader = `uniform float uGSat, uGMul, uGPatch;
+    varying vec3 vWPos;
+    float gh3(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+    float gn3(vec3 p){
+      vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(mix(gh3(i), gh3(i + vec3(1,0,0)), f.x), mix(gh3(i + vec3(0,1,0)), gh3(i + vec3(1,1,0)), f.x), f.y),
+                 mix(mix(gh3(i + vec3(0,0,1)), gh3(i + vec3(1,0,1)), f.x), mix(gh3(i + vec3(0,1,1)), gh3(i + vec3(1,1,1)), f.x), f.y), f.z);
+    }
+  ` + sh.fragmentShader
     .replace('#include <color_fragment>', `#include <color_fragment>
       {
         // Away from grey rather than toward it, and darker with it: saturating alone only
@@ -2638,6 +2659,22 @@ function groundPatch(sh) {
         // is bright, not because it is neutral.
         float glum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
         diffuseColor.rgb = max(vec3(0.0), mix(vec3(glum), diffuseColor.rgb, uGSat)) * uGMul;
+      }
+      // PATCHES, NOT A GRADIENT, and that is the whole of the storybook read. The terrain
+      // already carries three scales of smooth mottle and smooth mottle is exactly what a
+      // painted ground does not have: what it has is areas of one flat colour with a drawn
+      // line where two of them meet. So the broad noise is thresholded rather than added --
+      // smoothstep across a narrow band either side of the middle, which is nearly a step --
+      // and the band itself is darkened, which is the ink.
+      // One 3D value noise and one cell hash, nine sin() a fragment. It covers half the
+      // screen; this is the budget it gets.
+      if (uGPatch > 0.002) {
+        float gp = gn3(vWPos * 0.055);
+        float cell = gh3(floor(vWPos * 0.85));
+        float band = smoothstep(0.44, 0.56, gp) - 0.5;
+        diffuseColor.rgb *= 1.0 + uGPatch * (band * 0.30 + (cell - 0.5) * 0.13);
+        float ink = 1.0 - smoothstep(0.0, 0.055, abs(gp - 0.5));
+        diffuseColor.rgb *= 1.0 - uGPatch * ink * 0.20;
       }`);
 }
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 });
@@ -4911,6 +4948,28 @@ class Creature {
       }
     }
   }
+  // WHY A CREATURE DISAPPEARS THE MOMENT YOU PICK IT UP. The see-through hole discards any
+  // fragment that is inside a circle round his chest on screen AND nearer to the lens than he
+  // is -- which is the exact description of something he is holding in front of him. It was
+  // not a bug in the carry code at all; the carry code put the animal in the one place in the
+  // world that is defined to be invisible.
+  // The drone and the blaster already have the exemption (markBody). A creature cannot use
+  // that one, because its materials are shared with the scenery -- a mossback and a moss tuft
+  // are both M.moss -- so flipping the flag would take the hole off half the island. It takes
+  // the private no-hole copy solid() already makes instead, and hands the originals back when
+  // it is put down. Also on while it is FLUNG: thrown across his chest is the same geometry.
+  holeOff(on) {
+    on = !!on;
+    if (!this.g || !!this._nohole === on) return;
+    this._nohole = on;
+    if (on) {
+      const keep = this._mat0 = [];
+      this.g.traverse(o => { if (o.isMesh) { keep.push([o, o.material]); o.material = solid(o.material); } });
+    } else {
+      for (const [o, m] of this._mat0 || []) o.material = m;
+      this._mat0 = null;
+    }
+  }
   abandon() { this.wp = null; this.target = null; }   // species with a longer memory override this
   // Bolt. It keeps running for a couple of seconds after the reason for it has gone, and it
   // takes its neighbours with it: a flock that scatters as one is the difference between a
@@ -4935,7 +4994,7 @@ class Creature {
       sx: rnd(-KNOCK.spin, KNOCK.spin), sz: rnd(-KNOCK.spin, KNOCK.spin),
       rx: 0, rz: 0, hops: 0, rest: 0,
     };
-    this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
+    this.holeOff(1); this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
     world.effects.push(new Burst(this.pos.x, this.pos.y + this.rad, this.pos.z, '#ffe0a8', 8, .7));
   }
   // Thrown, rather than hit. Same flight as a knock -- tumble() does not care how it got up
@@ -4951,7 +5010,7 @@ class Creature {
       sx: rnd(-THROW.spin, THROW.spin), sz: rnd(-THROW.spin, THROW.spin),
       rx: 0, rz: 0, hops: 0, rest: 0,
     };
-    this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
+    this.holeOff(1); this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
     world.effects.push(new Burst(this.pos.x, this.pos.y + this.rad * .5, this.pos.z, '#cfe9ff', 9, .8));
   }
   // While it is in the air it owns its own position: none of the steering, the obstacle
@@ -4963,7 +5022,7 @@ class Creature {
       k.rx = lerp(k.rx, 0, Math.min(1, dt * 7));
       k.sz = lerp(k.sz, 0, Math.min(1, dt * 7));
       k.rz = lerp(k.rz, 0, Math.min(1, dt * 7));
-      if (k.rest <= 0) { this.fling = null; this.spook(this.pos, 0); return false; }
+      if (k.rest <= 0) { this.fling = null; this.holeOff(0); this.spook(this.pos, 0); return false; }
     } else {
       k.vy -= K.g * dt;
       // It cannot be thrown into the sea or off a cliff it could never stand on: the far side
@@ -7922,7 +7981,7 @@ const ZFN = {
   outpost(B, M, cx, cz, z0) {
     if (!obClear(cx, cz, 7)) return;
     const face = rnd(6.3);
-    zPut(B.big, M[pick(z0.base)], cx, cz, rnd(8.5, 11), face, .10, .34, { sink: .04 });
+    zPut(B.big, M[pick(z0.base)], cx, cz, rnd(8.5, 11), face, .10, .27, { sink: .04 });
     // huts set back and off to one side, turned to look at the base
     for (let i = 0, n = 1 + (Math.random() * 2 | 0); i < n; i++) {
       const a = face + rnd(1.9, 2.9) * (i ? -1 : 1), r = rnd(9, 14);
@@ -8035,7 +8094,7 @@ const ZFN = {
     // The fall line first: normalAt hands back a shared vector and zPut uses the same one.
     const nn = normalAt(cx, cz), nx = nn.x, nz = nn.z;
     const a0 = Math.hypot(nx, nz) > 1e-3 ? Math.atan2(nx, nz) : rnd(6.3);
-    zPut(B.big, M[pick(z0.rock)], cx, cz, rnd(15, 24), a0 + Math.PI, .10, .30, { sink: .14 });
+    zPut(B.big, M[pick(z0.rock)], cx, cz, rnd(15, 24), a0 + Math.PI, .10, .21, { sink: .14 });
     for (let i = 0, n = 5 + (Math.random() * 4 | 0); i < n; i++) {
       const a = a0 + rnd(-.85, .85), r = rnd(11, 20);
       const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
@@ -8051,7 +8110,11 @@ const ZFN = {
   peak(B, M, cx, cz, z0) {
     // Bedded well in rather than perched: these are twenty-odd units across and the ground
     // under them is not flat, so a shallow sink leaves one side of the skirt in the air.
-    zPut(B.big, M[pick(z0.peak)], cx, cz, rnd(20, 32), rnd(6.3), .12, .34, { sink: .18 });
+    // .34 of the footprint of a thing 26 units across is nine units of collider, and a
+    // mountain is a CONE: at the height you actually walk into it, it is nowhere near that
+    // wide. That is one of the invisible walls -- you are stopped in open ground five units
+    // short of any visible rock. The circle has to inscribe the base, not the skirt.
+    zPut(B.big, M[pick(z0.peak)], cx, cz, rnd(20, 32), rnd(6.3), .12, .20, { sink: .18 });
     for (let i = 0, n = 4 + (Math.random() * 3 | 0); i < n; i++) {
       const a = rnd(6.3), r = rnd(12, 20);
       const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
@@ -8732,7 +8795,7 @@ function updateSky() {
   M.skimmer.emissiveIntensity = lerp(.2, 1.4, world.night);
   M.drifter.emissiveIntensity = lerp(.15, 1.2, world.night);
   M.burrower2.emissiveIntensity = lerp(.2, 1.3, world.night);
-  GROUND_UNI.uGSat.value = LOOK.gsat; GROUND_UNI.uGMul.value = LOOK.gmul;
+  GROUND_UNI.uGSat.value = LOOK.gsat; GROUND_UNI.uGMul.value = LOOK.gmul; GROUND_UNI.uGPatch.value = LOOK.gpatch;
   for (const g of GLOW_UNI) {
     g.uni.uK.value = g.k * lerp(.55, 1.35, world.night);
     g.uni.uKeep.value = lerp(g.keep0, 1, LOOK.vivid);
@@ -10689,7 +10752,7 @@ function beginLift(o) {
   p.approach = null;
   if (!o || !o.alive || o.carried || o.net || p.carry || p.liftT > 0) return;
   p.liftT = CARRY.lift; p.carryPend = o;
-  o.carried = 1; o.fling = null; o.abandon(); o.wp = null; o.target = null; o.alarm = 0;
+  o.carried = 1; o.fling = null; o.holeOff(1); o.abandon(); o.wp = null; o.target = null; o.alarm = 0;
   p.heading = Math.atan2(o.pos.x - p.pos.x, o.pos.z - p.pos.z);
   p.vx = p.vz = 0;
   logMsg('He stoops and gets his arms round it.');
@@ -10720,7 +10783,7 @@ function carryStep(dt) {
   if (p.liftT > 0 && (p.liftT -= dt) <= 0) {        // the stoop is over: it is in his arms now
     p.liftT = 0;
     if (p.carryPend && p.carryPend.alive) { p.carry = p.carryPend; world.carried = (world.carried || 0) + 1; }
-    else if (p.carryPend) p.carryPend.carried = 0;
+    else if (p.carryPend) { p.carryPend.carried = 0; p.carryPend.holeOff(0); }
     p.carryPend = null;
   }
   if (p.placeT > 0 && (p.placeT -= dt) <= 0) { p.placeT = 0; finishPlace(); }
@@ -10766,7 +10829,7 @@ function finishPlace() {
   p.carry = null; p.carryPend = null; p.carryK = 0; p.carryCool = CARRY.cool;
   if (!c) return;
   const a = p.placeAt || { x: p.pos.x, z: p.pos.z };
-  c.carried = 0;
+  c.carried = 0; c.holeOff(0);
   c.pos.set(a.x, groundY(a.x, a.z), a.z);
   c.rx = a.x; c.rz = a.z; c.px0 = a.x; c.pz0 = a.z; c.lastGood.set(a.x, 0, a.z);
   c.ghost = 1.2; c.stall = 0; c.stuck = 0; c.pinned = 0; c.roamT = 3;   // it wanders off rather than bolting
@@ -10963,7 +11026,7 @@ function hurlCarried(power, quick) {
   if (!c) return;
   const h = p.aimH;
   p.carry = null; p.carryPend = null; p.carryK = 0; p.carryCool = THROW.cool;
-  c.carried = 0;
+  c.carried = 0;   // holeOff stays ON: hurl() puts it straight into a fling, and tumble ends it
   c.hurl(Math.sin(h), Math.cos(h), lerp(THROW.speed[0], THROW.speed[1], power), THROW.lift);
   p.heading = h;
   logMsg(power > .82 ? 'He winds all the way up and hurls it out across the slope.'
