@@ -956,7 +956,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b88';
+const BUILD = 'b89';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2271,7 +2271,11 @@ terrain.receiveShadow = true; terrain.userData.flat = true; scene.add(terrain); 
 // The sea is the whole globe: the same polar grid, coarser, with the chart point each vertex
 // came from kept as an attribute, because every wave in the shader is still reckoned in chart
 // space and only wrapped at the end.
-const WSPOKE = MOBILE ? 250 : 360, WRING = MOBILE ? 140 : 190;
+// WRING is the band width. `dep` is a per-vertex attribute and the colour ramp is read off
+// it, so every step in that ramp lands on a ring edge and draws it -- and a ring was fifteen
+// units wide over the shelf. Two hundred and thirty of them halves that, which halves the
+// visible band, for one more draw call's worth of vertices and no more draw calls.
+const WSPOKE = MOBILE ? 250 : 360, WRING = MOBILE ? 230 : 330;
 const waterGeo = polarGeo(WSPOKE, WRING, ringR);
 { const pa = waterGeo.attributes.position, na = waterGeo.attributes.normal, N = pa.count;
   const d = new Float32Array(N), ch = new Float32Array(N * 2), v = new THREE.Vector3();
@@ -2395,10 +2399,13 @@ waterMat.onBeforeCompile = sh => {
   ` + sh.fragmentShader
     .replace('#include <map_fragment>', `
       #include <map_fragment>
-      // Jittered, because dep is a VERTEX attribute: it interpolates linearly across a ring
-      // while the real seabed curves, so every colour step in the ramp lands on a ring edge
-      // and draws it. A unit and a half of noise turns those edges into shoreline.
-      float shallow = smoothstep(-16.0, -0.5, vDep + (fn(vXZ * 0.31) - 0.5) * 3.0);
+      // Two things break the ring edges up. The jitter is at TWO scales, and the coarse one
+      // matters most: three-unit noise is sub-pixel from six hundred units away and averages
+      // back to nothing, which is why the first attempt at this changed nothing on the title
+      // screen. Twenty-five-unit noise survives the distance. And the ramp itself is spread
+      // over twenty-seven units of depth instead of fifteen, so each facet is a smaller step.
+      float jit = (fn(vXZ * 0.042) - 0.5) * 9.0 + (fn(vXZ * 0.31) - 0.5) * 2.5;
+      float shallow = smoothstep(-26.0, 1.0, vDep + jit);
       vec3 deepC = vec3(0.012, 0.055, 0.11);
       vec3 midC  = vec3(0.03, 0.20, 0.30);
       vec3 shalC = vec3(0.10, 0.45, 0.47);
@@ -6057,7 +6064,7 @@ class FloatingIsle {
         const y = (k === 0 ? ringY[i] : lerp(ringY[i], 0, .12) - .5 * K) - t * D * (1 + Math.sin(a * 3) * .04);
         pos.push(Math.cos(a) * r2, y, Math.sin(a) * r2);
         c.copy(P.rock).lerp(P.rock2, .35 + Math.sin(t * 26) * .3 + (fbm(Math.cos(a) * 4, t * 9, 2) - .5) * .5);
-        c.lerp(col('#3b3129'), t * .42);
+        c.lerp(col('#2b2740'), t * .46);      // slate-violet, not mud
         if (k <= 1) c.lerp(P.grass2, .35 * (1 - k));
         colA.push(c.r, c.g, c.b);
       }
@@ -6069,7 +6076,13 @@ class FloatingIsle {
     bg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     bg.setAttribute('color', new THREE.Float32BufferAttribute(colA, 3));
     bg.setIndex(idx); bg.computeVertexNormals();
-    const body = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .95 }));
+    // The black shape under the island. Nothing lights the underside of a floating rock --
+    // the sun is above it and there is no ground below to bounce -- so a forty-six-unit cone
+    // of brown rock resolved to a flat black lozenge hanging in the sky, which reads as a
+    // hole in the world rather than as the bottom of something. A floor of emission keeps it
+    // rock: dark, but with a shape in it.
+    const body = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .95,
+      emissive: col('#1a1530'), emissiveIntensity: 1 }));
     body.castShadow = true; body.receiveShadow = true; this.g.add(body);
     // hanging spires and loose rock
     const bin = [];
