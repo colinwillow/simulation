@@ -122,9 +122,11 @@
      because everything else the thumbs touch down here is round. */
   /* bottom 61 + half of 62 puts the key's centre on 92px, which is the right stick's centre;
      right 166 leaves a 14px gap outside the stick's 132px ring, which starts at right 152. */
+  /* `column`, not `column-reverse`. Reversed, the rack rendered BELOW the key -- so sliding a
+     thumb up moved it away from the slots and nothing could ever be chosen. */
   #wdock{position:fixed;z-index:6;right:calc(166px + env(safe-area-inset-right));
     bottom:calc(61px + env(safe-area-inset-bottom));
-    display:flex;flex-direction:column-reverse;align-items:center;gap:11px}
+    display:flex;flex-direction:column;align-items:center;gap:13px}
   /* An inline SVG with only a viewBox lays out at 300x150 unless something says otherwise. */
   .wico svg{width:100%;height:100%;display:block}
   .wbtn{position:relative;width:62px;height:62px;border-radius:50%;padding:0;
@@ -154,23 +156,29 @@
      you cannot choose between things your own hand is covering. Wide and shallow, so a short
      slide sideways picks one. It never takes pointer events -- the whole gesture belongs to
      the key underneath, which has capture. */
-  #wrack{display:flex;flex-direction:row;gap:9px;align-items:flex-end;
-    animation:rackin .15s ease-out;pointer-events:none}
-  @keyframes rackin{from{opacity:0;transform:translateY(10px) scale(.92)}to{opacity:1;transform:none}}
-  .wslot{width:62px;height:66px;border-radius:18px;padding:0;font-family:inherit;color:#f2e4c8;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  /* The key branches: two more circles come out of it, matching it, so the three read as one
+     control opening rather than a menu arriving. They spread as they appear. */
+  #wrack{display:flex;flex-direction:row;gap:14px;align-items:center;pointer-events:none}
+  #wrack .wslot{animation:rackin .17s cubic-bezier(.2,1.3,.4,1) both}
+  #wrack .wslot:first-child{animation-name:rackinL}
+  #wrack .wslot:last-child{animation-name:rackinR}
+  @keyframes rackinL{from{opacity:0;transform:translate(38px,26px) scale(.4)}to{opacity:1;transform:none}}
+  @keyframes rackinR{from{opacity:0;transform:translate(-38px,26px) scale(.4)}to{opacity:1;transform:none}}
+  @keyframes rackin{from{opacity:0;transform:translateY(26px) scale(.4)}to{opacity:1;transform:none}}
+  .wslot{width:60px;height:60px;border-radius:50%;padding:0;font-family:inherit;color:#f2e4c8;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
     background:rgba(10,18,28,.62);border:1px solid rgba(240,228,200,.24);
     -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
     box-shadow:0 4px 16px rgba(0,0,0,.55);
     transition:border-color .12s,background .12s,transform .12s,box-shadow .12s}
-  .wslot .wico{width:30px;height:30px;display:block;opacity:.6;transition:opacity .12s,filter .12s}
-  .wslot span:last-child{font-size:9.5px;letter-spacing:.1em;opacity:.5;font-variant:small-caps;line-height:1}
+  .wslot .wico{width:27px;height:27px;display:block;opacity:.6;transition:opacity .12s,filter .12s}
+  .wslot span:last-child{font-size:8.5px;letter-spacing:.09em;opacity:.5;font-variant:small-caps;line-height:1}
   /* `sel` is what is racked now. `over` is what the thumb is on, and what letting go takes. */
   .wslot.sel{border-color:rgba(150,246,255,.5);background:rgba(20,44,58,.6)}
   .wslot.sel .wico{opacity:.85}
   .wslot.sel span:last-child{opacity:.75;color:#bff4ff}
   .wslot.over{border-color:rgba(160,248,255,.95);background:rgba(28,72,92,.72);
-    transform:translateY(-7px) scale(1.07);
+    transform:scale(1.13);
     box-shadow:0 0 24px rgba(120,238,255,.55),0 6px 18px rgba(0,0,0,.5)}
   .wslot.over .wico{opacity:1;filter:drop-shadow(0 0 7px rgba(150,246,255,.95))}
   .wslot.over span:last-child{opacity:1;color:#d6fbff}
@@ -948,7 +956,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b87';
+const BUILD = 'b88';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -9397,21 +9405,33 @@ function toggleArm() {
   // Which slot the thumb is on. Generous vertically -- a thumb sliding up off a phone screen
   // is aiming at a column, not at a rectangle -- and nearest-column horizontally, so there is
   // no dead gap between slots to lose a choice in.
+  // Which slot the thumb is on. Once the rack is open exactly one is always highlighted --
+  // the one that is racked, until the thumb moves onto another -- so there is never a moment
+  // where letting go does nothing and you cannot tell why. Nearest column, generously, so
+  // there is no dead gap between the circles to lose a choice in, and no upper bound: a thumb
+  // sliding off the top of a phone is still aiming at the thing it slid toward.
   const hit = (x, y) => {
     if (wrack.hidden) return null;
     const r = wrack.getBoundingClientRect();
-    if (y > r.bottom + 26 || y < r.top - 90) return null;
+    if (y > r.bottom + 46) return null;             // back down over the key: keep what we had
     let best = null, bd = 1e9;
     for (const s of wrack.children) {
       const b = s.getBoundingClientRect(), d = Math.abs(x - (b.left + b.width / 2));
       if (d < bd) { bd = d; best = s; }
     }
-    return bd < 64 ? best : null;
+    return bd < 78 ? best : null;
   };
   const mark = s => {
     if (s === over) return;
     if (over) over.classList.remove('over');
     over = s; if (s) s.classList.add('over');
+  };
+  // Opening highlights whatever is racked right now, so the branch reads as "here is what you
+  // have, and here is the other one" rather than as an empty menu.
+  const openMarked = () => {
+    openRack();
+    for (const b of wrack.children) if (b.dataset.w === player.wpn) { mark(b); return; }
+    mark(wrack.children[0] || null);
   };
   armB.addEventListener('pointerdown', e => {
     e.stopPropagation(); e.preventDefault();
@@ -9420,11 +9440,15 @@ function toggleArm() {
     armB.classList.add('hold'); raf = requestAnimationFrame(tick);
     timer = setTimeout(() => {
       if (!down) return;
-      opened = true; openRack(); clear(); down = true;   // clear stops the ring; the press is still down
+      opened = true; openMarked(); clear(); down = true;   // clear stops the ring; the press is still down
       armB.classList.remove('hold');
     }, HOLD);
   });
-  armB.addEventListener('pointermove', e => { if (down && opened) mark(hit(e.clientX, e.clientY)); });
+  armB.addEventListener('pointermove', e => {
+    if (!down || !opened) return;
+    const s = hit(e.clientX, e.clientY);
+    if (s) mark(s);                                 // never un-highlight: one is always chosen
+  });
   const end = e => {
     e.stopPropagation();
     const was = down, chose = over && over.dataset.w;
