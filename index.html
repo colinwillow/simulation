@@ -990,7 +990,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c03';
+const BUILD = 'c04';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -7358,6 +7358,247 @@ function scatterDecor() {
   }
   scene.add(grp);
 }
+// ---------- zones: arrangements, not scatter ----------
+// The island had exactly one placement rule -- find a legal spot at random, drop a thing on
+// it -- and a world built entirely that way has no PLACES in it. Every acre is the average of
+// the whole island, so there is nowhere to be going and nothing to recognise when you arrive.
+// These are the other kind. A handful of anchors per region, each laying out a FORMATION with
+// its own internal order, so a grove reads as a grove and a crystal burst reads as one thing
+// that grew rather than nine things that landed.
+//
+// Two rules do most of the work, and both are about difference rather than density:
+//   * EACH REGION GETS ITS OWN SPECIES. The rock in the highland is not the rock in the
+//     desert, the plant in the swamp is not the plant in the mushroom country. That is what
+//     makes crossing a border feel like crossing a border, and it is why the model lists live
+//     on the zone entries below rather than in one shared bag everything draws from.
+//   * A FORMATION HAS A MIDDLE. A grove rings a clearing, a ridge runs along a bearing with
+//     its big stones in the centre, a burst radiates. Randomness is for the jitter inside
+//     that shape, never for the shape.
+//
+// The jungle stands are deliberately tall and deliberately uneven in height: that canopy is
+// the substrate for the platforms and rope bridges, and those want trunks that top out at
+// different heights or there is nothing to climb between.
+//
+// Everything every formation places goes into ONE bin and is merged by material, so eight
+// hundred pieces cost about forty draws rather than eight hundred. Geometry is warped into
+// sphere space at merge time and the group opts out of the per-frame projection, exactly the
+// way the boulder field does.
+const ZONES = [
+  // THE JUNGLE: tall stands with a clear floor. The floor plants are inside the ring, so the
+  // clearing reads as somewhere you walk into rather than a hole in the trees.
+  { fn: 'grove', biome: 'jungle',   n: 8, maxSl: .55, tall: ['sp_tree03', 'sp_tree04'], broad: ['sp_tree01'], floor: ['sp_plant07'] },
+  { fn: 'grove', biome: 'wetland',  n: 3, maxSl: .45, tall: ['sp_tree04'], broad: ['sp_tree02'], floor: ['sp_plant08'] },
+  // THE CRYSTAL FLATS: one big shard with its own children radiating out and leaning away
+  // from it, sized down with distance. A cluster that grew, not a handful thrown.
+  { fn: 'burst', biome: 'crystal',  n: 7, maxSl: .5, hub: 'sp_crystal02', shard: 'sp_crystal01' },
+  { fn: 'burst', biome: 'fungal',   n: 2, maxSl: .5, hub: 'sp_crystal02', shard: 'sp_crystal01' },
+  // OUTCROPS: a spine along one bearing, biggest in the middle, tapering to both ends. Three
+  // regions, three different rocks, so an outcrop tells you which country you are standing in.
+  { fn: 'ridge', biome: 'highland', n: 6, maxSl: .8, rock: ['sp_rock01', 'sp_rock02', 'sp_rock09'] },
+  { fn: 'ridge', biome: 'desert',   n: 5, maxSl: .8, rock: ['sp_rock03', 'sp_rock05'] },
+  { fn: 'ridge', biome: 'scrub',    n: 3, maxSl: .7, rock: ['sp_rock06'] },
+  // BEDS: one species per patch. A patch of mixed plants is scatter with extra steps; a patch
+  // of ONE thing reads as something that spread from a seed and stopped where the ground did.
+  { fn: 'bed',   biome: 'wetland',  n: 6, maxSl: .5, plant: ['sp_plant02', 'sp_plant03'] },
+  { fn: 'bed',   biome: 'jungle',   n: 4, maxSl: .5, plant: ['sp_plant07'] },
+  { fn: 'bed',   biome: 'fungal',   n: 5, maxSl: .5, plant: ['sp_plant04', 'sp_plant05', 'sp_plant09'] },
+  { fn: 'bed',   biome: 'pasture',  n: 3, maxSl: .4, plant: ['sp_plant01'] },
+  { fn: 'bed',   biome: 'crystal',  n: 3, maxSl: .5, plant: ['sp_plant06'] },
+  // TRACKS: flat slabs laid in a wandering line. The only thing on the island that says
+  // somebody walks this way, and the cheapest possible version of a road.
+  { fn: 'track', biome: 'pasture',  n: 4, maxSl: .35, slab: ['sp_stone01', 'sp_stone02'] },
+  { fn: 'track', biome: 'coast',    n: 3, maxSl: .35, slab: ['sp_stone02'] },
+  { fn: 'track', biome: 'scrub',    n: 3, maxSl: .35, slab: ['sp_stone01'] },
+  // LANDMARKS: something big enough to steer by, with its own skirt of fallen rock.
+  { fn: 'peak',  biome: 'highland', n: 3, maxSl: .9, peak: ['sp_mountain01', 'sp_mountain02'], rock: ['sp_rock01', 'sp_rock09'] },
+  { fn: 'peak',  biome: 'desert',   n: 2, maxSl: .9, peak: ['sp_mountain03'], rock: ['sp_rock05'] },
+  // And the one built thing in the batch, stood up with stones round its foot so it reads as
+  // having been PUT there.
+  { fn: 'mast',  biome: 'crystal',  n: 2, maxSl: .4, mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
+  { fn: 'mast',  biome: 'highland', n: 2, maxSl: .4, mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
+];
+
+const _zq = new THREE.Quaternion(), _zs = new THREE.Quaternion(), _zax = new THREE.Vector3();
+const _zp = new THREE.Vector3(), _zsc = new THREE.Vector3(), _zn = new THREE.Vector3(), _zm = new THREE.Matrix4();
+
+function buildZones() {
+  // Every model any zone names, once. If one of them fails to load the count never completes
+  // and no zones are built at all -- which is the right failure: a half-laid grove is worse
+  // than none, and everything else in the world is untouched either way.
+  const want = new Set();
+  for (const z of ZONES) for (const k of ['tall', 'broad', 'floor', 'rock', 'plant', 'slab', 'peak'])
+    if (z[k]) for (const nm of z[k]) want.add(nm);
+  for (const z of ZONES) for (const k of ['hub', 'shard', 'mast']) if (z[k]) want.add(z[k]);
+  const names = [...want], M = {};
+  let got = 0;
+  for (const nm of names) loadModel('models/' + nm + '.glb', e => {
+    const parts = [];
+    e.root.updateMatrixWorld(true);
+    e.root.traverse(o => { if (o.isMesh) parts.push({ geo: o.geometry, mat: o.material, m: o.matrixWorld.clone() }); });
+    const sz = e.box.getSize(new THREE.Vector3());
+    M[nm] = { parts, box: e.box, sz, big: Math.max(sz.x, sz.y, sz.z), wide: Math.max(sz.x, sz.z) };
+    if (++got === names.length) layZones(M);
+  });
+}
+
+// One piece into the bin. `span` is the world size of the model's LARGEST dimension, which is
+// the only sizing handle that behaves for every shape in the batch: these range from a stone
+// slab twenty-one times wider than it is thick to a tree three times taller than it is wide,
+// and asking for a HEIGHT turns the first of those into a twenty-metre pebble.
+// `tilt` is how far it lies down with the ground (0 stands upright, 1 lies flat on the slope);
+// `obK` is its collision radius as a fraction of its own width, so a trunk can block while its
+// canopy does not, and a flower can block nothing at all.
+function zPut(bin, m, x, z, span, yaw, tilt, obK, opt) {
+  if (!m) return;
+  const s = span / Math.max(1e-4, m.big), gy = groundY(x, z);
+  _zn.copy(normalAt(x, z)).lerp(_plY, 1 - tilt).normalize();
+  _zq.setFromUnitVectors(_plY, _zn).multiply(_zs.setFromAxisAngle(_plY, yaw));
+  // Leaning away from a point: turn about the horizontal axis at right angles to the outward
+  // bearing. Negated because a positive turn about that axis tips it INWARD, toward the hub.
+  if (opt && opt.lean) _zq.premultiply(_zs.setFromAxisAngle(
+    _zax.set(-Math.sin(opt.leanA), 0, Math.cos(opt.leanA)), -opt.lean));
+  const sink = (opt && opt.sink !== undefined ? opt.sink : .04) * m.sz.y * s;
+  _zp.set(x, gy - sink - m.box.min.y * s, z);
+  _zm.compose(_zp, _zq, _zsc.setScalar(s));
+  const reg = biomeAt(x, z).name;
+  for (const pt of m.parts) bin.push({ geo: pt.geo, mat: tintFor(pt.mat, reg, { keep: .38, k: .7 }), matrix: _zm.clone().multiply(pt.m) });
+  const r = m.wide * s * obK;
+  if (r > .4) obAdd(x, z, r, null, gy - sink + m.sz.y * s * .94);
+}
+
+const ZFN = {
+  // A ring of trunks about a clear middle. The heights are drawn wide on purpose -- 16 to 34
+  // against a 2.8-unit body -- so the canopy has floors in it rather than one ceiling.
+  grove(B, M, cx, cz, z0) {
+    const R = rnd(11, 17), n = 7 + (Math.random() * 6 | 0);
+    for (let i = 0; i < n; i++) {
+      const a = i / n * Math.PI * 2 + rnd(-.24, .24), r = R * rnd(.6, 1.14);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (!isLand(x, zz) || !obClear(x, zz, 1.6)) continue;
+      // .10 of the canopy width is the TRUNK, which is what you walk into -- and it has to
+      // clear OB_PLAYER.minOb (.9) or the obstacle field throws it away as too small to be
+      // worth colliding with, and you stroll through the tree.
+      zPut(B.big, M[pick(z0.tall)], x, zz, rnd(16, 34), rnd(6.3), .14, .10);
+    }
+    for (let i = 0; i < 2; i++) {
+      const a = rnd(6.3), r = R * rnd(1.15, 1.45);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (isLand(x, zz) && obClear(x, zz, 1.8)) zPut(B.big, M[pick(z0.broad)], x, zz, rnd(11, 17), rnd(6.3), .16, .12);
+    }
+    for (let i = 0, k = 4 + (Math.random() * 5 | 0); i < k; i++) {
+      const a = rnd(6.3), r = R * rnd(0, .55);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (isLand(x, zz)) zPut(B.small, M[pick(z0.floor)], x, zz, rnd(1.1, 2.4), rnd(6.3), .55, 0);
+    }
+  },
+  // A hub with its own shards radiating out, leaning away and shrinking with distance.
+  burst(B, M, cx, cz, z0) {
+    zPut(B.big, M[z0.hub], cx, cz, rnd(8, 13), rnd(6.3), .1, .34, { sink: .1 });
+    const n = 5 + (Math.random() * 5 | 0);
+    for (let i = 0; i < n; i++) {
+      const a = i / n * Math.PI * 2 + rnd(-.35, .35), r = rnd(3.4, 9.5);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (!isLand(x, zz)) continue;
+      zPut(B.big, M[z0.shard], x, zz, rnd(2.4, 6) * (1 - r / 14 * .5), a, .12, .34,
+        { lean: rnd(.18, .5), leanA: a, sink: .08 });
+    }
+  },
+  // A spine along one bearing: biggest in the middle, tapering to both ends.
+  ridge(B, M, cx, cz, z0) {
+    const a = rnd(6.3), n = 5 + (Math.random() * 5 | 0), step = rnd(4.6, 8);
+    for (let i = 0; i < n; i++) {
+      const t = i - (n - 1) / 2;
+      const x = cx + Math.cos(a) * t * step + rnd(-1.7, 1.7), zz = cz + Math.sin(a) * t * step + rnd(-1.7, 1.7);
+      if (!isLand(x, zz)) continue;
+      const k = 1 - Math.abs(t) / ((n - 1) / 2 + .6) * .55;
+      zPut(B.big, M[pick(z0.rock)], x, zz, rnd(3.6, 7.8) * k, rnd(6.3), .3, .5, { sink: .16 });
+    }
+  },
+  // One species, dense in the middle and thinning out: sqrt puts more of them near the centre.
+  bed(B, M, cx, cz, z0) {
+    const sp = pick(z0.plant), R = rnd(4, 9), n = 8 + (Math.random() * 9 | 0);
+    for (let i = 0; i < n; i++) {
+      const a = rnd(6.3), r = R * Math.sqrt(Math.random());
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (isLand(x, zz)) zPut(B.small, M[sp], x, zz, rnd(.8, 2.3), rnd(6.3), .6, 0);
+    }
+  },
+  // Slabs laid in a line that wanders the way a path does, because it is one.
+  track(B, M, cx, cz, z0) {
+    let x = cx, zz = cz, dir = rnd(6.3);
+    for (let i = 0, n = 6 + (Math.random() * 8 | 0); i < n; i++) {
+      dir += rnd(-.32, .32);
+      x += Math.cos(dir) * rnd(2.6, 4.3); zz += Math.sin(dir) * rnd(2.6, 4.3);
+      if (!isLand(x, zz)) break;
+      zPut(B.small, M[pick(z0.slab)], x, zz, rnd(2.2, 3.6), rnd(6.3), .9, 0, { sink: .32 });
+    }
+  },
+  // Something to steer by, with its own skirt of fallen rock.
+  peak(B, M, cx, cz, z0) {
+    // Bedded well in rather than perched: these are twenty-odd units across and the ground
+    // under them is not flat, so a shallow sink leaves one side of the skirt in the air.
+    zPut(B.big, M[pick(z0.peak)], cx, cz, rnd(20, 32), rnd(6.3), .12, .34, { sink: .18 });
+    for (let i = 0, n = 4 + (Math.random() * 3 | 0); i < n; i++) {
+      const a = rnd(6.3), r = rnd(12, 20);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (isLand(x, zz)) zPut(B.big, M[pick(z0.rock)], x, zz, rnd(2.8, 5.6), rnd(6.3), .35, .5, { sink: .2 });
+    }
+  },
+  // The one built thing in the batch. The stones at its foot are the whole point: they are
+  // what turn an object standing in a field into an object somebody stood in a field.
+  mast(B, M, cx, cz, z0) {
+    if (!obClear(cx, cz, 2.4)) return;
+    zPut(B.big, M[z0.mast], cx, cz, rnd(9, 14), rnd(6.3), .05, .34, { sink: .02 });
+    for (let i = 0; i < 3; i++) {
+      const a = i / 3 * Math.PI * 2 + rnd(.4);
+      const x = cx + Math.cos(a) * rnd(1.8, 3.2), zz = cz + Math.sin(a) * rnd(1.8, 3.2);
+      if (isLand(x, zz)) zPut(B.small, M[pick(z0.slab)], x, zz, rnd(1.8, 2.8), rnd(6.3), .9, 0, { sink: .34 });
+    }
+  },
+};
+
+// How far apart two formations of a kind have to sit. This is the number that decides whether
+// a region reads as organised or as a heap: randomBiome returns the BEST spot it can find,
+// which is very nearly the same spot every time it is asked, so eight groves asked for that
+// way arrive stacked on each other. Anchors here are random within the region's core instead,
+// and rejected if anything already placed is inside the gap.
+const ZGAP = { grove: 40, burst: 24, ridge: 30, bed: 18, track: 26, peak: 58, mast: 16 };
+function zAnchor(biome, maxSl, used, gap) {
+  for (let i = 0; i < 700; i++) {
+    const p = randomLand(1.6, 20, maxSl, 1, 4); if (!p) continue;
+    const b = biomeAt(p.x, p.z);
+    if (b.name !== biome || b.edge < .28) continue;      // well inside it, never on the seam
+    let ok = true;
+    for (const u of used) if (Math.hypot(p.x - u.x, p.z - u.z) < Math.max(gap, u.gap) * .8) { ok = false; break; }
+    if (ok) { used.push({ x: p.x, z: p.z, gap }); return p; }
+  }
+  return null;
+}
+
+function layZones(M) {
+  // Two bins, and the split is a shadow-map budget rather than an art choice: a stand of trees
+  // and a mountain earn a place in the depth pass, four hundred flowers and a footpath do not.
+  const B = { big: [], small: [] }, used = [];
+  for (const z of ZONES) {
+    const fn = ZFN[z.fn]; if (!fn) continue;
+    for (let i = 0; i < z.n; i++) {
+      const p = zAnchor(z.biome, z.maxSl, used, ZGAP[z.fn] || 20);
+      if (!p) continue;
+      fn(B, M, p.x, p.z, z);
+    }
+  }
+  const grp = new THREE.Group(); grp.userData.flat = true;
+  for (const [bin, cast] of [[B.big, true], [B.small, false]]) {
+    if (!bin.length) continue;
+    for (const m of mergeBin(bin)) {
+      warpGeo(m.geometry);
+      m.castShadow = cast; m.receiveShadow = true;
+      grp.add(m);
+    }
+  }
+  scene.add(grp);
+}
+
 function populate() {
   // the Elderwillow first, so everything else grows around it
   let gp = null;
@@ -7428,6 +7669,7 @@ function populate() {
   }
   world.spawn = world.camp ? { x: world.camp.pos.x + 7, z: world.camp.pos.z + 5 } : (randomLand(1.5, 8, .5, 400, 3) || { x: 0, z: 0 });
   ferry = new Ferry(); initMotes(); scatterDecor(); world.sites = buildSites(); scatterRocks(); placeTitle();
+  buildZones();
 }
 
 populate();
