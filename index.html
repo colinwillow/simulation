@@ -1098,7 +1098,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c66';
+const BUILD = 'c67';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -6741,13 +6741,50 @@ class Ship {
     logMsg('He climbs in. Hold up to lift off.');
     hintEl.innerHTML = MOBILE ? 'left stick: thrust · strafe &nbsp; right stick: turn · climb' : 'W S thrust · A D turn · Space / Shift climb · Q E strafe · B leave';
   }
+  // Hold station while somebody is on the line under it. The scripted states all drive the
+  // hull along a curve; this one drives it nowhere, which is the entire difference, plus the
+  // gentle bob that says a machine is holding itself up rather than parked in the air.
+  hover(dt) {
+    const c = this.ctl;
+    c.throttle = .62 + Math.sin(world.clock * 1.3) * .04; c.pitch = 0; c.yaw = 0; c.strafe = 0; c.gear = 0;
+    this.g.position.set(this.hoverAt.x, this.hoverAt.y + Math.sin(world.clock * .9) * .35, this.hoverAt.z);
+    this.heading = this.face;
+  }
+  // Somebody is going down the line: stop where you are and wait.
+  ropeOut() {
+    this.hoverAt = this.g.position.clone();
+    this.begin('hover'); this.grounded = false;
+  }
+  // ...and once they are off it, go home and land.
+  ropeDone() {
+    if (this.state !== 'hover') return;
+    this.goHome(); this.summon = null;
+    this.planTo(); this.dist = 0; this.begin('cruise');
+  }
   // OUT OF THE BELLY HATCH, IN THE AIR. leave() needs the ship on the ground because it puts
   // him down beside it; this puts him UNDER it with the ground a long way off and lets gravity
   // have him. The ship does not just stop -- it flies itself home and lands, which is the only
   // sane thing for a machine whose pilot has just jumped out of it.
-  eject() {
+  eject(drop) {
     const p = world.player; if (!p || !p.aboard) return;
     if (this.grounded) return this.leave();
+    // THE LINE, unless he asked for the drop or there is too much air under it. The floor
+    // below the hatch is whatever he would land on -- ground, deck, or a platform in a tree --
+    // so a ship holding over the fort ring pays out onto the fort ring.
+    const floor = Math.max(deckY(this.pos.x, this.pos.z, this.pos.y), standOn(this.pos.x, this.pos.z, this.pos.y), groundY(this.pos.x, this.pos.z));
+    const air = this.pos.y - floor;
+    if (!drop && air > 6 && air < LINE.max && height(this.pos.x, this.pos.z) > SEA + .4) {
+      p.aboard = false; p.g.visible = true;
+      p.pos.set(this.pos.x, this.pos.y - 2.6, this.pos.z);
+      p.ropeX = p.ropeZ = 0; p.roping = 1; p.ropeShip = this;
+      p.vx = p.vz = 0; p.vy = 0; p.wmag = 0; p.grounded = 0; p.swim = 0; p.jump = 0; p.leadT = 0;
+      p.gy = p.pos.y; p.heading = p.faceH = this.heading;
+      cam.r = cam.rWalk || cam.r;
+      this.outT = 3.4; this.ropeOut();
+      logMsg('The belly port opens and he goes out on the line. Tap to let go.');
+      hintEl.innerHTML = hint0;
+      return;
+    }
     p.aboard = false; p.g.visible = true;
     p.pos.set(this.pos.x, this.pos.y - 3.4, this.pos.z);
     p.gy = groundY(p.pos.x, p.pos.z);
@@ -6949,6 +6986,9 @@ class Ship {
       // the settle after a touchdown: the hull dips on its legs and comes back
       this.sagV += (-this.sag * 26 - this.sagV * 6) * dt; this.sag += this.sagV * dt;
       if (this.grounded) this.g.position.y = this.pad.y + this.sag * .35 + this.trem.y;
+    } else if (this.state === 'hover') {
+      this.hover(dt);
+      if (!world.player || !world.player.roping) this.ropeDone();
     } else if (this.state === 'lift') {
       this.t += dt; const k = clamp(this.t / SHIP.liftT, 0, 1), e = smooth(0, 1, k);
       this.g.position.set(this.pad.x, this.pad.y + this.hop * e, this.pad.z);
@@ -11140,7 +11180,7 @@ const ROLL = { speed: 21, skip: .12, rate: 1.35, time: .7, cool: .28, turn: 1 };
 const SPRINT = { k: .55, at: .62, in: 5, out: 2.6, fov: 7, rush: .85 };
 function flickRoll(x, y) {
   const p = player;
-  if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5 || p.rollT > 0 || p.rollCool > 0) return;
+  if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5 || p.rollT > 0 || p.rollCool > 0) return;
   if (!p.rigH || !p.rigH.acts.roll || !p.grounded) return;
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
   const dx = sa * y + ca * x, dz = ca * y - sa * x;      // the same camera-space map the walk uses
@@ -11156,6 +11196,80 @@ function flickRoll(x, y) {
 // put; past that the ground is further than he can throw and it lands short, which is honest
 // and needs no message. It is a marker, not an obstacle: nothing collides with it.
 const BEACON = { range: 46, cool: 2.2, life: 90, col: '#8ff0d8' };
+// THE BELLY LINE. Out of the hatch on a rope rather than off it into the air: he pays out at
+// `speed` a second, the ship holds station above him, and he lets go with a tap at any height
+// -- so the last part of a descent is a drop if you want it to be, which is the whole reason
+// to have both. `max` is the highest the ship may be for the line to reach at all; past that
+// it is a fall, and eject says so instead of pretending.
+// (LINE, not ROPE: the net's tether already owns that name a few hundred lines down.)
+const LINE = { speed: 15, max: 110, sway: 2.6, col: '#cfe3ef' };
+const rope = { g: null, mat: null, on: 0 };
+function ropeMesh() {
+  if (rope.g) return rope.g;
+  rope.mat = new THREE.MeshBasicMaterial({ color: col(LINE.col), transparent: true, opacity: .9, fog: false });
+  rope.mat.userData.noHole = true;
+  // A unit-length tube along +Y, stretched and aimed every frame -- a rope that is rebuilt
+  // from a curve each frame allocates a geometry sixty times a second for a straight line.
+  rope.g = new THREE.Mesh(new THREE.CylinderGeometry(.075, .075, 1, 6, 1, true), rope.mat);
+  rope.g.frustumCulled = false; rope.g.visible = false; rope.g.userData.flat = true;
+  scene.add(rope.g);
+  return rope.g;
+}
+const _rpA = new THREE.Vector3(), _rpB = new THREE.Vector3(), _rpD = new THREE.Vector3(), _rpQ = new THREE.Quaternion();
+// Anchor and rider are both CHART points; the line has to be drawn on the sphere, so both ends
+// go through planetPos and the tube is aimed between them in world space.
+function ropeDraw(ax, ay, az, bx, by, bz) {
+  const g = ropeMesh();
+  planetPos(ax, ay, az, _rpA); planetPos(bx, by, bz, _rpB);
+  _rpD.subVectors(_rpB, _rpA);
+  const L = _rpD.length(); if (L < .05) { g.visible = false; return; }
+  g.visible = true;
+  g.position.copy(_rpA).addScaledVector(_rpD, .5);
+  g.quaternion.setFromUnitVectors(_plY, _rpD.normalize());
+  g.scale.set(1, L, 1);
+}
+// Off the line: whatever height he is at becomes a fall from there.
+function ropeLetGo(msg) {
+  const p = player;
+  if (!p.roping) return;
+  p.roping = 0; p.ropeShip = null;
+  if (rope.g) rope.g.visible = false;
+  p.grounded = 0; p.vy = Math.min(p.vy, -2);
+  if (msg) logMsg(msg);
+}
+// Down the line. He owns his own height while this runs -- no gravity, no ground snap -- and
+// the left stick swings him a little, which is what makes it read as a rope rather than a
+// lift. It ends when his feet find the ground or when he lets go.
+function stepRope(dt) {
+  const p = player, sh = p.ropeShip;
+  if (!sh || sh.state !== 'hover' || !world.ship) { ropeLetGo('The line goes slack and he drops.'); return; }
+  const ax = sh.pos.x, ay = sh.pos.y - 1.6, az = sh.pos.z;
+  p.pos.y -= LINE.speed * dt;
+  // a little sway, from the stick, damped back to under the hatch
+  const sx = clamp(stick.L.x + (keys.d ? 1 : 0) - (keys.a ? 1 : 0), -1, 1);
+  const sz = clamp(stick.L.y + (keys.s ? 1 : 0) - (keys.w ? 1 : 0), -1, 1);
+  const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
+  const wx = sa * sz + ca * sx, wz = ca * sz - sa * sx;
+  p.ropeX = clamp((p.ropeX || 0) + wx * dt * 3.2, -LINE.sway, LINE.sway);
+  p.ropeZ = clamp((p.ropeZ || 0) + wz * dt * 3.2, -LINE.sway, LINE.sway);
+  p.pos.x = ax + p.ropeX; p.pos.z = az + p.ropeZ;
+  p.vx = p.vz = 0; p.vy = 0; p.moving = 0; p.wmag = 0;
+  const floor = Math.max(deckY(p.pos.x, p.pos.z, p.pos.y), standOn(p.pos.x, p.pos.z, p.pos.y), groundY(p.pos.x, p.pos.z));
+  if (p.pos.y <= floor + .05) {
+    p.pos.y = floor; p.gy = floor; p.vy = 0; p.grounded = 1;
+    p.roping = 0; p.ropeShip = null; if (rope.g) rope.g.visible = false;
+    world.effects.push(new Burst(p.pos.x, floor + .4, p.pos.z, '#cdbf9c', 7, .55));
+    logMsg('His feet find the ground and the line whips back up.');
+    sh.ropeDone();
+    ropeDraw(ax, ay, az, p.pos.x, p.pos.y + RIG.height * .75, p.pos.z);
+    if (rope.g) rope.g.visible = false;
+    return;
+  }
+  p.gy = p.pos.y;
+  p.heading = p.faceH = Math.atan2(ax - p.pos.x || Math.sin(p.heading), az - p.pos.z || Math.cos(p.heading));
+  p.g.position.set(p.pos.x, p.pos.y, p.pos.z);
+  ropeDraw(ax, ay, az, p.pos.x, p.pos.y + RIG.height * .82, p.pos.z);
+}
 class ShipBeacon {
   constructor(x, z) {
     this.alive = true; this.t = 0;
@@ -11263,7 +11377,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null,
   throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
-  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0 });
+  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -11357,7 +11471,7 @@ function jointChart(b, out) {
 function carryOffer() {
   const p = player;
   ACT.force = null;                                 // cleared here, set again below if he is winding up
-  if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5 || p.liftT > 0 || p.placeT > 0) return;
+  if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5 || p.liftT > 0 || p.placeT > 0) return;
   // Arms full: a tap sets it down, and a swipe or a hold throws it. While he is actually
   // winding up, the offer stands down -- the label says THROW and the charge ring has the
   // stick, and a SET DOWN prompt over the top of that would be describing the wrong gesture.
@@ -12726,7 +12840,8 @@ addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm();
 document.getElementById('ejectB').addEventListener('click', e => {
   e.stopPropagation();
   const sh = world.ship;
-  if (sh && player.aboard) sh.eject();
+  if (player.roping) ropeLetGo('He lets go of the line.');
+  else if (sh && player.aboard) sh.eject();
   else logMsg('He is not in the ship.');
 });
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
@@ -12739,6 +12854,12 @@ function updatePlayer(dt) {
     player.moving = 0; player.speed = 0; player.vx = player.vz = 0; player.wmag = 0; player.jump = 0;
     player.g.position.copy(player.pos);
     return;
+  }
+  // On the line he owns his own height: no steering, no gravity, no ground snap, and the tap
+  // that is usually the jump is the release instead.
+  if (player.roping) {
+    if (player.jump) { player.jump = 0; ropeLetGo('He lets go of the line.'); }
+    else { stepRope(dt); player.speed = 0; return; }
   }
   let lx = stick.L.x, ly = stick.L.y; const rx = stick.R.x, ry = stick.R.y;
   if (keys.a || keys.arrowleft) lx -= 1; if (keys.d || keys.arrowright) lx += 1;
