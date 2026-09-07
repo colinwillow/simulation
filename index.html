@@ -948,7 +948,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b85';
+const BUILD = 'b86';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2108,7 +2108,8 @@ const moon = new THREE.DirectionalLight(0x9db0ff, 0); moon.target = sun.target; 
 // The ground colour here is the light the WHOLE WORLD gets from below, and it was 0x3f3a2a
 // -- mud. Everything on the island was being under-lit brown, whatever its own colour was.
 const hemi = new THREE.HemisphereLight(0x9bc5ee, 0x31453f, .6); scene.add(hemi);
-const bounce = new THREE.DirectionalLight(0xffc2b8, .18);   // rose rather than amber, for the same reason const BOUNCE_D = new THREE.Vector3(-1, .3, -1); scene.add(bounce);
+// Rose rather than amber, for the same reason as the ground colour above.
+const bounce = new THREE.DirectionalLight(0xffc2b8, .18); const BOUNCE_D = new THREE.Vector3(-1, .3, -1); scene.add(bounce);
 // up-light off the sea, so undersides and bellies aren't pure black
 const fill = new THREE.DirectionalLight(0x9fd4e8, .42); const FILL_D = new THREE.Vector3(.2, -1, .35); scene.add(fill);
 bounce.target = fill.target = sun.target;   // every light aims at the ground under the camera
