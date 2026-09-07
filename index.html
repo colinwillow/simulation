@@ -1040,7 +1040,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c45';
+const BUILD = 'c46';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2434,7 +2434,16 @@ const LOOKS = {
   // takes the grey back out of it. Distance should dissolve into the sky, which on this
   // world is a deep blue-violet -- not into a separate flat grey that only the far ground
   // is painted with, which is what a fog colour of its own always looks like.
-  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .10, plate: .72, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1, plateH: .07 },
+// AND THE ANSWER TO TEN ROUNDS OF "why is the sky still grey-blue".
+// It was never the fade and it was never the fog. `plate` is a MIX WEIGHT, and at .72 the
+// other 28% is the procedural gradient underneath -- which runs from uLow at the horizon
+// (a bright blue) to uTop at the zenith (near black). So the residual is bright at the bottom
+// of the frame and dark at the top, which is a blue wash over the sea fading to a galaxy
+// overhead: exactly what the screenshots show, and exactly what was being described. Every
+// pass that moved the roll-off, the haze or the horizon colour was adjusting the wrong term.
+// At 1 there is no residual. The sky IS the plate above the waterline, the thin band under
+// plateH is the air, and the sun and the clouds still draw on top of it.
+  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: 0, plate: 1, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1, plateH: .05 },
 };
 const LOOK = Object.assign({ mode: 'title' }, LOOKS.title);
 function setLook(m) { if (LOOKS[m]) { LOOK.mode = m; Object.assign(LOOK, LOOKS[m]); } return LOOK.mode; }
@@ -10373,7 +10382,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
