@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c24';
+const BUILD = 'c25';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -7886,6 +7886,83 @@ function showObstacles() {
   return seen.size;
 }
 
+// ---------- the cloud deck ----------
+// The island has never had a cloud in it. The sky shader has a `cloud` term, but that is a
+// tint on the dome -- nothing you can fly under, nothing that crosses the sun, nothing with an
+// edge. These are objects: they sit above the world, they drift on the real wind, and because
+// they go through scene.add like everything else they bend round the planet with it.
+//
+// A LOCAL FIELD, not a world-wide one. Sixteen of them kept within a couple of hundred units
+// of wherever he is, recycled to the upwind side when they drift out of reach -- because a
+// deck spread over a four-hundred-unit world would need hundreds to look like anything, and
+// all but a dozen of them would be past the far plane at any moment.
+//
+// They are NOT flagged noHole on purpose. Standing under one is fine, but with the mount up
+// over a ridge looking down, a cloud between the lens and him should be cut like any other
+// scenery -- that is exactly what the hole is for.
+const CLOUDS = {
+  url: 'models/fluffy_cloud.glb',
+  n: 16, lo: 62, hi: 108,          // how many, and the band they fly in
+  span: [34, 82],                  // how wide each one is
+  near: 210, drift: 1.9,           // the radius they are kept inside, and their speed on the wind
+  fade: 5, base: .34, weather: .58, // opacity: what a clear day keeps, and what the weather adds
+};
+const clouds = [];
+function buildClouds() {
+  loadModel(CLOUDS.url, e => {
+    const sz = e.box.getSize(new THREE.Vector3());
+    const big = Math.max(sz.x, sz.y, sz.z);
+    for (let i = 0; i < CLOUDS.n; i++) {
+      const inst = cloneModel(e.root);
+      const span = rnd(CLOUDS.span[0], CLOUDS.span[1]), k = span / Math.max(1e-4, big);
+      inst.scale.set(k, k * rnd(.62, .9), k);
+      inst.position.set(-(e.box.max.x + e.box.min.x) * .5 * k,
+        -(e.box.max.y + e.box.min.y) * .5 * k, -(e.box.max.z + e.box.min.z) * .5 * k);
+      inst.rotation.y = rnd(6.283);
+      inst.traverse(o => {
+        if (!o.isMesh) return;
+        o.castShadow = false; o.receiveShadow = false;    // a cloud's shadow is the whole sky's job
+        // Its own material, and transparent, because these fade in and out as they recycle --
+        // and the model arrives OPAQUE, so the shared one would have to be changed for
+        // everybody that ever uses this mesh, the title screen included.
+        o.material = o.material.clone();
+        o.material.transparent = true; o.material.depthWrite = true; o.material.opacity = 0;
+      });
+      const g = new THREE.Group(); g.add(inst); scene.add(g);
+      const c = { g, inst, mats: [], k: 0, born: 0 };
+      inst.traverse(o => { if (o.isMesh) c.mats.push(o.material); });
+      clouds.push(c);
+      cloudPlace(c, true);
+    }
+  });
+}
+// Drop one somewhere in the band, either anywhere (on the first fill) or upwind of him.
+function cloudPlace(c, anywhere) {
+  const p = player.pos, w = WX.wind;
+  const wl = Math.hypot(w.x, w.y) || 1;
+  const a = anywhere ? rnd(6.283) : Math.atan2(-w.x / wl, -w.y / wl) + rnd(-.7, .7);
+  const r = anywhere ? rnd(20, CLOUDS.near) : CLOUDS.near * rnd(.86, .99);
+  c.g.position.set(p.x + Math.sin(a) * r, rnd(CLOUDS.lo, CLOUDS.hi), p.z + Math.cos(a) * r);
+  c.k = 0;
+}
+function stepClouds(dt) {
+  if (!clouds.length) return;
+  const p = player.pos, w = WX.wind, sp = CLOUDS.drift * (1 + WX.windK * 2.2);
+  const want = CLOUDS.base + CLOUDS.weather * WX.cloud;
+  for (const c of clouds) {
+    c.g.position.x += w.x * sp * dt;
+    c.g.position.z += w.y * sp * dt;
+    const d = Math.hypot(c.g.position.x - p.x, c.g.position.z - p.z);
+    if (d > CLOUDS.near * 1.25) cloudPlace(c, false);
+    // fade in on arrival and out again at the rim, so a recycle is never a pop
+    const edge = clamp((CLOUDS.near * 1.25 - d) / 40, 0, 1);
+    c.k = lerp(c.k, want * edge, Math.min(1, dt * CLOUDS.fade));
+    const o = c.k;
+    c.g.visible = o > .01;
+    for (const m of c.mats) m.opacity = o;
+  }
+}
+
 function populate() {
   // The berth first: everything else may be rolled fresh each load, but the one thing the
   // player navigates by should be where they left it.
@@ -7970,7 +8047,7 @@ function populate() {
   }
   world.spawn = world.camp ? { x: world.camp.pos.x + 7, z: world.camp.pos.z + 5 } : (randomLand(1.5, 8, .5, 400, 3) || { x: 0, z: 0 });
   ferry = new Ferry(); initMotes(); scatterDecor(); world.sites = buildSites(); scatterRocks(); placeTitle();
-  buildZones();
+  buildZones(); buildClouds();
 }
 
 populate();
@@ -8522,6 +8599,7 @@ function dioDir(lat, lon, out) {
 // reference's planet reads as a place rather than a texture because it has one big feature and
 // everything else defers to it, which is the same rule the world's zones follow.
 const DIO_BAY = new THREE.Vector3(.60, .22, .77).normalize();
+const DIO_CLOUD = 'models/fluffy_cloud.glb';
 
 function dioPlanet() {
   const R = DIO.R;
@@ -8581,38 +8659,35 @@ function dioPlanet() {
 
 // Solid, sculpted clouds rather than sprites: the reference's are objects with a silhouette,
 // and a soft additive card cannot do a silhouette. Clumps of spheres, sat off the limb.
+// The owner's cloud, ringed round the limb. It replaces clumps of spheres that were doing an
+// impression of one -- and badly, because a sphere has no silhouette to speak of and five of
+// them overlapping is a blob, which is why they read as fog rather than as weather.
+//
+// They are centred on their own bounds rather than sat on their base: a cloud off the edge of
+// a planet is floating, not standing on anything.
 function dioClouds(g) {
-  // Not white. A cloud at #f2f6ff under any lamp at all is over the bloom threshold, and a
-  // ring of them round the limb is then a halo rather than weather.
-  const mat = new THREE.MeshStandardMaterial({ color: 0xdae3f2, roughness: 1, metalness: 0 });
-  mat.userData.noHole = true;
-  // Smaller and more of them, sat just off the limb rather than piled on it. The first cut
-  // used two-unit puffs on a fourteen-unit planet in clumps six across -- a quarter of the
-  // world per cloud -- so they merged with the ball and with each other and read as fog.
-  for (let i = 0; i < 16; i++) {
-    const lat = rnd(-.72, .04), lon = i / 16 * Math.PI * 2 + rnd(-.18, .18);
-    const cl = new THREE.Group();
-    cl.position.copy(dioDir(lat, lon)).multiplyScalar(DIO.R * rnd(1.0, 1.07));
-    for (let j = 0, n = 4 + (Math.random() * 3 | 0); j < n; j++) {
-      const s = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(rnd(.55, 1.15), 14, 10)), mat);
-      s.position.set(rnd(-1.7, 1.7), rnd(-.35, .5), rnd(-.6, .6));
-      s.scale.y = rnd(.7, .95);
-      cl.add(s);
+  loadModel(DIO_CLOUD, e => {
+    const sz = e.box.getSize(new THREE.Vector3());
+    const big = Math.max(sz.x, sz.y, sz.z);
+    for (let i = 0; i < 13; i++) {
+      const lat = rnd(-.72, .06), lon = i / 13 * Math.PI * 2 + rnd(-.16, .16);
+      const span = rnd(4.2, 7.4);
+      const k = span / Math.max(1e-4, big);
+      const inst = cloneModel(e.root);
+      inst.scale.set(k, k * rnd(.8, 1.05), k);
+      inst.position.set(-(e.box.max.x + e.box.min.x) * .5 * k,
+        -(e.box.max.y + e.box.min.y) * .5 * k, -(e.box.max.z + e.box.min.z) * .5 * k);
+      inst.rotation.y = rnd(6.283);
+      inst.traverse(o => { if (o.isMesh) dioMat(o); });
+      const hold = new THREE.Group();
+      hold.add(inst);
+      hold.position.copy(dioDir(lat, lon)).multiplyScalar(DIO.R * rnd(1.0, 1.09));
+      hold.lookAt(0, 0, 0);
+      g.add(hold);
     }
-    cl.lookAt(0, 0, 0);
-    g.add(cl);
-  }
+  });
 }
 
-// WHERE THE NEIGHBOURS GO, and the point is that it is written in FRAME coordinates rather
-// than world ones. "Bottom left corner" and "off the right edge" are things about the picture,
-// and a latitude and longitude on some sphere cannot express either -- which is why the first
-// pass put five bodies in the scene and none of them where the reference has them.
-//
-// sx and sy are fractions of the half-frame: -1 is the left edge, +1 the right, +1 the top.
-// `rf` is the body's radius as a fraction of the half-frame WIDTH at its own distance, so
-// everything holds its share of the picture on any screen. dioramaFrame places them each
-// frame off the live camera basis.
 const DIO_BODIES = [
   // The owner's saturn, ring and all, in place of the sphere-and-a-RingGeometry that used to
   // stand here. `rf` now measures the WHOLE assembly rather than the body, because the model's
@@ -12645,6 +12720,7 @@ function frame(now) {
   for (const e of world.sparks) if (e.alive) e.update(dt);
   ferry.update(dt);
   if (world.isle) world.isle.update(dt);
+  stepClouds(dt);
   for (let i = 0; i < world.psys.length; i++) world.psys[i].update(dt);
   if (world.chasmGlow) world.chasmGlow.scale.setScalar(14 + Math.sin(world.clock * 1.4) * 3 + world.night * 10);
   updateMotes(dt);
