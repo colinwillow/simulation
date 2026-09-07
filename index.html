@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c26';
+const BUILD = 'c27';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8512,7 +8512,9 @@ function titleMarkFrame(k, cam3) {
   }
   c3.getWorldDirection(_tcF);
   _tcU.set(0, 1, 0).applyQuaternion(c3.quaternion);
-  _tcP.copy(c3.position).addScaledVector(_tcF, D).addScaledVector(_tcU, fh * .355);
+  // Reference title spans sy .626 to .91, so its centre is at .768 of the half-frame -- which
+  // is fh * .384, since fh here is the FULL height.
+  _tcP.copy(c3.position).addScaledVector(_tcF, D).addScaledVector(_tcU, fh * .384);
   TCARD.g.position.copy(_tcP);
   TCARD.g.quaternion.copy(c3.quaternion);
 }
@@ -8562,7 +8564,13 @@ const DIO = {
   // its centre sits (0 is the middle, -1 the bottom edge). Both read straight off the
   // reference: the world takes about three quarters of the width and sits a little low, which
   // is what leaves the top of the picture to the name and the ship.
-  fill: .74, drop: -.13,
+  fill: .74, drop: -.157,        // 700px of 941 across; centre at 960 of 1660 down
+  // The world itself. Set to null and dioPlanet builds the vertex-coloured sphere it always
+  // has -- green cap, sand shore, sunk bay, craggy underside -- which is what everything else
+  // on the surface was placed against. With a model here that procedural terrain is gone, so
+  // the pier and the waterfall are standing on whatever the model has in that spot rather
+  // than on a bay that was put there for them. Worth seeing; one line to go back.
+  model: 'models/tropical_island_planet.glb',
   scene: null, cam: null, t: 0, built: false, mixes: [],
   ball: null, alien: null, ship: null, own: [], bodies: [],
   upright: .44,
@@ -8613,6 +8621,21 @@ const DIO_BAY = new THREE.Vector3(.60, .22, .77).normalize();
 const DIO_CLOUD = 'models/fluffy_cloud.glb';
 
 function dioPlanet() {
+  if (DIO.model) {
+    const g = new THREE.Group();
+    loadModel(DIO.model, e => {
+      const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
+      // to DIAMETER, and centred on its own bounds: the model sits on y=0 rather than round
+      // the origin, and everything else here is placed off a sphere centred on nothing.
+      const k = (DIO.R * 2) / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));
+      inst.scale.setScalar(k);
+      inst.position.set(-(e.box.max.x + e.box.min.x) * .5 * k,
+        -(e.box.max.y + e.box.min.y) * .5 * k, -(e.box.max.z + e.box.min.z) * .5 * k);
+      inst.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; dioMat(o); } });
+      g.add(inst);
+    });
+    return g;
+  }
   const R = DIO.R;
   const geo = dioOwn(new THREE.SphereGeometry(R, 128, 84));
   const pa = geo.attributes.position;
@@ -8680,9 +8703,13 @@ function dioClouds(g) {
   loadModel(DIO_CLOUD, e => {
     const sz = e.box.getSize(new THREE.Vector3());
     const big = Math.max(sz.x, sz.y, sz.z);
-    for (let i = 0; i < 13; i++) {
-      const lat = rnd(-.72, .06), lon = i / 13 * Math.PI * 2 + rnd(-.16, .16);
-      const span = rnd(4.2, 7.4);
+    // Ten, not thirteen, and about half again as big. Measured: a cloud clump in the
+    // reference is about 140 of its 941 pixels across, and the planet's 700 pixels are 28
+    // world units -- so a clump is five and a half units, and they were coming out at four.
+    // They also ring the SIDES there, not just the underside.
+    for (let i = 0; i < 10; i++) {
+      const lat = rnd(-.62, .18), lon = i / 10 * Math.PI * 2 + rnd(-.18, .18);
+      const span = rnd(6.4, 10.2);
       const k = span / Math.max(1e-4, big);
       const inst = cloneModel(e.root);
       inst.scale.set(k, k * rnd(.8, 1.05), k);
@@ -8700,21 +8727,20 @@ function dioClouds(g) {
 }
 
 const DIO_BODIES = [
-  // The owner's saturn, ring and all, in place of the sphere-and-a-RingGeometry that used to
-  // stand here. `rf` now measures the WHOLE assembly rather than the body, because the model's
-  // widest axis is its ring -- so the number is smaller than it looks and the disc still lands
-  // about a fifth of the frame wide once the right edge has cut it, which is the reference.
-  { sx:  1.06, sy:  .34, d: 235, rf: .60, model: 'models/saturn.glb', tilt: [.16, .0, .12] },
-  { sx: -1.08, sy:  .36, d: 285, rf: .50, model: 'models/earth_planet.glb' },   // the blue-green one, off the left
-  // The corners are the owner's cratered asteroid now. `tint` multiplies its own texture, so
-  // one model is the brown lump bottom left, the purple moon bottom right and the little grey
-  // ones -- which is also how the reference does it: the same rock at four sizes.
-  { sx:  -.90, sy: -.98, d:  64, rf: .60,  model: 'models/cratered_asteroid.glb', tint: '#b09678' },
-  { sx:  1.00, sy:-1.02, d:  76, rf: .64,  model: 'models/purple_moon.glb' },        // bottom right, its own colour
-  { sx:   .50, sy:  .66, d: 320, rf: .13,  model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },
-  { sx:  -.82, sy: -.34, d: 170, rf: .075, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },
-  { sx:   .90, sy: -.60, d: 185, rf: .085, model: 'models/purple_moon.glb' },
-  { sx:  -.62, sy: -.80, d: 210, rf: .055, model: 'models/cratered_asteroid.glb', tint: '#8d867c' },
+  // EVERY NUMBER HERE IS MEASURED OFF THE REFERENCE. Its frame is 941 x 1660, so a body's
+  // centre at pixel (x, y) is sx = 2x/941 - 1 and sy = 1 - 2y/1660, and its `rf` is its radius
+  // in pixels over the half-frame width, 470. Written down because otherwise the next pass at
+  // this is guessing again, and this screen has cost several rounds of exactly that.
+  //
+  //                                        measured from                     was
+  { sx:  1.04, sy:  .29, d: 235, rf: .55,  model: 'models/saturn.glb', tilt: [.16, .0, .12] },   // (960, 590) r260
+  { sx:  -.95, sy:  .34, d: 285, rf: .36,  model: 'models/earth_planet.glb' },                   // ( 25, 545) r170
+  { sx:   .49, sy:  .55, d: 320, rf: .08,  model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },  // (700, 375) r38
+  { sx:  -.80, sy: -.81, d:  64, rf: .44,  model: 'models/cratered_asteroid.glb', tint: '#b09678' },  // ( 95,1500) r205
+  { sx:   .89, sy: -.84, d:  76, rf: .37,  model: 'models/purple_moon.glb' },                    // (890,1530) r175
+  { sx:  -.80, sy: -.52, d: 170, rf: .074, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },  // ( 95,1258) r35
+  { sx:   .82, sy: -.62, d: 185, rf: .06,  model: 'models/purple_moon.glb' },                    // (855,1345) r28
+  { sx:   .62, sy: -.51, d: 210, rf: .05,  model: 'models/cratered_asteroid.glb', tint: '#8d867c' },
 ];
 
 function dioSky(g) {
@@ -8809,7 +8835,7 @@ function dioDress(g) {
 
   // ---- one spray of crystals, not five scattered ones ----
   for (let i = 0; i < 5; i++)
-    put('models/sp_crystal01.glb', .48 + rnd(-.05, .05), 0.52 + rnd(-.14, .14), rnd(2.2, 3.8), rnd(6.3));
+    put('models/orange_crystal.glb', .48 + rnd(-.05, .05), 0.52 + rnd(-.13, .13), rnd(2.6, 4.4), rnd(6.3));
 
   // ---- the creatures the reference has looking out of it ----
   // Bigger, and round toward the front where the lens can see their faces rather than the
@@ -9098,7 +9124,9 @@ function buildDiorama() {
   // the alien, standing on top of the world at a size no real body would be
   loadModel('models/alien_orange.glb', e => {
     const inst = cloneModel(e.root), h = e.box.max.y - e.box.min.y;
-    const s = 8.6 / Math.max(1e-4, h);
+    // 195 of the reference's 1660 pixels tall against a planet whose 700 pixels are 28 units:
+    // 7.8, not the 8.6 I had guessed at.
+    const s = 7.8 / Math.max(1e-4, h);
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.traverse(o => {
       if (!o.isMesh) return;
@@ -9108,7 +9136,7 @@ function buildDiorama() {
       for (const m of [].concat(o.material)) { m.emissiveMap = m.map; m.emissive.setScalar(.34); }
     });
     const holder = new THREE.Group(); holder.add(inst);
-    const dir = dioDir(.985, 1.9);
+    const dir = dioDir(.93, 1.65);      // just off the crown and toward the lens, as he is there
     dioStand(holder, dir, DIO.R * .998, 0);
     // Turned to face the lens rather than left on an arbitrary yaw. The camera sits out along
     // +Z, and this rig's forward is +Z -- the same convention the whole game uses.
@@ -9173,9 +9201,11 @@ function dioramaFrame(dt, k) {
   if (DIO.ship) {
     // Up on the left, under the name and clear of the world -- where the reference puts its
     // saucer. In frame coordinates for the same reason everything else is.
-    // Well below the wordmark. At .56 it was sitting inside the letters with only its legs
-    // showing under them, which is the one place on this screen a ship cannot be.
-    place(DIO.ship, -.56, .27 + Math.sin(DIO.t * .5) * .02, 70, .50);
+    // It was never too big -- rf .50 is a quarter of the frame across, which is the
+    // reference's saucer exactly. It was too HIGH: at sy .56 its top reached .637 and the
+    // wordmark's underside was at .572, so they shared a band. With the mark lifted to a
+    // bottom edge of .63 and the ship at .50, its top lands at .577 and they just clear.
+    place(DIO.ship, -.48, .50 + Math.sin(DIO.t * .5) * .02, 70, .50);
     DIO.ship.quaternion.copy(cam3.quaternion);
     DIO.ship.rotateY(.55); DIO.ship.rotateZ(.14 + Math.sin(DIO.t * .37) * .04); DIO.ship.rotateX(-.12);
   }
