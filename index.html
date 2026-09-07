@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c31';
+const BUILD = 'c32';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -4226,6 +4226,21 @@ const PLANT_MODELS = {
 // life for a result that would still drift the next time a generator was used.
 const TINT = {
   keep: .5,                              // how much of the body's own saturation survives
+  // AND THE ONE DIAL THAT ANSWERS "why is the title screen so much more vibrant". It is not
+  // the toon ramp -- that is on in both, it goes on the MeshStandardMaterial prototype and
+  // nothing escapes it. It is THIS: every prop in the world is pulled most of the way to grey
+  // and then stained its region's colour, and the title screen's diorama does none of that,
+  // because dioMat only clones a material and sets noHole. So the same mushroom is 100% of
+  // its own colour up there and 38% of it down here.
+  //
+  // That desaturation was right when the models came from a generator and every one of them
+  // had its own idea of what colour a plant was; it is what made them read as one world. With
+  // the assets increasingly the owner's own and coherent already, it is buying less.
+  //
+  // `vivid` is how far back toward raw the whole island is pulled: 0 is the treatment exactly
+  // as it was, 1 is every model's own colour with no tint at all. It is applied live from
+  // updateSky rather than baked at compile, so isle.vivid can be moved while looking at it.
+  vivid: .55,
   col: col('#dfe8ea'),                   // and what the rest of it is pulled toward
   lo: .05, hi: .30, k: 1.5,              // the glow key: warmth from, warmth to, how hard
   lum: [.34, .78],                       // and only where the texel is bright as well as warm
@@ -4247,6 +4262,7 @@ const TINT = {
 // one place. It is a list rather than a shared uniform because each region tints at its own
 // strength -- BIOME_LOOK.glow -- and `k` here is that region's share of it.
 const GLOW_UNI = [];
+const _tintRaw = new THREE.Color(1, 1, 1);   // what a material tends toward as vivid goes to 1
 const TINTED = new Map();
 function tintFor(mat, biome, cfg) {
   const key = mat.uuid + '|' + biome;
@@ -4264,7 +4280,7 @@ function worldTint(mat, cfg) {
   mat.emissive.setScalar(0); mat.emissiveMap = null;
   const uni = {
     uLo: { value: cfg.lo }, uHi: { value: cfg.hi }, uK: { value: cfg.k },
-    uKeep: { value: cfg.keep }, uTint: { value: cfg.col },
+    uKeep: { value: cfg.keep }, uTint: { value: cfg.col.clone() },
     uLumA: { value: cfg.lum[0] }, uLumB: { value: cfg.lum[1] },
   };
   mat.userData.shaderTag = 'tint' + (cfg.key === 'cool' ? 'C' : '');
@@ -4297,7 +4313,9 @@ function worldTint(mat, cfg) {
   // The entry, not just the uniforms: `k` is this material's share of the island-wide dusk
   // ramp, and something that wants to brighten on its own (the drone's eye with its lamp)
   // sets it here and lets updateSky keep applying the time of day on top.
-  const ent = { uni, k: cfg.k };
+  // keep0 and col0 are what this material was ASKED for; uKeep and uTint are what it is
+  // currently being given, which is that lerped toward raw by TINT.vivid every frame.
+  const ent = { uni, k: cfg.k, keep0: cfg.keep, col0: cfg.col.clone() };
   GLOW_UNI.push(ent);
   mat.userData.glow = ent;
   return uni;
@@ -8427,7 +8445,11 @@ function updateSky() {
   M.skimmer.emissiveIntensity = lerp(.2, 1.4, world.night);
   M.drifter.emissiveIntensity = lerp(.15, 1.2, world.night);
   M.burrower2.emissiveIntensity = lerp(.2, 1.3, world.night);
-  for (const g of GLOW_UNI) g.uni.uK.value = g.k * lerp(.55, 1.35, world.night);
+  for (const g of GLOW_UNI) {
+    g.uni.uK.value = g.k * lerp(.55, 1.35, world.night);
+    g.uni.uKeep.value = lerp(g.keep0, 1, TINT.vivid);
+    g.uni.uTint.value.copy(g.col0).lerp(_tintRaw, TINT.vivid);
+  }
   M.shipLamp.emissiveIntensity = lerp(.55, 2.2, world.night);
   M.shipHead.emissiveIntensity = lerp(.4, 2.8, world.night);
   M.membrane.emissiveIntensity = lerp(.1, .8, world.night);
@@ -9909,7 +9931,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
