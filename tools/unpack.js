@@ -40,6 +40,11 @@ const args = process.argv.slice(2);
 const SRC = args.find(a => !a.startsWith('--'));
 const WRITE = args.includes('--write');
 const PREFIX = (args[args.indexOf('--prefix') + 1] && args.includes('--prefix')) ? args[args.indexOf('--prefix') + 1] : '';
+// Z-UP PACKS. Cinema 4D and 3ds Max call Z up; glTF and this game call Y up. A pack exported
+// without the conversion arrives with every tree lying on its side -- and silently, because
+// placeProp scales a model by its Y extent, so a felled tree is also sized by its own width.
+// Nothing about the result says "wrong axis". It just says "wrong".
+const ZUP = args.includes('--up') && args[args.indexOf('--up') + 1] === 'z';
 const OUT = process.env.UNPACK_OUT || path.join(__dirname, '..', 'models');
 
 if (!SRC) {
@@ -95,8 +100,22 @@ function boundsOf(node) {
     console.log('  atlas: ' + (t.getName() || '(unnamed)') + '  ' + (t.getMimeType() || '?')
       + '  ' + (img ? (img.byteLength / 1024).toFixed(0) + ' KB' : '—'));
   }
+  // Which way is up, guessed from the layout: a grid of props spreads across the two ground
+  // axes and is shallow in the vertical one, so the axis with the LEAST spread of object
+  // positions is up. Advice, not action -- a wrong guess here ruins every asset silently, so
+  // the turn stays behind a flag and this only tells you which flag to pass.
+  {
+    const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+    for (const n of parts) { const t = n.getTranslation();
+      for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], t[k]); hi[k] = Math.max(hi[k], t[k]); } }
+    const sp = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+    const up = sp.indexOf(Math.min(...sp));
+    console.log('  layout spread  X ' + sp[0].toFixed(0) + '  Y ' + sp[1].toFixed(0) + '  Z ' + sp[2].toFixed(0)
+      + '   -> looks ' + 'XYZ'[up] + '-up' + (up === 2 && !ZUP ? '   ** pass --up z **' : ''));
+  }
   console.log('');
-  console.log('  ' + 'file'.padEnd(30) + 'tris'.padStart(7) + '    size (w x h x d)');
+  console.log('  ' + 'file'.padEnd(30) + 'tris'.padStart(7) + '    size (w x h x d)'
+    + (ZUP ? '   [turned Y-up]' : ''));
 
   const used = new Set();
   for (let i = 0; i < parts.length; i++) {
@@ -106,7 +125,9 @@ function boundsOf(node) {
     used.add(name);
 
     const b = boundsOf(node);
-    const w = b.hi[0] - b.lo[0], h = b.hi[1] - b.lo[1], d = b.hi[2] - b.lo[2];
+    // Report the size the GAME will see, which after a Z-up turn is not the size in the file.
+    const raw = [b.hi[0] - b.lo[0], b.hi[1] - b.lo[1], b.hi[2] - b.lo[2]];
+    const w = raw[0], h = ZUP ? raw[2] : raw[1], d = ZUP ? raw[1] : raw[2];
     console.log('  ' + (name + '.glb').padEnd(30) + String(b.tris).padStart(7)
       + '    ' + [w, h, d].map(v => (isFinite(v) ? v.toFixed(2) : '?')).join(' x '));
     if (!WRITE) continue;
@@ -124,6 +145,12 @@ function boundsOf(node) {
     // bake that too, so the file that lands has an identity transform and its geometry
     // already where it belongs. (clearNodeTransform takes a node, not a document.)
     clearNodeTransform(keep);
+    if (ZUP) {
+      // A quarter turn about X: (x, y, z) -> (x, z, -y). Baked, so what lands is a Y-up file
+      // with an identity transform and nothing downstream has to know a conversion happened.
+      keep.setRotation([-Math.SQRT1_2, 0, 0, Math.SQRT1_2]);
+      clearNodeTransform(keep);
+    }
     const bb = boundsOf(keep);
     if (isFinite(bb.lo[0])) {
       keep.setTranslation([-(bb.lo[0] + bb.hi[0]) / 2, -bb.lo[1], -(bb.lo[2] + bb.hi[2]) / 2]);
