@@ -294,6 +294,9 @@
     filter:drop-shadow(0 0 8px rgba(80,232,255,.7))}
   #introHint{font-size:12.5px;font-style:italic;opacity:.6;letter-spacing:.04em;text-align:center;
     padding:0 24px}
+  /* covers the one frame where the title's scene is swapped for the world's */
+  #veil{position:fixed;inset:0;z-index:9;background:#05070d;opacity:1;pointer-events:none;
+    transition:opacity 1.2s ease-out}
 </style>
 </head>
 <body class="intro">
@@ -1003,7 +1006,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c07';
+const BUILD = 'c08';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -7872,7 +7875,12 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
   }` });
 function renderPost() {
   renderer.info.reset();
-  renderer.setRenderTarget(rtScene); renderer.clear(); renderer.render(scene, camera);
+  renderer.setRenderTarget(rtScene); renderer.clear();
+  // The intro is a different SCENE, not a different camera move on this one. Everything after
+  // this line -- bloom, grade, dither, the black lift -- is the same chain either way, which
+  // is what makes the title card look like it belongs to the game rather than to a menu.
+  if (INTRO.on && DIO.scene) renderer.render(DIO.scene, DIO.cam);
+  else renderer.render(scene, camera);
   quad.material = brightMat; brightMat.uniforms.tD.value = rtScene.texture;
   renderer.setRenderTarget(rtA); renderer.clear(); renderer.render(quadScene, quadCam);
   const rw = rtA.width, rh = rtA.height;
@@ -8160,63 +8168,63 @@ function eraName() {
 // SWAPPING IT FOR THE REAL THING is one line: build the mesh in titleMark() from a loaded GLB
 // instead of this plane. Everything else here is about where it sits, not what it is.
 function titleFace() {
-  const CW = 1600, CH = 460, c = document.createElement('canvas');
+  const CW = 1800, CH = 520, c = document.createElement('canvas');
   c.width = CW; c.height = CH;
   const g = c.getContext('2d');
-  const word = 'PLUTOPIA', SZ = 200;
-  const font = w => '900 ' + SZ + 'px "Trebuchet MS","Gill Sans","Avenir Next",system-ui,sans-serif';
-  g.font = font();
+  const word = 'PLUTOPIA', SZ = 250;
+  // A heavy face, and then squeezed to fill the canvas: the letters have to be the picture,
+  // not a caption in the middle of it. The first pass at this drew them at a third of the
+  // width with a fifty-pixel bloom on each, and eight overlapping blooms with small letters
+  // inside them is not a wordmark, it is a lozenge -- which is exactly what it looked like.
+  g.font = '900 ' + SZ + 'px "Arial Black","Trebuchet MS","Gill Sans",system-ui,sans-serif';
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  const adv = [...word].map(ch => g.measureText(ch).width * 1.04);
+  const raw = [...word].map(ch => g.measureText(ch).width);
+  const rawTotal = raw.reduce((a, b) => a + b, 0);
+  const fit = (CW * .88) / rawTotal;               // stretch the whole word out to the margins
+  const adv = raw.map(w => w * fit);
   const total = adv.reduce((a, b) => a + b, 0);
-  const R = 2300;                       // arc radius. Big: the curve should be felt, not read.
-  const cx = CW / 2, cy = CH * .46;
+  const R = 2600, cx = CW / 2, cy = CH * .48;
   let run = -total / 2;
   const spots = [];
   for (let i = 0; i < word.length; i++) {
     const mid = run + adv[i] / 2; run += adv[i];
     const a = mid / R;
-    const x = cx + Math.sin(a) * R, y = cy + (1 - Math.cos(a)) * R * .92;
-    spots.push({ ch: word[i], x, y, a, w: adv[i] });
+    spots.push({ ch: word[i], x: cx + Math.sin(a) * R, y: cy + (1 - Math.cos(a)) * R * .9, a, w: adv[i] });
   }
-  const each = (fn) => { for (const p of spots) { g.save(); g.translate(p.x, p.y); g.rotate(p.a); fn(p); g.restore(); } };
-  g.font = font(); g.textAlign = 'center'; g.textBaseline = 'middle';
+  const each = fn => { for (const p of spots) {
+    g.save(); g.translate(p.x, p.y); g.rotate(p.a); g.scale(fit, 1); fn(p); g.restore(); } };
   g.lineJoin = 'round'; g.lineCap = 'round';
-  // 1. the bloom. Twice, because one pass of shadowBlur on a stroke is a haze and two is a lamp.
-  for (let k = 0; k < 2; k++) each(p => {
-    g.shadowColor = '#41f2ff'; g.shadowBlur = 54;
-    g.strokeStyle = 'rgba(65,242,255,.95)'; g.lineWidth = 30 - k * 12;
-    g.strokeText(p.ch, 0, 0);
-  });
+  // The bloom is a RIM now, not a haze: one tight pass, so it hugs each letter's edge instead
+  // of pooling into the gaps between them.
+  each(p => { g.shadowColor = '#3fefff'; g.shadowBlur = 26;
+    g.strokeStyle = '#6ef4ff'; g.lineWidth = 13; g.strokeText(p.ch, 0, 0); });
+  each(p => { g.shadowColor = '#3fefff'; g.shadowBlur = 12;
+    g.strokeStyle = '#9ff8ff'; g.lineWidth = 7; g.strokeText(p.ch, 0, 0); });
   g.shadowBlur = 0;
-  // 2. the rim, 3. the face
-  each(p => { g.strokeStyle = '#0d1734'; g.lineWidth = 17; g.strokeText(p.ch, 0, 0); });
-  each(p => { g.fillStyle = '#f4ecda'; g.fillText(p.ch, 0, 0); });
-  // 4. rust, clipped inside each letter so the patches end where the letter does
-  each(p => {
-    g.beginPath(); g.rect(-p.w * .6, -SZ * .7, p.w * 1.2, SZ * 1.4); g.clip();
+  each(p => { g.strokeStyle = '#132043'; g.lineWidth = 15; g.strokeText(p.ch, 0, 0); });
+  each(p => { g.fillStyle = '#f5eddc'; g.fillText(p.ch, 0, 0); });
+  each(p => {                                       // rust, clipped inside the glyph
+    g.beginPath(); g.rect(-p.w, -SZ * .72, p.w * 2, SZ * 1.44); g.clip();
     g.globalCompositeOperation = 'source-atop';
-    g.fillStyle = '#e0812c';
+    g.fillStyle = '#df7f26';
     for (let i = 0; i < 5; i++) {
       g.beginPath();
-      g.ellipse(rnd(-p.w * .4, p.w * .4), rnd(-SZ * .42, SZ * .42), rnd(7, 26), rnd(6, 20), rnd(3.14), 0, 6.283);
+      g.ellipse(rnd(-p.w * .35, p.w * .35), rnd(-SZ * .40, SZ * .40), rnd(8, 24), rnd(7, 19), rnd(3.14), 0, 6.283);
       g.fill();
     }
+    g.globalCompositeOperation = 'source-over';
   });
-  // and the planet standing in for the O of PLUT-O-PIA, which is the one flourish the
-  // reference has that type alone cannot do
-  {
+  {                                                 // the planet standing in for the O
     const o = spots[4];
     g.save(); g.translate(o.x, o.y); g.rotate(o.a);
-    g.globalCompositeOperation = 'source-over';
     const r = SZ * .40;
     const grd = g.createRadialGradient(-r * .3, -r * .35, r * .1, 0, 0, r);
     grd.addColorStop(0, '#ffb066'); grd.addColorStop(1, '#c85f1e');
     g.beginPath(); g.arc(0, 0, r, 0, 6.283); g.fillStyle = grd; g.fill();
-    g.strokeStyle = '#0d1734'; g.lineWidth = 11; g.stroke();
-    g.shadowColor = '#41f2ff'; g.shadowBlur = 26;
-    g.strokeStyle = '#6ef2ff'; g.lineWidth = 13;
-    g.beginPath(); g.ellipse(0, r * .12, r * 1.72, r * .46, -.30, 0, 6.283); g.stroke();
+    g.strokeStyle = '#132043'; g.lineWidth = 11; g.stroke();
+    g.shadowColor = '#3fefff'; g.shadowBlur = 20;
+    g.strokeStyle = '#7ef4ff'; g.lineWidth = 12;
+    g.beginPath(); g.ellipse(0, r * .12, r * 1.74, r * .46, -.30, 0, 6.283); g.stroke();
     g.restore();
   }
   const t = new THREE.CanvasTexture(c);
@@ -8224,13 +8232,13 @@ function titleFace() {
   return { tex: t, aspect: CW / CH };
 }
 
-// The mark itself, and where it rides. It is NOT parented to the camera: this scene's add()
-// is wrapped to project everything onto the sphere, and putting the lens inside that graph is
-// not a thing worth risking for one frame of lag on a shot that drifts this slowly. It is a
-// loose object told where to be, once a frame, from the camera's own transform.
-const TCARD = { g: null, mat: null, w: 0, h: 0 };
+// The mark itself. It is a loose object told where to be, once a frame, from whichever camera
+// is looking at it -- the diorama's during the intro. Parenting it to a camera would be
+// tidier but this scene's add() is wrapped to project everything onto the sphere, and putting
+// a lens inside that graph is not worth risking for one frame of lag on a shot this slow.
+const TCARD = { g: null, mat: null, mesh: null };
 const _tcF = new THREE.Vector3(), _tcU = new THREE.Vector3(), _tcP = new THREE.Vector3();
-function titleMark() {
+function titleMark(host) {
   if (TCARD.g) return TCARD.g;
   const f = titleFace();
   const mat = new THREE.MeshBasicMaterial({ map: f.tex, transparent: true, opacity: 0,
@@ -8238,26 +8246,340 @@ function titleMark() {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1 / f.aspect), mat);
   m.frustumCulled = false; m.renderOrder = 9000;
   const g = new THREE.Group(); g.userData.flat = true; g.add(m);
-  scene.add(g);
+  (host || scene).add(g);
   TCARD.g = g; TCARD.mat = mat; TCARD.mesh = m;
   return g;
 }
-// Sized off the frustum rather than off a constant, so it holds the same share of the screen
-// on a phone held either way round: a fixed world size is a different composition on every
-// device, which is the one thing a title card cannot be.
-function titleMarkFrame(k) {
-  const g = titleMark();
+// Sized off the frustum, so it holds the same share of the screen on any device.
+function titleMarkFrame(k, cam3) {
+  if (!TCARD.g) return;
+  const c3 = cam3 || camera;
   TCARD.mat.opacity = k;
-  g.visible = k > .01;
-  if (!g.visible) return;
-  const D = 60, fh = 2 * D * Math.tan(camera.fov * Math.PI / 360), fw = fh * camera.aspect;
-  const w = fw * .86;
+  TCARD.g.visible = k > .01;
+  if (!TCARD.g.visible) return;
+  const D = 40, fh = 2 * D * Math.tan(c3.fov * Math.PI / 360), fw = fh * c3.aspect;
+  const w = Math.min(fw * .94, fh * 1.5);
   TCARD.mesh.scale.set(w, w, 1);
-  camera.getWorldDirection(_tcF);
-  _tcU.set(0, 1, 0).applyQuaternion(camera.quaternion);
-  _tcP.copy(camera.position).addScaledVector(_tcF, D).addScaledVector(_tcU, fh * .315);
-  g.position.copy(_tcP);
-  g.quaternion.copy(camera.quaternion);
+  c3.getWorldDirection(_tcF);
+  _tcU.set(0, 1, 0).applyQuaternion(c3.quaternion);
+  _tcP.copy(c3.position).addScaledVector(_tcF, D).addScaledVector(_tcU, fh * .34);
+  TCARD.g.position.copy(_tcP);
+  TCARD.g.quaternion.copy(c3.quaternion);
+}
+
+// ---------- the title diorama ----------
+// A PURPOSE-BUILT LITTLE PLANET, and the reason it is built rather than borrowed is
+// arithmetic. The world is 400 units of radius behind a 46-degree lens with the far plane at
+// 1600. Framing the whole disc with real space around it on a portrait phone needs about 3800
+// units of standoff -- twice that plane -- and at that range the island is a few hundred
+// pixels of nothing, with no readable tree on it. The reference is a DIORAMA: a small planet
+// built to be looked at, with the alien and the base at storybook scale rather than true
+// scale. There is no camera move that turns one into the other, so this makes one.
+//
+// It is its own scene, camera and lights. Nothing here touches the world -- the post chain
+// renders THIS while the intro is up and the real thing afterwards -- which also means the
+// whole card costs nothing at all once the game starts.
+const DIO = {
+  R: 14,               // the planet
+  fill: .80,           // and how much of the frame's SHORT axis it is to take
+  scene: null, cam: null, t: 0, built: false, mix: null,
+  ball: null, alien: null, ship: null, own: [],
+};
+// WHAT THE DIORAMA IS ALLOWED TO THROW AWAY. cloneModel shares geometry AND materials with
+// the entry in the model cache, and the world draws from that same entry -- so disposing
+// everything in this scene on the way out would reach back and gut the live game's trees.
+// Only geometry built HERE goes on the list, and only the list is disposed.
+const dioOwn = g => { DIO.own.push(g); return g; };
+// Same hazard, other direction: setting noHole on a mesh's material would set it on the
+// shared one, and a creature in the world would quietly stop being cut by the see-through
+// hole. Clone first. It costs a few programs, for the length of one title screen.
+function dioMat(o) {
+  const one = m => { const c = m.clone(); c.userData = Object.assign({}, m.userData, { noHole: 1 }); return c; };
+  o.material = Array.isArray(o.material) ? o.material.map(one) : one(o.material);
+}
+
+// Where a direction meets the surface, and the turn that stands a thing up on it.
+const _dqA = new THREE.Vector3(), _dqB = new THREE.Quaternion(), _dqC = new THREE.Quaternion();
+function dioStand(o, dir, r, spin) {
+  o.position.copy(dir).multiplyScalar(r);
+  _dqB.setFromUnitVectors(_plY, _dqA.copy(dir).normalize());
+  o.quaternion.copy(_dqB).multiply(_dqC.setFromAxisAngle(_plY, spin || 0));
+}
+// A direction from latitude and longitude, latitude in -1..1 as sin.
+function dioDir(lat, lon, out) {
+  const c = Math.sqrt(Math.max(0, 1 - lat * lat));
+  return (out || new THREE.Vector3()).set(Math.cos(lon) * c, lat, Math.sin(lon) * c);
+}
+
+// THE BAY. One spherical cap, and everything about the planet's layout is arranged around it:
+// water inside it, a shore ring just outside, the pier on its edge, the grove opposite. The
+// reference's planet reads as a place rather than a texture because it has one big feature and
+// everything else defers to it, which is the same rule the world's zones follow.
+const DIO_BAY = new THREE.Vector3(.62, .40, .68).normalize();
+
+function dioPlanet() {
+  const R = DIO.R;
+  const geo = dioOwn(new THREE.SphereGeometry(R, 128, 84));
+  const pa = geo.attributes.position;
+  const cols = new Float32Array(pa.count * 3);
+  const C = {
+    grass: new THREE.Color('#5fb63f'), grass2: new THREE.Color('#84cf58'),
+    sand: new THREE.Color('#e7d6a6'), surf: new THREE.Color('#bfeee4'),
+    sea: new THREE.Color('#27bdb8'), deep: new THREE.Color('#12798f'),
+    rock: new THREE.Color('#8f867a'), rock2: new THREE.Color('#6b6359'),
+  };
+  const d = new THREE.Vector3(), c = new THREE.Color();
+  for (let i = 0; i < pa.count; i++) {
+    d.set(pa.getX(i), pa.getY(i), pa.getZ(i)).normalize();
+    // Warp the latitude with noise so no boundary on this planet is a line of latitude --
+    // a straight edge round a small sphere is the one thing that says "shader" out loud.
+    const n = fbm3(d.x * 2.2, d.y * 2.2, d.z * 2.2, 4) - .5;
+    const fine = fbm3(d.x * 7.5, d.y * 7.5, d.z * 7.5, 3) - .5;
+    const L = d.y + n * .40;
+    const bay = d.dot(DIO_BAY) + (fbm3(d.x * 3.1 + 9, d.y * 3.1, d.z * 3.1, 3) - .5) * .34;
+    let r = R, col = C.rock;
+    if (bay > .90 && L > -.05) {                       // open water, and it sits lower
+      const deep = smooth(.90, .99, bay);
+      col = c.copy(C.sea).lerp(C.deep, deep).clone();
+      r = R * (1 - .028 - deep * .022);
+    } else if (bay > .84 && L > -.05) {                // the surf ring round it
+      col = c.copy(C.surf).lerp(C.sand, smooth(.90, .84, bay)).clone();
+      r = R * (1 - .020);
+    } else if (L > .34) {                              // the green cap
+      col = c.copy(C.grass).lerp(C.grass2, fine + .5).clone();
+      r = R * (1 + .014 * (fine + .5) + .010 * n);
+    } else if (L > .17) {                              // beach
+      col = c.copy(C.sand).lerp(C.grass, smooth(.17, .34, L) * .35).clone();
+      r = R * (1 + .006 * fine);
+    } else {                                           // cliff and craggy underside
+      const k = smooth(.17, -.5, L);
+      col = c.copy(C.rock).lerp(C.rock2, k * (.5 + fine)).clone();
+      r = R * (1 + .052 * k * (fbm3(d.x * 4.4, d.y * 6.2, d.z * 4.4, 3) - .35));
+    }
+    pa.setXYZ(i, d.x * r, d.y * r, d.z * r);
+    cols[i * 3] = col.r; cols[i * 3 + 1] = col.g; cols[i * 3 + 2] = col.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .92, metalness: 0 });
+  mat.userData.noHole = true;
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = m.receiveShadow = true;
+  return m;
+}
+
+// Solid, sculpted clouds rather than sprites: the reference's are objects with a silhouette,
+// and a soft additive card cannot do a silhouette. Clumps of spheres, sat off the limb.
+function dioClouds(g) {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xf2f6ff, roughness: 1, metalness: 0 });
+  mat.userData.noHole = true;
+  for (let i = 0; i < 11; i++) {
+    const lat = rnd(-.62, .10), lon = i / 11 * Math.PI * 2 + rnd(-.24, .24);
+    const cl = new THREE.Group();
+    cl.position.copy(dioDir(lat, lon)).multiplyScalar(DIO.R * rnd(1.01, 1.12));
+    for (let j = 0, n = 5 + (Math.random() * 4 | 0); j < n; j++) {
+      const s = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(rnd(.85, 2.0), 14, 10)), mat);
+      s.position.set(rnd(-3, 3), rnd(-.6, .8), rnd(-1, 1));
+      s.scale.y = rnd(.72, 1);
+      cl.add(s);
+    }
+    cl.lookAt(0, 0, 0);
+    g.add(cl);
+  }
+}
+
+// The star field, the nebula, the neighbours and the two big lumps in the corners. The lumps
+// are the trick worth naming: something CLOSE and unlit at the edge of frame is what makes a
+// wide shot read as deep rather than flat, because it gives the eye a near thing and a far
+// thing in the same picture.
+function dioSky(g) {
+  {
+    // Two passes at two sizes rather than one with a per-vertex size, because PointsMaterial
+    // has no per-vertex size -- and with attenuation ON, a star four hundred units out is a
+    // sub-pixel nothing, which is why the old sky came back empty. Screen-space, fixed size.
+    for (const [n, size, op, lo, hi] of [[760, 1.6, .8, 300, 460], [150, 3.0, 1, 300, 460]]) {
+      const pos = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const v = dioDir(rnd(-1, 1), rnd(0, 6.283)).multiplyScalar(rnd(lo, hi));
+        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+      }
+      const gg = dioOwn(new THREE.BufferGeometry());
+      gg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.add(new THREE.Points(gg, new THREE.PointsMaterial({
+        color: 0xffffff, size, sizeAttenuation: false, transparent: true, opacity: op, depthWrite: false })));
+    }
+  }
+  for (let i = 0; i < 9; i++) {                       // nebula
+    const sp = glow(pick(['#6a3fc8', '#a33fc0', '#2f6fd0', '#c04f9c', '#2f9a96']), rnd(160, 320), rnd(.07, .16));
+    sp.position.copy(dioDir(rnd(-.7, .8), rnd(0, 6.283))).multiplyScalar(rnd(240, 330));
+    sp.material.depthWrite = false; sp.material.fog = false;
+    g.add(sp);
+  }
+  // neighbours: [lat, lon, dist, radius, colour, ring?]
+  const worlds = [
+    [ .46, 1.02, 190, 34, '#d3814e', '#e8c39a'],       // the ringed giant, upper right
+    [ .30, 4.35, 210, 26, '#4e7fb8', null],            // the blue one, left
+    [ .58, 5.60, 250, 11, '#b9b2c8', null],
+    [-.10, 2.30, 265, 14, '#7f6fc0', null],
+    [-.46, 3.70, 200, 20, '#8d7f74', null],
+  ];
+  for (const [lat, lon, dd, rad, hex, ring] of worlds) {
+    const m = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(rad, 30, 22)),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 1, metalness: 0 }));
+    m.material.userData.noHole = true;
+    m.position.copy(dioDir(lat, lon)).multiplyScalar(dd);
+    if (ring) {
+      const rg = new THREE.Mesh(dioOwn(new THREE.RingGeometry(rad * 1.45, rad * 2.25, 64)),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(ring), transparent: true, opacity: .75,
+          side: THREE.DoubleSide, depthWrite: false }));
+      rg.rotation.set(1.18, .4, .25); m.add(rg);
+    }
+    g.add(m);
+  }
+  const lump = (lat, lon, dd, rad, hex) => {
+    const geo = dioOwn(new THREE.IcosahedronGeometry(rad, 2)), pa = geo.attributes.position;
+    for (let i = 0; i < pa.count; i++) {
+      const k = .78 + fbm3(pa.getX(i) * .3, pa.getY(i) * .3, pa.getZ(i) * .3, 3) * .44;
+      pa.setXYZ(i, pa.getX(i) * k, pa.getY(i) * k, pa.getZ(i) * k);
+    }
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      color: new THREE.Color(hex), roughness: 1, metalness: 0 }));
+    m.material.userData.noHole = true;
+    m.position.copy(dioDir(lat, lon)).multiplyScalar(dd);
+    m.rotation.set(rnd(3), rnd(3), rnd(3));
+    g.add(m);
+  };
+  lump(-.72, 2.05, 74, 20, '#6b6055');                 // bottom left, close
+  lump(-.66, 4.95, 82, 17, '#5a5266');                 // bottom right
+  lump( .70, 3.35, 150, 12, '#5f5a52');
+}
+
+// What stands on it. Everything here is one of ours -- the pack props, our building, our
+// antenna, our alien, our ship -- laid out the way the reference lays its planet out: a base
+// on one shoulder, a grove on the other, crystals behind, the pier on the bay, and the alien
+// standing on top of the world at a size no real body would be.
+function dioDress(g) {
+  const put = (url, lat, lon, span, spin, lift) => loadModel(url, e => {
+    const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
+    const s = span / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));
+    inst.scale.setScalar(s);
+    inst.position.y = -e.box.min.y * s;
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; dioMat(o); } });
+    const holder = new THREE.Group(); holder.add(inst);
+    dioStand(holder, dioDir(lat, lon), DIO.R * (1 + (lift || 0)) * 1.012, spin || 0);
+    g.add(holder);
+  });
+  // the base, its dish and its mast, on the left shoulder
+  put('models/alien_building_01.glb', .70, 2.55, 5.0, .4);
+  put('models/sp_sci_fi_antenna.glb', .62, 2.95, 4.4, 0);
+  put('models/alien_building_01.glb', .60, 2.20, 3.4, 1.1);
+  // the grove opposite, tall and varied
+  for (let i = 0; i < 7; i++)
+    put(pick(['models/sp_tree03.glb', 'models/sp_tree04.glb', 'models/sp_tree01.glb']),
+      rnd(.38, .74), rnd(4.9, 6.15), rnd(3.2, 5.4), rnd(6.3));
+  // umbrella growth flanking it, the reference's big mushroom caps
+  for (let i = 0; i < 5; i++)
+    put(pick(['models/sp_plant06.glb', 'models/sp_plant01.glb', 'models/alien_mushroom_01.glb']),
+      rnd(.30, .66), rnd(0.1, 1.5), rnd(2.4, 4.0), rnd(6.3));
+  // a crystal stand behind the base
+  for (let i = 0; i < 4; i++)
+    put('models/sp_crystal01.glb', rnd(.52, .76), rnd(3.3, 4.2), rnd(1.6, 3.0), rnd(6.3));
+  // low cover scattered over the green, and rock round the shoulders
+  for (let i = 0; i < 22; i++)
+    put(pick(['models/sp_plant02.glb', 'models/sp_plant04.glb', 'models/sp_plant07.glb', 'models/sp_plant09.glb']),
+      rnd(.30, .92), rnd(0, 6.283), rnd(.7, 1.5), rnd(6.3));
+  for (let i = 0; i < 10; i++)
+    put(pick(['models/sp_rock02.glb', 'models/sp_rock05.glb', 'models/sp_rock09.glb']),
+      rnd(-.10, .40), rnd(0, 6.283), rnd(1.1, 2.6), rnd(6.3));
+  // and a couple of the island's own creatures, oversize like the reference's
+  for (const [lat, lon, sp] of [[.62, 5.05, 2.6], [.52, 0.55, 2.2]])
+    put('models/purple_horny.glb', lat, lon, sp, rnd(6.3));
+}
+
+function buildDiorama() {
+  if (DIO.built) return;
+  DIO.built = true;
+  const sc = DIO.scene = new THREE.Scene();
+  // Its own background, explicitly: the renderer's clear colour belongs to the world's sky,
+  // and inheriting it would put the planet on a daylight blue.
+  sc.background = new THREE.Color('#05060f');
+  DIO.cam = new THREE.PerspectiveCamera(46, camera.aspect, 1, 900);
+
+  const key = new THREE.DirectionalLight(0xfff0dc, 2.5);
+  key.position.set(-38, 44, 40);
+  // It casts. A ball this size with no shadow on it reads as a sticker, and the alien's own
+  // shadow on the grass is most of what sells him as standing there.
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  const sh = key.shadow.camera;
+  sh.left = -26; sh.right = 26; sh.top = 26; sh.bottom = -26; sh.near = 1; sh.far = 160;
+  key.shadow.bias = -.0012;
+  sc.add(key); sc.add(key.target);
+  const rim = new THREE.DirectionalLight(0x86b8ff, 1.05);
+  rim.position.set(46, 10, -34); sc.add(rim);
+  sc.add(new THREE.HemisphereLight(0xbcd4ff, 0x2a2450, 1.05));
+  sc.add(new THREE.AmbientLight(0x6a6ea0, .55));
+
+  const spin = DIO.spin = new THREE.Group(); sc.add(spin);
+  DIO.ball = dioPlanet(); spin.add(DIO.ball);
+  dioClouds(spin);
+  dioDress(spin);
+  const sky = new THREE.Group(); sc.add(sky); DIO.sky = sky;
+  dioSky(sky);
+
+  // the alien, standing on top of the world at a size no real body would be
+  loadModel('models/alien_orange.glb', e => {
+    const inst = cloneModel(e.root), h = e.box.max.y - e.box.min.y;
+    const s = 6.4 / Math.max(1e-4, h);
+    inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; dioMat(o); } });
+    const holder = new THREE.Group(); holder.add(inst);
+    dioStand(holder, dioDir(.985, 1.9), DIO.R * 1.012, 2.5);
+    DIO.spin.add(holder); DIO.alien = inst;
+    const idle = pickClip(e.anims || [], 'idle', 'idle', 'walk|run|rifle');
+    if (idle) { DIO.mix = new THREE.AnimationMixer(inst); DIO.mix.clipAction(idle).play(); }
+  });
+  // and our ship, up on the left where the reference puts its saucer
+  loadModel(SHIP.url, e => {
+    const inst = cloneModel(e.root), sz = e.box.getSize(new THREE.Vector3());
+    const s = 11 / Math.max(1e-4, Math.max(sz.x, sz.y, sz.z));
+    inst.scale.setScalar(s);
+    inst.traverse(o => { if (o.isMesh) dioMat(o); });
+    const holder = new THREE.Group();
+    holder.add(inst); holder.position.set(-19, 20, 16);
+    holder.rotation.set(-.16, .9, .12);
+    sc.add(holder); DIO.ship = holder;
+  });
+  DIO.mark = titleMark(sc);
+}
+
+// The shot. Distance comes off the frustum rather than a constant, so the planet holds the
+// same share of the picture on any screen -- a fixed standoff is a different composition on
+// every device, which is the one thing a title card cannot be.
+function dioramaFrame(dt, k) {
+  if (!DIO.built) buildDiorama();
+  DIO.t += dt;
+  const cam3 = DIO.cam;
+  if (cam3.aspect !== camera.aspect) { cam3.aspect = camera.aspect; cam3.updateProjectionMatrix(); }
+  const vHalf = cam3.fov * Math.PI / 360;
+  const hHalf = Math.atan(Math.tan(vHalf) * cam3.aspect);
+  const half = Math.min(vHalf, hHalf) * DIO.fill;
+  const d = DIO.R / Math.max(.02, Math.sin(half));
+  // The planet sits a little low so the name has the top of the frame, which is the
+  // reference's whole layout: word up there, world down here, space behind both.
+  const drop = Math.tan(vHalf) * d * .10;
+  cam3.position.set(Math.sin(DIO.t * .035) * d * .05, drop * .55 + Math.sin(DIO.t * .06) * .5, d);
+  cam3.lookAt(0, -drop * .45, 0);
+  cam3.updateMatrixWorld(true);
+  if (DIO.spin) DIO.spin.rotation.y = DIO.t * .035;
+  if (DIO.sky) DIO.sky.rotation.y = -DIO.t * .006;
+  if (DIO.mix) DIO.mix.update(dt);
+  if (DIO.ship) {
+    DIO.ship.position.y = 20 + Math.sin(DIO.t * .5) * .7;
+    DIO.ship.rotation.z = .12 + Math.sin(DIO.t * .37) * .05;
+  }
+  titleMarkFrame(k, cam3);
 }
 
 const INTRO = {
@@ -8305,6 +8627,9 @@ function introFrame(dt) {
   // stood them up, the Elderwillow if it could not, the origin if neither.
   // world.titleAt is the plaque's place in chart coordinates. world.title itself is now a
   // child of the floating island, so its own .position is local to it and no use here.
+  // The card is the diorama now. The world camera below is only being parked somewhere
+  // sensible, so the descent has an honest place to start from when the scene changes.
+  dioramaFrame(dt, smooth(.15, 2.0, INTRO.t));
   const c = world.titleAt || (world.greatTree ? world.greatTree.pos : null);
   const tx = c ? c.x : 0, tz = c ? c.z : 0;
   const W1 = INTRO.wide;
@@ -8326,7 +8651,6 @@ function introFrame(dt) {
   // times itself so it could be read from orbit, and with a wordmark across the top of the
   // frame that is simply a second title in the same shot.
   if (world.title) world.title.scale.setScalar(1);
-  titleMarkFrame(smooth(0, 2.2, INTRO.t));
   // and send the ship round the island. This is the sortie it has always known how to fly
   // -- lift, one lap at altitude, land -- which is switched off in play because it is his
   // ship now, and is exactly the right thing for a title screen.
@@ -8338,7 +8662,21 @@ function introFrame(dt) {
 }
 function startGame() {
   if (!INTRO.on) return;
+  // The scene swaps underneath in a single frame, so cover it. Black on its way out reads as
+  // an arrival; the same cut uncovered reads as a glitch.
+  const veil = document.createElement('div');
+  veil.id = 'veil'; document.body.appendChild(veil);
+  requestAnimationFrame(() => { veil.style.opacity = '0'; });
+  setTimeout(() => veil.remove(), 1500);
   INTRO.on = false; INTRO.r0 = cam.r; INTRO.dive = INTRO.diveT;
+  titleMarkFrame(0);
+  // Hand the diorama back. It is a planet, a sky and a couple of dozen props that will never
+  // be looked at again, and it is the one thing in this file that is genuinely disposable.
+  if (DIO.scene) {
+    for (const g of DIO.own) g.dispose();
+    DIO.own.length = 0;
+    DIO.scene = null; DIO.spin = null; DIO.sky = null; DIO.mix = null;
+  }
   if (weap.ready) wdock.hidden = false;
   introEl.classList.add('go');
   setTimeout(() => introEl.remove(), 1000);
@@ -8351,9 +8689,6 @@ function diveFrame(dt) {
   INTRO.dive = Math.max(0, INTRO.dive - dt);
   const k = 1 - INTRO.dive / INTRO.diveT;
   const e = k * k * (3 - 2 * k);
-  // The mark goes first and fast: it is the one thing on screen that is not part of the
-  // world, so it should be gone well before you arrive in it.
-  titleMarkFrame(clamp(1 - k * 3, 0, 1));
   cam.r = lerp(INTRO.r0, 20, e);
   // The plaque comes back down to the size it is in the world as you arrive at it, so the
   // thing you were reading from orbit turns out to be a monument standing in a meadow.
