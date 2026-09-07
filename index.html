@@ -1033,7 +1033,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c41';
+const BUILD = 'c42';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -1539,7 +1539,9 @@ function blurEquirect(img, w) {
 const P = {
   sand: col('#cbb693'), sandWet: col('#8d7f66'), mud: col('#6b5a45'),
   grass: col('#6d9a63'), grass2: col('#4a7a55'), grassDry: col('#9a9c68'),
-  rock: col('#7c7a78'), rock2: col('#565452'), snow: col('#eef3f8'),
+    // Snow reads white either way and takes a blue cast for free; a pure #eef3f8 is the one
+  // colour on the island that no amount of saturation can do anything with.
+  rock: col('#7c7a78'), rock2: col('#565452'), snow: col('#dce9fb'),
   bark: col('#5b4636'), bark2: col('#38291f'),
   canopy: col('#3a7a5e'), canopy2: col('#4f9163'), canopy3: col('#2b6155'),
   lantern: col('#ffb85c'), moss: col('#7fb478'), moss2: col('#639a6b'),
@@ -2402,8 +2404,12 @@ function buildSkyBodies() {
 // terrain's own shader rather than in the baked vertex colour, so they are live: gsat 1 and
 // gmul 1 is the ground exactly as it was.
 const LOOKS = {
-  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0, gsat: 1, gmul: 1 },
-  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .30, plate: .55, gsat: 1.85, gmul: .78 },
+  legacy: { vivid: .55, haze: 1, lift: 1, rig: 0, env: 1, plate: 0, gsat: 1, gmul: 1, fogSky: 0, fogSat: 1 },
+  // `fogSky` pulls the haze colour toward the sky it is standing in front of and `fogSat`
+  // takes the grey back out of it. Distance should dissolve into the sky, which on this
+  // world is a deep blue-violet -- not into a separate flat grey that only the far ground
+  // is painted with, which is what a fog colour of its own always looks like.
+  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: .30, plate: .55, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5 },
 };
 const LOOK = Object.assign({ mode: 'title' }, LOOKS.title);
 function setLook(m) { if (LOOKS[m]) { LOOK.mode = m; Object.assign(LOOK, LOOKS[m]); } return LOOK.mode; }
@@ -2499,8 +2505,11 @@ const BIOME_LOOK = {
   pasture:  { ground: col('#8cba63'), k: .50, rock: col('#8c8a80'), tint: col('#dcefac'), glow: .6 },
   // dry ochre savanna
   scrub:    { ground: col('#c0a555'), k: .58, rock: col('#a58d68'), tint: col('#f2dc9e'), glow: .55 },
-  // bare cold rock and snow
-  highland: { ground: col('#8e97a2'), k: .48, rock: col('#7a828c'), tint: col('#dae6f2'), glow: .8 },
+  // Cold rock and snow -- COLD, not grey. #8e97a2 and #7a828c are two greys with a hint of
+  // blue in them, and a hint of blue is what a saturation pass has nothing to work with: the
+  // highland was the one region whose own colour was no colour, so it came out of every pass
+  // looking like the thing that had been drained. Same values, real hue.
+  highland: { ground: col('#6f88ae'), k: .54, rock: col('#5b7098'), tint: col('#cfe2f8'), glow: .8 },
   // the crystal flats by the chasm: violet ground, magenta flora, everything glowing
   // Crystal Fields: violet ground, magenta flora, everything lit from inside
   crystal:  { ground: col('#54406e'), k: .70, rock: col('#6a5a8e'), tint: col('#e0aef6'), glow: 2.6 },
@@ -4433,12 +4442,18 @@ const TINT = {
 const GLOW_UNI = [];
 const _tintRaw = new THREE.Color(1, 1, 1);   // what a material tends toward as vivid goes to 1
 const TINTED = new Map();
+// `paint` is a multiply on the material's own colour, and it is the only handle there is on a
+// model whose texture is the wrong colour. The mountain models are near-white rock: nothing in
+// the tint shader can put a hue into a texel that has none, and with vivid at 1 there is no
+// stain left to do it either. This is the one that can, it costs a clone that was already
+// being made per region, and it is stated on the zone entry beside the model it belongs to.
 function tintFor(mat, biome, cfg) {
-  const key = mat.uuid + '|' + biome;
+  const key = mat.uuid + '|' + biome + '|' + ((cfg && cfg.paint) || '');
   let m = TINTED.get(key);
   if (!m) {
     const look = BIOME_LOOK[biome] || BIOME_LOOK.pasture;
     m = mat.clone(); m.userData = Object.assign({}, mat.userData);
+    if (cfg && cfg.paint) m.color.copy(col(cfg.paint));
     worldTint(m, Object.assign({ col: look.tint, k: TINT.k * look.glow }, cfg || {}));
     TINTED.set(key, m);
   }
@@ -7787,9 +7802,9 @@ const ZONES = [
   { fn: 'burst', biome: 'fungal',   n: 2, maxSl: .5, hub: 'sp_crystal02', shard: 'sp_crystal01' },
   // OUTCROPS: a spine along one bearing, biggest in the middle, tapering to both ends. Three
   // regions, three different rocks, so an outcrop tells you which country you are standing in.
-  { fn: 'ridge', biome: 'highland', n: 6, maxSl: .8, rock: ['sp_rock01', 'sp_rock02', 'sp_rock09'] },
-  { fn: 'ridge', biome: 'desert',   n: 5, maxSl: .8, rock: ['sp_rock03', 'sp_rock05'] },
-  { fn: 'ridge', biome: 'scrub',    n: 3, maxSl: .7, rock: ['sp_rock06'] },
+  { fn: 'ridge', biome: 'highland', n: 6, maxSl: .8, rock: ['sp_rock01', 'sp_rock02', 'sp_rock09'], paint: '#93a8cc' },
+  { fn: 'ridge', biome: 'desert',   n: 5, maxSl: .8, rock: ['sp_rock03', 'sp_rock05'], paint: '#c8845a' },
+  { fn: 'ridge', biome: 'scrub',    n: 3, maxSl: .7, rock: ['sp_rock06'], paint: '#c9ac78' },
   // BEDS: one species per patch. A patch of mixed plants is scatter with extra steps; a patch
   // of ONE thing reads as something that spread from a seed and stopped where the ground did.
   { fn: 'bed',   biome: 'wetland',  n: 6, maxSl: .5, plant: ['sp_plant02', 'sp_plant03'] },
@@ -7806,7 +7821,7 @@ const ZONES = [
   // is the one model in the batch that is all footprint -- a single wet mass with a shelf --
   // so it gets a formation of its own rather than a slot in `ridge`, where it would have been
   // sized like a boulder. Three regions, three different skirts.
-  { fn: 'crag', biome: 'highland', n: 3, maxSl: .95, rock: ['waterfall_rock'], scree: ['sp_rock01', 'sp_rock09'], plant: ['sp_plant01'] },
+  { fn: 'crag', biome: 'highland', n: 3, maxSl: .95, rock: ['waterfall_rock'], scree: ['sp_rock01', 'sp_rock09'], plant: ['sp_plant01'], paint: '#9dbdd2' },
   { fn: 'crag', biome: 'jungle',   n: 2, maxSl: .85, rock: ['waterfall_rock'], scree: ['sp_rock02'], plant: ['sp_plant07'] },
   { fn: 'crag', biome: 'wetland',  n: 2, maxSl: .80, rock: ['waterfall_rock'], scree: ['sp_rock06'], plant: ['sp_plant02'] },
   // THE ORANGE CRYSTAL, and it goes in the DESERT rather than in the crystal flats on purpose.
@@ -7815,14 +7830,15 @@ const ZONES = [
   { fn: 'burst', biome: 'desert',  n: 4, maxSl: .5, hub: 'orange_crystal', shard: 'orange_crystal' },
   { fn: 'burst', biome: 'scrub',   n: 2, maxSl: .5, hub: 'orange_crystal', shard: 'orange_crystal' },
   // LANDMARKS: something big enough to steer by, with its own skirt of fallen rock.
-  { fn: 'peak',  biome: 'highland', n: 3, maxSl: .9, peak: ['sp_mountain01', 'sp_mountain02'], rock: ['sp_rock01', 'sp_rock09'] },
-  { fn: 'peak',  biome: 'desert',   n: 2, maxSl: .9, peak: ['sp_mountain03'], rock: ['sp_rock05'] },
+  { fn: 'peak',  biome: 'highland', n: 3, maxSl: .9, peak: ['sp_mountain01', 'sp_mountain02'], rock: ['sp_rock01', 'sp_rock09'], paint: '#8ba3cc' },
+  { fn: 'peak',  biome: 'desert',   n: 2, maxSl: .9, peak: ['sp_mountain03'], rock: ['sp_rock05'], paint: '#c07a4e' },
   // And the one built thing in the batch, stood up with stones round its foot so it reads as
   // having been PUT there.
   { fn: 'mast',  biome: 'crystal',  n: 2, maxSl: .4, mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
   { fn: 'mast',  biome: 'highland', n: 2, maxSl: .4, mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
 ];
 
+const ZPAINT = { v: null };
 const _zq = new THREE.Quaternion(), _zs = new THREE.Quaternion(), _zax = new THREE.Vector3();
 const _zp = new THREE.Vector3(), _zsc = new THREE.Vector3(), _zn = new THREE.Vector3(), _zm = new THREE.Matrix4();
 
@@ -7861,6 +7877,9 @@ function buildZones() {
 // measured), so a trunk can block while its canopy does not, and a flower blocks nothing.
 function zPut(bin, m, x, z, span, yaw, tilt, obK, opt) {
   if (!m) return;
+  // The zone's paint, if it named one, without every formation having to pass it down through
+  // eight call sites. layZones parks the entry being laid here for exactly this.
+  if (ZPAINT.v && !(opt && opt.paint)) opt = Object.assign({}, opt, { paint: ZPAINT.v });
   const s = span / Math.max(1e-4, m.big), gy = groundY(x, z);
   _zn.copy(normalAt(x, z)).lerp(_plY, 1 - tilt).normalize();
   _zq.setFromUnitVectors(_plY, _zn).multiply(_zs.setFromAxisAngle(_plY, yaw));
@@ -7872,7 +7891,7 @@ function zPut(bin, m, x, z, span, yaw, tilt, obK, opt) {
   _zp.set(x, gy - sink - m.box.min.y * s, z);
   _zm.compose(_zp, _zq, _zsc.setScalar(s));
   const reg = biomeAt(x, z).name;
-  for (const pt of m.parts) bin.push({ geo: pt.geo, mat: tintFor(pt.mat, reg, { keep: .38, k: .7 }), matrix: _zm.clone().multiply(pt.m) });
+  for (const pt of m.parts) bin.push({ geo: pt.geo, mat: tintFor(pt.mat, reg, { keep: .38, k: .7, paint: opt && opt.paint }), matrix: _zm.clone().multiply(pt.m) });
   const r = m.foot * s * obK;
   if (r > .4) obAdd(x, z, r, null, gy - sink + m.sz.y * s * .94);
 }
@@ -8060,7 +8079,9 @@ function layZones(M) {
     for (let i = 0; i < z.n; i++) {
       const p = zAnchor(z.biome, z.maxSl, used, ZGAP[z.fn] || 20);
       if (!p) continue;
+      ZPAINT.v = z.paint || null;               // read by zPut, cleared the moment this zone is laid
       fn(B, M, p.x, p.z, z);
+      ZPAINT.v = null;
     }
   }
   const grp = new THREE.Group(); grp.userData.flat = true;
@@ -8615,7 +8636,13 @@ function updateSky() {
   // From the air the whole planet is in frame and that density erases it, so the fog thins
   // out with altitude -- which is also what real haze does, being a thing of the low air.
   const camAlt = Math.max(0, camUp);
-  scene.fog.color.copy(tmpC.fog);
+  scene.fog.color.copy(tmpC.fog).lerp(tmpC.low, LOOK.fogSky);
+  if (LOOK.fogSat !== 1) {                       // haze is the colour of the air, and this air is not grey
+    const fc = scene.fog.color, fl = fc.r * .299 + fc.g * .587 + fc.b * .114;
+    fc.setRGB(Math.max(0, fl + (fc.r - fl) * LOOK.fogSat),
+              Math.max(0, fl + (fc.g - fl) * LOOK.fogSat),
+              Math.max(0, fl + (fc.b - fl) * LOOK.fogSat));
+  }
   // Thinner than it was. It is already a small number -- half a percent at a hundred units --
   // but it is the only thing standing between the lens and a horizon worth looking at, and
   // this world has a lot more distance in it than the one those figures were chosen for.
