@@ -85,10 +85,28 @@
       }
       if (pr) { lw = Math.max(lw, pr.offsetWidth); lh = Math.max(lh, pr.offsetHeight); }
       d.setProperty('--cvw', Math.round(lw) + 'px'); d.setProperty('--cvh', Math.round(lh) + 'px');
+      // THE UI INSET DOES NOT COME OFF screen.height, AND THAT IS THE BUG. --cv* is the
+      // canvas and being generous there is free -- the extra hangs off the bottom. --ui* is
+      // how far the PANELS are pushed in, and measuring that against the glass double-counts
+      // the safe area: env(safe-area-inset-bottom) already moves them clear of the home
+      // indicator, and then this moved them clear of it a second time. Forty-odd pixels of
+      // nothing along the bottom, appearing or not depending on which candidate won the max
+      // on that particular load -- which is exactly why it came back the moment the page was
+      // reloaded through the update chip and not before.
+      // The inset is the LAYOUT viewport against the VISUAL one and nothing else.
+      var lay = pr ? pr.offsetHeight : (document.documentElement.clientHeight || innerHeight);
       d.setProperty('--uit', Math.max(0, Math.round(top)) + 'px');
-      d.setProperty('--uib', Math.max(0, Math.round(lh - top - vish)) + 'px');
+      d.setProperty('--uib', Math.max(0, Math.round(lay - top - vish)) + 'px');
     };
     set();
+    // AND AGAIN, FOR THE FIRST FEW SECONDS. A navigation lands with the viewport mid-flight --
+    // the URL bar animating, the safe areas not yet applied -- and iOS does not reliably fire
+    // a resize when it settles. One sample at load is how a wrong number gets frozen in for
+    // the life of the page, which is what "I tapped the update chip and it came back" is a
+    // description of. Six more, spread over three seconds, cost nothing.
+    [60, 180, 400, 900, 1800, 3000].forEach(function (ms) { setTimeout(set, ms); });
+    addEventListener('pageshow', set);
+    addEventListener('orientationchange', function () { set(); setTimeout(set, 250); setTimeout(set, 700); });
     addEventListener('resize', set);
     if (window.visualViewport) { visualViewport.addEventListener('resize', set); visualViewport.addEventListener('scroll', set); }
   })();
@@ -1124,7 +1142,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c72';
+const BUILD = 'c73';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -13691,7 +13709,9 @@ function syncSize() {
   // are the whole of what keeps the interface over the part of the screen you can see.
   const ds = document.documentElement.style;
   const vTop = vv ? vv.offsetTop : 0, vH = vv ? vv.height : innerHeight;
-  const uib = Math.max(0, Math.round(h - vTop - vH)), uit = Math.max(0, Math.round(vTop));
+  // the LAYOUT viewport for the inset, not the biggest candidate -- see the note in the head
+  const lay = pr ? pr.offsetHeight : (document.documentElement.clientHeight || innerHeight);
+  const uib = Math.max(0, Math.round(lay - vTop - vH)), uit = Math.max(0, Math.round(vTop));
   ds.setProperty('--cvw', w + 'px'); ds.setProperty('--cvh', h + 'px');
   ds.setProperty('--uit', uit + 'px'); ds.setProperty('--uib', uib + 'px');
   // and the buffer is the element, overscan included, or the picture stretches
