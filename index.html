@@ -1048,11 +1048,17 @@ const Q = {
   // each direction, so the island is *less* densely covered than it was. That is deliberate:
   // an even carpet everywhere was the thing that made it read as scattered, and the map this
   // is being built toward has plenty of empty grassland in it.
-  grass: MOBILE ? 11000 : 33000,
-  motes: MOBILE ? 420 : 620,
-  shadow: MOBILE ? 1024 : 2048,
+  grass: MOBILE ? 7000 : 33000,
+  motes: MOBILE ? 320 : 620,
+  shadow: MOBILE ? 768 : 2048,
   bloomDiv: MOBILE ? 4 : 3,
-  dpr: Math.min(devicePixelRatio, MOBILE ? 2 : 2)
+  // 915 CALLS AND 2.6 MILLION TRIANGLES AT 10 FPS, off his own stats panel, and that number
+  // is what says which knob to turn. 95 ms a frame with a fill-heavy shader stack (toon ramp,
+  // tint, see-through hole, ground pattern, bloom, composite) is a fill-rate problem before
+  // it is anything else, and dpr is squared: 2 on a phone whose CSS viewport is 390 x 844
+  // renders 780 x 1688 and then does the whole post chain over it again. 1.5 is 44% fewer
+  // pixels for every one of those passes. It is the single biggest number in this object.
+  dpr: Math.min(devicePixelRatio, MOBILE ? 1.5 : 2)
 };
 
 // The world got bigger so that nine regions could each be a place rather than a clearing.
@@ -1072,7 +1078,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c56';
+const BUILD = 'c57';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -3551,8 +3557,13 @@ class Stump {
 // their size, so what the renderer is asked to draw depends on where you are standing and
 // not on how long the island has been running. Trees and the great tree are the skyline and
 // are never touched.
+// AND THE OTHER HALF OF THAT 915. A creature is three to six draws and cannot be merged --
+// it is animated -- so a hundred and thirty of them within these radii IS most of the call
+// count. Cut about a third off the mobile row: at 90 units a hopper is a few pixels tall and
+// you cannot tell it from the moss anyway. The big ones keep their range, because a leviathan
+// or a grovewalker at three hundred units is a thing you steer toward.
 const FAR = MOBILE
-  ? { MossTuft: 100, Bloom: 135, Litter: 115, Stump: 135, Mound: 115, Hopper: 145, Skimmer: 135, Burrower: 145, Weaver: 155, Drifter: 165, Grazer: 195, Walker: 300, Leviathan: 320 }
+  ? { MossTuft: 70, Bloom: 92, Litter: 80, Stump: 92, Mound: 80, Hopper: 96, Skimmer: 92, Burrower: 96, Weaver: 104, Drifter: 110, Grazer: 130, Walker: 230, Leviathan: 280 }
   : { MossTuft: 165, Bloom: 215, Litter: 185, Stump: 215, Mound: 185, Hopper: 225, Skimmer: 215, Burrower: 230, Weaver: 245, Drifter: 260, Grazer: 300, Walker: 420, Leviathan: 440 };
 // Sub-pixel from orbit. On the title screen the whole island is in frame at once and every
 // moss tuft on it is still being drawn: 2,600 calls and five million triangles for a picture
@@ -8336,13 +8347,36 @@ const ZFN = {
 // and rejected if anything already placed is inside the gap.
 const ZGAP = { grove: 40, burst: 24, ridge: 30, bed: 18, track: 26, peak: 58, mast: 16,
   outpost: 90, caps: 26, crag: 54 };   // an outpost wants a lot of room, and gets it by going first
-function zAnchor(biome, maxSl, used, gap) {
+// HOW FAR EACH FORMATION REACHES FROM ITS ANCHOR. zAnchor only ever knew about other zone
+// anchors, so nothing stopped a peak -- a single mountain twenty-six units across -- being
+// laid straight over the ship's berth. The berth is deterministic and has not moved; a
+// mountain grew under it. Same for the great tree, the spire and the cave mouth: every one of
+// them is a thing the island is navigated BY, and every one of them was fair ground.
+const ZSPAN = { peak: 28, crag: 21, outpost: 17, grove: 18, ridge: 20, burst: 11, caps: 12,
+  bed: 10, track: 20, mast: 5 };
+function zKeepOut() {
+  const k = [];
+  const add = (o, r) => { if (o) k.push({ x: o.x !== undefined ? o.x : o.pos.x, z: o.z !== undefined ? o.z : o.pos.z, r }); };
+  add(world.berth, 36);
+  add(world.ship, 36);
+  add(world.greatTree && world.greatTree.pos, 26);
+  add(world.cave && world.cave.pos, 24);
+  add(world.lander && world.lander.pos, 26);
+  if (typeof SPIRE !== 'undefined' && SPIRE) add(SPIRE, 30);
+  return k;
+}
+function zAnchor(biome, maxSl, used, gap, span = 12, keep = []) {
   for (let i = 0; i < 700; i++) {
     const p = randomLand(1.6, 20, maxSl, 1, 4); if (!p) continue;
     const b = biomeAt(p.x, p.z);
     if (b.name !== biome || b.edge < .28) continue;      // well inside it, never on the seam
     let ok = true;
     for (const u of used) if (Math.hypot(p.x - u.x, p.z - u.z) < Math.max(gap, u.gap) * .8) { ok = false; break; }
+    // and off everything the player steers by, by this formation's own reach plus its own
+    if (ok) for (const q of keep) if (Math.hypot(p.x - q.x, p.z - q.z) < q.r + span) { ok = false; break; }
+    // and not straight on top of something already standing, which `peak` and `ridge` never
+    // checked at all -- a mountain over a lantern tree is the same mistake at a smaller scale
+    if (ok && !obClear(p.x, p.z, Math.min(span, 7))) ok = false;
     if (ok) { used.push({ x: p.x, z: p.z, gap }); return p; }
   }
   return null;
@@ -8351,11 +8385,11 @@ function zAnchor(biome, maxSl, used, gap) {
 function layZones(M) {
   // Two bins, and the split is a shadow-map budget rather than an art choice: a stand of trees
   // and a mountain earn a place in the depth pass, four hundred flowers and a footpath do not.
-  const B = { big: [], small: [] }, used = [];
+  const B = { big: [], small: [] }, used = [], keep = zKeepOut();
   for (const z of ZONES) {
     const fn = ZFN[z.fn]; if (!fn) continue;
     for (let i = 0; i < z.n; i++) {
-      const p = zAnchor(z.biome, z.maxSl, used, ZGAP[z.fn] || 20);
+      const p = zAnchor(z.biome, z.maxSl, used, ZGAP[z.fn] || 20, ZSPAN[z.fn] || 12, keep);
       if (!p) continue;
       ZPAINT.v = z.paint || null;               // read by zPut, cleared the moment this zone is laid
       ZTAG.v = z.fn + '/' + z.biome;
