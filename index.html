@@ -165,18 +165,20 @@
   @keyframes rackinL{from{opacity:0;transform:translate(38px,26px) scale(.4)}to{opacity:1;transform:none}}
   @keyframes rackinR{from{opacity:0;transform:translate(-38px,26px) scale(.4)}to{opacity:1;transform:none}}
   @keyframes rackin{from{opacity:0;transform:translateY(26px) scale(.4)}to{opacity:1;transform:none}}
-  .wslot{width:60px;height:60px;border-radius:50%;padding:0;font-family:inherit;color:#f2e4c8;
+  .wslot{width:66px;height:66px;border-radius:50%;padding:0;font-family:inherit;color:#f2e4c8;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
     background:rgba(10,18,28,.62);border:1px solid rgba(240,228,200,.24);
     -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
     box-shadow:0 4px 16px rgba(0,0,0,.55);
     transition:border-color .12s,background .12s,transform .12s,box-shadow .12s}
-  .wslot .wico{width:27px;height:27px;display:block;opacity:.6;transition:opacity .12s,filter .12s}
-  .wslot span:last-child{font-size:8.5px;letter-spacing:.09em;opacity:.5;font-variant:small-caps;line-height:1}
+  .wslot .wico{width:30px;height:30px;display:block;opacity:.95;transition:opacity .12s,filter .12s}
+  /* Never dimmed. The unchosen slot still has to be readable at arm's length on a phone --
+     at 8.5px and half opacity both of them just read as "a weapon". */
+  .wslot span:last-child{font-size:10px;letter-spacing:.08em;opacity:.88;font-variant:small-caps;
+    line-height:1;color:#f4ecd8;text-shadow:0 1px 3px rgba(0,0,0,.9)}
   /* `sel` is what is racked now. `over` is what the thumb is on, and what letting go takes. */
   .wslot.sel{border-color:rgba(150,246,255,.5);background:rgba(20,44,58,.6)}
-  .wslot.sel .wico{opacity:.85}
-  .wslot.sel span:last-child{opacity:.75;color:#bff4ff}
+  .wslot.sel span:last-child{color:#bff4ff}
   .wslot.over{border-color:rgba(160,248,255,.95);background:rgba(28,72,92,.72);
     transform:scale(1.13);
     box-shadow:0 0 24px rgba(120,238,255,.55),0 6px 18px rgba(0,0,0,.5)}
@@ -956,7 +958,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b89';
+const BUILD = 'b90';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8062,6 +8064,7 @@ const WEAPON = {
   cool: .5,                        // seconds before he can shoot again
   hold: .34,                       // how long the shot clip owns the arms
   camEase: 2.6,                    // how briskly the camera swings in behind the aim
+  aimTurn: 2.3,                    // and the ceiling on that, in radians a second: the aim is a turn stick
   out: 1.6, high: .62,             // where the bolt actually leaves him: clear of the body, chest high
   // `ride` is the whole of "it should follow the topology of the ground": the bolt holds a
   // height above the *ground under it* rather than flying a straight line, so it goes over a
@@ -8125,6 +8128,11 @@ const NET = {
   // of their flying length. That is the difference between a net lying ON an animal and a net
   // AROUND one: the cords actively shorten, the body stops them, and what is left is a bag.
   cinch: .52, cinchT: .55,
+  // And then it STOPS being a simulation. Once it has closed, every node is written down as
+  // an offset in the animal's own frame and rebuilt from that each frame, so it rides the
+  // body exactly and cannot slide off it however the animal thrashes. It still looks like a
+  // simulated net because for the first second it was one; it just stops being able to lose.
+  bindT: 1.0,
   // And a leash. Nothing may sit further from the animal's middle than this much of its own
   // size, so the sheet cannot spread out flat on the ground beside it -- which is what it was
   // doing, and why it looked like it fell off rather than caught.
@@ -8141,7 +8149,9 @@ const WEAPONS = {
   blaster: { label: 'blaster', charge: 1, cool: () => WEAPON.cool,
     icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13h15l6 3-6 3H4z"/><path d="M9 19l-2 7h5l1-7"/><path d="M25 16h4"/><circle cx="7.5" cy="16" r="1.3" fill="currentColor" stroke="none"/></svg>' },
   net: { label: 'net', charge: 0, cool: () => NET.cool,
-    icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="16" r="11"/><path d="M5 16h22M16 5v22"/><path d="M8.2 8.2l15.6 15.6M23.8 8.2L8.2 23.8"/></svg>' },
+    // A slack net hanging from a rim, with knots on it: nothing about that silhouette can be
+    // mistaken for a gun at thirty pixels, which the old circle-and-crosshairs could.
+    icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h24"/><path d="M4 8c0 12 5 19 12 19s12-7 12-19"/><path d="M8.5 8c0 9 3.2 15 7.5 15s7.5-6 7.5-15"/><path d="M5.4 14h21.2M7.4 20h17.2"/><circle cx="16" cy="14" r="1.5" fill="currentColor" stroke="none"/><circle cx="10.6" cy="20" r="1.3" fill="currentColor" stroke="none"/><circle cx="21.4" cy="20" r="1.3" fill="currentColor" stroke="none"/></svg>' },
 };
 // The dodge. A flick of the left stick throws him that way: the clip owns the body outright
 // while it runs and the travel is driven from here rather than from the animation, because a
@@ -8732,10 +8742,20 @@ function stepWeapon(dt, rx, ry) {
   stepChargeFx(p.aiming && spins ? p.charge : 0, dt);
 
   if (Math.hypot(rx, ry) > WEAPON.aimAt) {
-    // Latch the frame the stick is measured in when the aim starts. Reading it off the live
-    // camera azimuth while the camera is swinging to follow the aim is a feedback loop: hold
-    // the stick anywhere but straight forward and he spins on the spot forever.
-    if (!p.aiming) { p.aiming = 1; p.aimAz = cam.az; p.aimAdj = 0; }
+    // The stick is read in the camera's LIVE frame, not in one latched when the aim began.
+    //
+    // Latched, the frame was whatever he happened to be facing when he raised the gun, and it
+    // never moved -- so pushing the stick right swung the aim right, and returning it to
+    // centre handed him straight back to the original forward. A turn was never a turn, only
+    // a lean he had to keep holding.
+    //
+    // Live, the loop that made that latch necessary IS the turn: the camera eases in behind
+    // the aim, the aim is read off the camera, so an off-centre stick sweeps him round at a
+    // rate set by how far off centre it is -- and returning the stick to centre stops the
+    // sweep and leaves him facing the new direction. `aimTurn` is the ceiling on that rate,
+    // because uncapped the feedback runs at four radians a second and is unsteerable.
+    if (!p.aiming) { p.aiming = 1; p.aimAdj = 0; }
+    p.aimAz = cam.az;
     const sa = Math.sin(p.aimAz), ca = Math.cos(p.aimAz);
     const raw = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
     // Chosen from the TRUE stick heading, not from the corrected one. Feeding the corrected
@@ -8754,7 +8774,7 @@ function stepWeapon(dt, rx, ry) {
     p.aimAdj = lerp(p.aimAdj, e, Math.min(1, dt * WEAPON.lock.pull));
     p.aimH = raw + p.aimAdj;
     let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
-    cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
+    cam.az += clamp(cd * WEAPON.camEase, -WEAPON.aimTurn, WEAPON.aimTurn) * dt; cam.idle = 0;
   } else if (p.aiming) {
     p.aiming = 0;
     // Locked: the shot leaves on the animal's exact bearing, taken this frame rather than
@@ -9110,7 +9130,7 @@ class NetShot {
     o.abandon(); o.wp = null; o.target = null; o.fling = null; o.alarm = 0; o.stall = 0;
     this.px = o.pos.x; this.py = o.pos.y; this.pz = o.pos.z;
     this.drape(o);
-    this.cinch = 0;                                  // starts pulling closed from here
+    this.cinch = 0; this.closeT = 0; this.bind = null;   // starts pulling closed from here
     this.rope.mat.color.set(NET.cord); this.kmat.color.set(NET.knot);
     world.effects.push(new Burst(o.pos.x, o.pos.y + (o.rad || 1), o.pos.z, '#9ff0d8', 11, .9));
     logMsg('The net comes down over it. Walk up and take hold to drag it.');
@@ -9137,15 +9157,36 @@ class NetShot {
   // Let whatever is in it out, and start the net itself fading.
   cut() {
     const o = this.prey;
+    this.bind = null;                                // it is a loose net again, and falls like one
     if (o) { o.net = null; if (player.drag === o) player.drag = null; o.spook(player.pos, 8); }
     this.prey = null; this.state = 'ground'; this.fade = Math.min(this.fade, 1.6);
   }
   // Position-based dynamics rather than plain verlet, because the frame time here is not
   // fixed and verlet's implicit velocity turns a long frame into an explosion.
+  // Written down, and rebuilt. Offsets are stored in the animal's yaw frame, so turning
+  // carries the net round with it rather than leaving it facing the way it landed.
+  bindTo(o) {
+    const n = this.n, p = this.p, s = Math.sin(-o.heading), c = Math.cos(-o.heading);
+    this.bind = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3, dx = p[i3] - o.pos.x, dy = p[i3 + 1] - o.pos.y, dz = p[i3 + 2] - o.pos.z;
+      this.bind[i3] = dx * c - dz * s; this.bind[i3 + 1] = dy; this.bind[i3 + 2] = dx * s + dz * c;
+    }
+  }
+  ride(o) {
+    const n = this.n, p = this.p, b = this.bind, s = Math.sin(o.heading), c = Math.cos(o.heading);
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3, bx = b[i3], bz = b[i3 + 2];
+      p[i3] = o.pos.x + bx * c - bz * s;
+      p[i3 + 1] = o.pos.y + b[i3 + 1];
+      p[i3 + 2] = o.pos.z + bx * s + bz * c;
+    }
+  }
   sim(dt) {
     const n = this.n, p = this.p, v = this.v, p0 = this.p0;
     const h = Math.min(dt, 1 / 45);
     const o = this.prey;
+    if (o && this.bind) { this.ride(o); return; }    // closed and written down: it just rides now
     if (o) {                                         // it goes where the animal goes; the drape is local
       const dx = o.pos.x - this.px, dy = o.pos.y - this.py, dz = o.pos.z - this.pz;
       this.px = o.pos.x; this.py = o.pos.y; this.pz = o.pos.z;
@@ -9157,7 +9198,11 @@ class NetShot {
       v[i3 + 1] -= NET.grav * (this.heavy[i] ? NET.rim : 1) * h;
       p[i3] += v[i3] * h; p[i3 + 1] += v[i3 + 1] * h; p[i3 + 2] += v[i3 + 2] * h;
     }
-    if (this.prey) this.cinch = Math.min(1, (this.cinch || 0) + h / NET.cinchT);
+    if (this.prey) {
+      this.cinch = Math.min(1, (this.cinch || 0) + h / NET.cinchT);
+      this.closeT = (this.closeT || 0) + h;
+      if (this.closeT > NET.bindT) { this.bindTo(this.prey); this.ride(this.prey); return; }
+    }
     for (let it = 0; it < NET.iters; it++) this.relax();
     this.collide(h);
     const inv = h > 0 ? 1 / h : 0;
@@ -9189,37 +9234,49 @@ class NetShot {
       p[j] -= ox; p[j + 1] -= oy; p[j + 2] -= oz;
     }
   }
+  // The shape it has to go round. A sphere on the animal's hips is wrong for everything: a
+  // mossback is twice as long as it is tall and a tinker is the other way about, so the net
+  // either cut through the ends or floated off the middle. The rig knows its own bounds, so
+  // use those -- an ellipsoid spanning feet to crown, as wide as the widest axis, which is a
+  // simplified version of the actual body and is what a net cares about.
+  hull(o) {
+    let ex, ey;
+    if (o.rig && o.rig.box) {
+      const b = o.rig.box, sc = o.rig.scale;
+      ex = Math.max(b.max.x - b.min.x, b.max.z - b.min.z) * sc * .5;
+      ey = (b.max.y - b.min.y) * sc * .5;
+    } else { ex = (o.rad || 1); ey = ex * 1.1; }
+    // Wide enough that the cords sit off the skin rather than in it.
+    return { ex: ex * 1.1 + .1, ey: ey * 1.06 + .1, cy: o.pos.y + ey };
+  }
   collide(h) {
     const p = this.p, n = this.n, o = this.prey;
-    const cx = o ? o.pos.x : 0, cy = o ? o.pos.y + o.pivotY() : 0, cz = o ? o.pos.z : 0;
-    const R = o ? (o.rad || 1) * 1.06 : 0;
+    const H = o ? this.hull(o) : null;
+    const cx = o ? o.pos.x : 0, cy = H ? H.cy : 0, cz = o ? o.pos.z : 0;
+    const ex = H ? H.ex : 1, ey = H ? H.ey : 1;
     for (let i = 0; i < n; i++) {
       const i3 = i * 3;
       if (o) {
-        const dx = p[i3] - cx, dy = p[i3 + 1] - cy, dz = p[i3 + 2] - cz;
+        // Everything below is done in the ellipsoid's own normalised space, where the body is
+        // a unit sphere: d < 1 is inside it, d > leash is off the end of the tether.
+        let dx = (p[i3] - cx) / ex, dy = (p[i3 + 1] - cy) / ey, dz = (p[i3 + 2] - cz) / ex;
         const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
         // Out of the body first, then drawn back down onto it. The push keeps the cords off
         // the skin and the pull keeps them against it, and between the two the net cinches
         // rather than sitting on the animal like a hat.
-        if (d < R) { const k = R / d; p[i3] = cx + dx * k; p[i3 + 1] = cy + dy * k; p[i3 + 2] = cz + dz * k; }
-        else { const k = Math.min(NET.cling * h / d, .5); p[i3] -= dx * k; p[i3 + 1] -= dy * k; p[i3 + 2] -= dz * k; }
-      }
-      if (o) {
-        // The leash. Without it the sheet simply spread out and lay down beside the animal --
-        // gravity always wins over a cord that is allowed to be as long as it likes. Nothing
-        // gets further from the animal's middle than twice its own size, so the net has
-        // nowhere to go but around it.
-        const dx = p[i3] - cx, dy = p[i3 + 1] - cy, dz = p[i3 + 2] - cz;
-        const d2 = dx * dx + dy * dy + dz * dz, lim = R * NET.leash;
-        if (d2 > lim * lim) {
-          const k = lim / Math.sqrt(d2);
-          p[i3] = cx + dx * k; p[i3 + 1] = cy + dy * k; p[i3 + 2] = cz + dz * k;
+        let k = 0;
+        if (d < 1) k = 1 / d;
+        else if (d > NET.leash) k = NET.leash / d;       // the tether: it cannot spread and lie down
+        if (k) { p[i3] = cx + dx * k * ex; p[i3 + 1] = cy + dy * k * ey; p[i3 + 2] = cz + dz * k * ex; }
+        else {
+          const c = Math.min(NET.cling * h / (d * ex), .5);
+          p[i3] -= dx * ex * c; p[i3 + 1] -= dy * ey * c; p[i3 + 2] -= dz * ex * c;
         }
       }
-      // The floor stops a net lying on the ground. A net ON an animal is held clear by the
-      // animal's own feet, and clamping it to the height field as well flattened the underside
-      // through the body every frame.
-      const gy = groundY(p[i3], p[i3 + 2]) + (o ? -.4 : .05);
+      // A net on an animal stands on the animal's feet, not on the height field under it --
+      // clamping to the ground as well dragged the underside down through the body and was
+      // half of why it slid off. A net on the ground uses the ground.
+      const gy = o ? o.pos.y + .02 : groundY(p[i3], p[i3 + 2]) + .05;
       if (p[i3 + 1] < gy) {
         p[i3 + 1] = gy;
         p[i3] = lerp(p[i3], this.p0[i3], NET.gnd);
