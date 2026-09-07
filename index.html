@@ -1010,7 +1010,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c23';
+const BUILD = 'c24';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -1554,9 +1554,74 @@ function holePatch(sh) {
       }
     }`);
 }
+// ---------- the toon ramp ----------
+// WHAT ACTUALLY MAKES THAT LOOK, because "brighten everything" is only half of it. Wind
+// Waker's surfaces are not lit more; they are lit in STEPS. A sphere under a smooth falloff
+// reads as a sphere however bright it is -- what makes it read as a drawing is that the
+// gradient is thrown away and replaced by two flat regions with a hard line between them.
+// So the important number here is `bands`, not `floor`.
+//
+// The floor is the other half and it IS the idea as proposed: the dark band never falls to
+// black, it sits at a fraction of full light, so the shadow side keeps its own colour instead
+// of going to a hole. That is why the shadows in those screenshots are still green and still
+// blue rather than grey.
+//
+// And it is deliberately a RAMP ON dotNL rather than a lift on the final colour, which is
+// what makes "some illumination beyond the base" still work: this only shapes how the DIFFUSE
+// lighting lands. Emissive is added after it and is not clamped, so the bioluminescence, the
+// creature spots and the drone's eye still push past the top band exactly as they do now.
+//
+// `k` is the whole effect on one dial: 0 is the smooth look this game has had all along, 1 is
+// fully banded. It is a uniform rather than a compile flag, so it can be turned live from the
+// console (isle.toon.k = 0) without recompiling four hundred programs.
+const TOON = {
+  k: 1,            // 0 = the old smooth falloff, 1 = fully banded
+  bands: 2,        // two steps is the Wind Waker read: a lit side and a shadow side
+  soft: .055,      // how hard each step's edge is. Toward 0 it is ink; toward .3 it is a fade
+  floor: .42,      // what the shadow band keeps of full light -- the "everything at 50%" idea
+  rim: .26, rimP: 3.4,          // and a lit edge where the surface turns away from the lens,
+  rimCol: col('#dcefff'),       // which is what reads as an outline without drawing one
+};
+const TOON_UNI = {
+  uToonK: { value: 1 }, uToonN: { value: 2 }, uToonSoft: { value: .055 }, uToonFloor: { value: .42 },
+  uRim: { value: .26 }, uRimP: { value: 3.4 }, uRimCol: { value: TOON.rimCol },
+};
+function toonSync() {
+  TOON_UNI.uToonK.value = TOON.k;
+  TOON_UNI.uToonN.value = Math.max(1, TOON.bands);
+  TOON_UNI.uToonSoft.value = Math.max(.001, TOON.soft);
+  TOON_UNI.uToonFloor.value = TOON.floor;
+  TOON_UNI.uRim.value = TOON.rim; TOON_UNI.uRimP.value = TOON.rimP;
+}
+// Intercepts dotNL inside RE_Direct_Physical. That line lives in a chunk, so the chunk is
+// pulled out of THREE.ShaderChunk, edited, and substituted for its own #include -- checked
+// against the pinned r128 rather than assumed: the string occurs exactly once.
+function toonPatch(sh) {
+  for (const k in TOON_UNI) sh.uniforms[k] = TOON_UNI[k];
+  sh.fragmentShader =
+    'uniform float uToonK, uToonN, uToonSoft, uToonFloor, uRim, uRimP;\nuniform vec3 uRimCol;\n'
+    + 'float toonRamp(float x){\n'
+    + '  float s = x * uToonN, b = floor(s), f = s - b;\n'
+    + '  float q = (b + smoothstep(0.5 - uToonSoft, 0.5 + uToonSoft, f)) / uToonN;\n'
+    + '  q = uToonFloor + (1.0 - uToonFloor) * q;\n'
+    + '  return mix(x, q, uToonK);\n}\n'
+    + sh.fragmentShader
+      .replace('#include <lights_physical_pars_fragment>',
+        THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+          'float dotNL = saturate( dot( geometry.normal, directLight.direction ) );',
+          'float dotNL = toonRamp( saturate( dot( geometry.normal, directLight.direction ) ) );'))
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      {
+        float _rf = 1.0 - saturate( dot( geometry.normal, geometry.viewDir ) );
+        totalEmissiveRadiance += uRimCol * (pow(_rf, uRimP) * uRim * uToonK);
+      }`);
+}
 THREE.MeshStandardMaterial.prototype.onBeforeCompile = function (sh) {
-  if (this.userData.noHole) return;
-  holePatch(sh);
+  // The toon ramp goes on EVERYTHING, hole or no hole. It used to return early here for
+  // anything flagged noHole, which is the drone, the blaster, the animals and the terrain --
+  // i.e. most of what you look at.
+  toonPatch(sh);
+  if (!this.userData.noHole) holePatch(sh);
 };
 // And this is the line that makes the flag above actually mean anything.
 //
@@ -4181,6 +4246,7 @@ function worldTint(mat, cfg) {
     // him is not scenery between the lens and his chest: the drone hovers inside the hole's
     // radius all day, and cutting it would dissolve the one thing lighting him.
     if (!mat.userData.noHole) holePatch(sh);
+    toonPatch(sh);                                 // a tinted prop is still a toon-shaded prop
     for (const k in uni) sh.uniforms[k] = uni[k];
     const KEY = cfg.key === 'cool'
       ? 'min(diffuseColor.b - diffuseColor.r, diffuseColor.g - diffuseColor.r)'
@@ -8010,6 +8076,7 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
   }` });
 function renderPost() {
   renderer.info.reset();
+  toonSync();
   renderer.setRenderTarget(rtScene); renderer.clear();
   // The intro is a different SCENE, not a different camera move on this one. Everything after
   // this line -- bloom, grade, dither, the black lift -- is the same chain either way, which
@@ -9655,7 +9722,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
