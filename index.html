@@ -958,7 +958,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b92';
+const BUILD = 'b93';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -9021,8 +9021,15 @@ class Rope {
       idx[o] = v; idx[o + 1] = v + 1; idx[o + 2] = v + 2;
       idx[o + 3] = v; idx[o + 4] = v + 2; idx[o + 5] = v + 3;
     }
+    // THE BLACK NET. A MeshStandardMaterial with no normal attribute gets a zero normal,
+    // normalizes it, and shades every fragment black -- which is exactly what happened when
+    // this stopped being a MeshBasicMaterial and started taking the light. The ribbon is two
+    // vertices wide, so the two edges get normals leaning out from the view direction and the
+    // interpolation between them shades the strand like a round cord rather than a flat tape.
+    this.nrm = new Float32Array(quads * 4 * 3);
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    this.geo.setAttribute('normal', new THREE.BufferAttribute(this.nrm, 3));
     this.geo.setIndex(new THREE.BufferAttribute(idx, 1));
     // Standard, not Basic: a rope that does not take the light is a glowing noodle, and that
     // is exactly what it looked like. Rough, unlit-by-itself, and out of the see-through hole.
@@ -9044,22 +9051,33 @@ class Rope {
       const t = i / S, u = 1 - t, A = u * u, B = 2 * u * t, C = t * t;
       X[i] = A * ax + B * mx + C * bx; Y[i] = A * ay + B * my + C * by; Z[i] = A * az + B * mz + C * bz;
     }
-    const base = this.k * S * 12;
+    const base = this.k * S * 12, N = this.nrm;
     for (let i = 0; i < S; i++) {
       const tx = X[i + 1] - X[i], ty = Y[i + 1] - Y[i], tz = Z[i + 1] - Z[i];
-      const ex = this.eye.x - X[i], ey = this.eye.y - Y[i], ez = this.eye.z - Z[i];
-      let sx = ty * ez - tz * ey, sy = tz * ex - tx * ez, sz = tx * ey - ty * ex;
-      const sl = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1e-6;
-      sx = sx / sl * half; sy = sy / sl * half; sz = sz / sl * half;
+      let ex = this.eye.x - X[i], ey = this.eye.y - Y[i], ez = this.eye.z - Z[i];
+      const el = Math.sqrt(ex * ex + ey * ey + ez * ez) || 1e-6; ex /= el; ey /= el; ez /= el;
+      let ux = ty * ez - tz * ey, uy = tz * ex - tx * ez, uz = tx * ey - ty * ex;
+      const ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1e-6; ux /= ul; uy /= ul; uz /= ul;
+      const sx = ux * half, sy = uy * half, sz = uz * half;
+      // The two edges of a round cord face outward from the eye by about 45 degrees.
+      let lx = ex - ux, ly = ey - uy, lz = ez - uz;
+      let rx2 = ex + ux, ry2 = ey + uy, rz2 = ez + uz;
+      const ll = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1e-6; lx /= ll; ly /= ll; lz /= ll;
+      const rl = Math.sqrt(rx2 * rx2 + ry2 * ry2 + rz2 * rz2) || 1e-6; rx2 /= rl; ry2 /= rl; rz2 /= rl;
       const o = base + i * 12;
       P[o] = X[i] - sx; P[o + 1] = Y[i] - sy; P[o + 2] = Z[i] - sz;
       P[o + 3] = X[i] + sx; P[o + 4] = Y[i] + sy; P[o + 5] = Z[i] + sz;
       P[o + 6] = X[i + 1] + sx; P[o + 7] = Y[i + 1] + sy; P[o + 8] = Z[i + 1] + sz;
       P[o + 9] = X[i + 1] - sx; P[o + 10] = Y[i + 1] - sy; P[o + 11] = Z[i + 1] - sz;
+      N[o] = lx; N[o + 1] = ly; N[o + 2] = lz;
+      N[o + 3] = rx2; N[o + 4] = ry2; N[o + 5] = rz2;
+      N[o + 6] = rx2; N[o + 7] = ry2; N[o + 8] = rz2;
+      N[o + 9] = lx; N[o + 10] = ly; N[o + 11] = lz;
     }
     this.k++;
   }
-  end() { this.geo.setDrawRange(0, this.k * this.seg * 6); this.geo.attributes.position.needsUpdate = true; }
+  end() { this.geo.setDrawRange(0, this.k * this.seg * 6);
+    this.geo.attributes.position.needsUpdate = true; this.geo.attributes.normal.needsUpdate = true; }
   dispose() { this.geo.dispose(); this.mat.dispose(); }
 }
 
@@ -9201,8 +9219,22 @@ class NetShot {
       this.v[i3] = -a * rad * 1.9; this.v[i3 + 1] = -6.5; this.v[i3 + 2] = -b * rad * 1.9;
     }
   }
-  land() { if (this.state !== 'fly') return; this.state = 'ground'; this.place(1);
-    this.rope.mat.color.set(NET.cord); this.kmat.color.set(NET.knot); }
+  // A miss. Do NOT re-form it into a clean disc here -- that is what left a rigid black hoop
+  // sailing through the air beside whatever it failed to catch. Keep the shape it has, kill
+  // most of its speed, give every node its own drift so the cords fall out of step, and let
+  // the pull-only cords do what pull-only cords do to an unsupported sheet: crumple it.
+  land() {
+    if (this.state !== 'fly') return;
+    this.state = 'ground';
+    for (let i = 0; i < this.n; i++) {
+      const i3 = i * 3;
+      this.v[i3] = this.v[i3] * .25 + rnd(-2, 2);
+      this.v[i3 + 1] = rnd(-5, -1);
+      this.v[i3 + 2] = this.v[i3 + 2] * .25 + rnd(-2, 2);
+    }
+    this.fade = Math.min(this.fade, 4);
+    this.rope.mat.color.set(NET.cord); this.kmat.color.set(NET.knot);
+  }
   // Let whatever is in it out, and start the net itself fading.
   cut() {
     const o = this.prey;
