@@ -1017,7 +1017,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c35';
+const BUILD = 'c36';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8649,6 +8649,7 @@ const DIO = {
   scene: null, cam: null, t: 0, built: false, mixes: [],
   ball: null, alien: null, ship: null, own: [], bodies: [],
   upright: .44,
+  ballMesh: null, seat: [],
 };
 // WHAT THE DIORAMA IS ALLOWED TO THROW AWAY. cloneModel shares geometry AND materials with
 // the entry in the model cache, and the world draws from that same entry -- so disposing
@@ -8673,6 +8674,40 @@ const _dqA = new THREE.Vector3(), _dqB = new THREE.Quaternion(), _dqC = new THRE
 // the way an isometric map does, while they still plainly belong to the surface they stand on.
 // 0 is honest, 1 is a sticker. Everything on the planet reads this unless it overrides it.
 const _dfF = new THREE.Vector3(), _dfR = new THREE.Vector3(), _dfU = new THREE.Vector3();
+// STANDING THINGS ON THE SURFACE THERE ACTUALLY IS. Everything was placed on a nominal sphere
+// of radius DIO.R, which was exactly right while the planet WAS one. The tropical model is
+// not: scaled by its longest axis it runs 14.00 across X, 13.86 across Y and 13.30 across Z,
+// and that is before its own hills and valleys, which only ever cut further in. So anything
+// planted at 14 hovers wherever the real surface falls short -- which is most of it, and is
+// why the alien and the mudlark are in the air.
+//
+// A ray from outside, inward along the placement direction, answers it exactly and costs one
+// cast per prop, once. It cannot run at placement time because the planet and the props load
+// independently and either may win, so each placement registers itself and the whole list is
+// seated on the first frame after the ball exists.
+const _rc = new THREE.Raycaster(), _rcO = new THREE.Vector3(), _rcD = new THREE.Vector3();
+function dioSurface(dir, fallback) {
+  if (!DIO.ballMesh) return fallback;
+  _rc.set(_rcO.copy(dir).multiplyScalar(DIO.R * 2.4), _rcD.copy(dir).multiplyScalar(-1));
+  _rc.far = DIO.R * 4;
+  const h = _rc.intersectObject(DIO.ballMesh, true);
+  return h.length ? h[0].point.length() : fallback;
+}
+// `sink` is how far below the surface the thing's origin goes -- the lean compensation, plus
+// a little so nothing sits on the skin of the ground looking pasted onto it.
+function dioSeat(o, dir, sink) {
+  DIO.seat.push({ o, dir: dir.clone(), sink });
+  o.position.copy(dir).multiplyScalar(DIO.R * 1.005 - sink);   // until the ball turns up
+}
+function dioSettle() {
+  if (!DIO.ballMesh || !DIO.seat.length) return;
+  // The whole scene, not just the ball: a raycast reads matrixWorld, and updateMatrixWorld on
+  // a child recomputes from its PARENT's -- which on the first settle has not been rendered
+  // yet and is still identity. Updating from the root is the only version that is always true.
+  DIO.scene.updateMatrixWorld(true);
+  for (const t of DIO.seat) t.o.position.copy(t.dir).multiplyScalar(dioSurface(t.dir, DIO.R) - t.sink);
+  DIO.seat.length = 0;
+}
 const _dfCam = new THREE.Vector3();
 function dioStand(o, dir, r, spin, upK) {
   o.position.copy(dir).multiplyScalar(r);
@@ -8707,7 +8742,7 @@ function dioPlanet() {
       inst.position.set(-(e.box.max.x + e.box.min.x) * .5 * k,
         -(e.box.max.y + e.box.min.y) * .5 * k, -(e.box.max.z + e.box.min.z) * .5 * k);
       inst.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; dioMat(o); } });
-      g.add(inst);
+      g.add(inst); DIO.ballMesh = inst;
     });
     return g;
   }
@@ -8763,6 +8798,7 @@ function dioPlanet() {
   mat.userData.noHole = true;
   const m = new THREE.Mesh(geo, mat);
   m.castShadow = m.receiveShadow = true;
+  DIO.ballMesh = m;
   return m;
 }
 
@@ -8922,7 +8958,8 @@ function dioDress(g) {
     const holder = new THREE.Group(); holder.add(inst);
     // Leaning something lifts the far edge of its base off the sphere, so it is sunk by
     // roughly what the lean costs it. Wide things lean off more and sink more.
-    dioStand(holder, dir, DIO.R * (1 + (lift || 0)) * 1.012 - span * DIO.upright * .17, spin || 0);
+    dioStand(holder, dir, DIO.R, spin || 0);          // orientation only; the seat sets the height
+    dioSeat(holder, dir, span * DIO.upright * .17 + .10 - (lift || 0) * DIO.R);
     g.add(holder);
     return inst;
     });
@@ -8937,8 +8974,9 @@ function dioDress(g) {
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.traverse(o => { if (o.isMesh) { o.castShadow = true; dioMat(o); } });
     const holder = new THREE.Group(); holder.add(inst);
-    dioStand(holder, dir, DIO.R * 1.012 - span * (upK === undefined ? DIO.upright : upK) * .17, 0, upK);
+    dioStand(holder, dir, DIO.R, 0, upK);
     dioFace(holder, dir, _dfCam.set(0, 0, 1));
+    dioSeat(holder, dir, span * (upK === undefined ? DIO.upright : upK) * .17 + .10);
     g.add(holder);
     const idle = pickClip(e.anims || [], 'idle', 'idle', 'walk|run|die');
     if (idle) { const mx = new THREE.AnimationMixer(inst); mx.clipAction(idle).play(); DIO.mixes.push(mx); }
@@ -8982,7 +9020,11 @@ function dioDress(g) {
   beast('models/tucann.glb', .36, 1.86, 4.2, .62);
   // Spread along the limb rather than stepped by a fraction of a radian: three of the same
   // model within a couple of units of each other reads as one heap however well it resolves.
-  for (let i = 0; i < 3; i++) beast('models/creature_green.glb', .34 - i * .13, 2.38 + i * .34, 2.6 + i * .3, .62);
+  // Two, not three. Spread wide enough along the limb to read as two animals rather than a
+  // clump -- which is what three of one model within arm's reach always reads as, however far
+  // the resolver manages to push them apart.
+  beast('models/creature_green.glb', .30, 2.34, 2.9, .62);
+  beast('models/creature_green.glb', .11, 2.86, 3.2, .62);
 
   // ---- and the planting. A BAND along the line where the green gives out, plus a few bushes
   // up on the grass -- which is where the reference has all of its, and nowhere else.
@@ -9224,10 +9266,11 @@ function buildDiorama() {
     });
     const holder = new THREE.Group(); holder.add(inst);
     const dir = dioDir(.93, 1.65);      // just off the crown and toward the lens, as he is there
-    dioStand(holder, dir, DIO.R * .998, 0);
+    dioStand(holder, dir, DIO.R, 0);
     // Turned to face the lens rather than left on an arbitrary yaw. The camera sits out along
     // +Z, and this rig's forward is +Z -- the same convention the whole game uses.
     dioFace(holder, dir, _dfCam.set(0, 0, 1));
+    dioSeat(holder, dir, .12);
     DIO.spin.add(holder); DIO.alien = inst;
     const idle = pickClip(e.anims || [], 'idle', 'idle', 'walk|run|rifle');
     if (idle) { const mx = new THREE.AnimationMixer(inst); mx.clipAction(idle).play(); DIO.mixes.push(mx); }
@@ -9277,6 +9320,7 @@ function dioramaFrame(dt, k) {
     if (rf !== undefined) o.scale.setScalar(rf * hw);
   };
   for (const b of DIO.bodies) place(b.m, b.spec.sx, b.spec.sy, b.spec.d, b.spec.rf);
+  dioSettle();                       // the moment the ball exists, everything sits down on it
   titleBackdropFrame(cam3);
   dioMeteorStep(dt, place);
   if (DIO.mill) DIO.mill.rotation.z -= dt * 1.15;
