@@ -948,7 +948,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'b86';
+const BUILD = 'b87';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2276,6 +2276,10 @@ const waterGeo = polarGeo(WSPOKE, WRING, ringR);
   waterGeo.setAttribute('dep', new THREE.BufferAttribute(d, 1));
   waterGeo.setAttribute('chart', new THREE.BufferAttribute(ch, 2)); }
 const waterMat = new THREE.MeshStandardMaterial({ color: col('#2b7fa4'), transparent: true, opacity: .85, roughness: .08, metalness: .42 });
+// And a belt to go with the braces: the sea always loses a tie against the ground. Even with
+// a sane near plane the shell and the shore sit within a depth texel of each other over a
+// wide, flat, shallow shelf, and a tie between two polar meshes reads as rings.
+waterMat.polygonOffset = true; waterMat.polygonOffsetFactor = 1.4; waterMat.polygonOffsetUnits = 2;
 waterMat.userData.shaderTag = 'water';
 waterMat.onBeforeCompile = sh => {
   for (const k in waterUni) sh.uniforms[k] = waterUni[k];
@@ -2383,7 +2387,10 @@ waterMat.onBeforeCompile = sh => {
   ` + sh.fragmentShader
     .replace('#include <map_fragment>', `
       #include <map_fragment>
-      float shallow = smoothstep(-16.0, -0.5, vDep);
+      // Jittered, because dep is a VERTEX attribute: it interpolates linearly across a ring
+      // while the real seabed curves, so every colour step in the ramp lands on a ring edge
+      // and draws it. A unit and a half of noise turns those edges into shoreline.
+      float shallow = smoothstep(-16.0, -0.5, vDep + (fn(vXZ * 0.31) - 0.5) * 3.0);
       vec3 deepC = vec3(0.012, 0.055, 0.11);
       vec3 midC  = vec3(0.03, 0.20, 0.30);
       vec3 shalC = vec3(0.10, 0.45, 0.47);
@@ -10352,6 +10359,21 @@ function frame(now) {
     .applyQuaternion(_camQ).add(_camW);
   camera.up.copy(_plY).applyQuaternion(_camQ);
   camera.lookAt(_camW);
+  // THE RINGS. Not the water shader and not the mesh -- the DEPTH BUFFER. The scene renders
+  // into an offscreen target whose depth attachment is sixteen bits, and the frustum was a
+  // fixed 0.5 to 1600: a ratio of 3200 to 1, nearly all of it spent on the first few units in
+  // front of the lens. Six hundred units out at the title screen there is barely a bit of
+  // depth left per hundred units, so the sea shell and the ground a metre above it land in
+  // the same depth value and fight -- and because both are polar meshes, the fight comes out
+  // as concentric rings. It shows worst exactly where the user pointed: the shoreline and the
+  // shallows, where the two surfaces are closest together.
+  // The near plane is a fixed fraction of the boom instead. Nothing can be nearer than the
+  // subject, so 3% of the way to it is always empty, and at 660 units that is a twenty-fold
+  // precision gain for free. Kept off the resize path: it changes far too often for that.
+  {
+    const n = clamp(camS.r * .03, .5, 22);
+    if (Math.abs(n - camera.near) > camera.near * .12) { camera.near = n; camera.updateProjectionMatrix(); }
+  }
   // The dome is nine hundred units and the planet is two-forty, so from the ground the sky
   // encloses everything. Climb, and the far limb of the world reaches past it -- so the rig
   // grows to stay outside whatever is behind you.
