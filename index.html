@@ -1006,7 +1006,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c10';
+const BUILD = 'c11';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8553,6 +8553,220 @@ function dioDress(g) {
     put('models/purple_horny.glb', lat, lon, sp, rnd(6.3));
 }
 
+// ---------- the bay: a headland, a fall, a pier and a mill ----------
+// Everything down here is placed relative to DIO_BAY rather than at absolute latitudes,
+// because the bay is the planet's one big feature and the rest of the shore is only
+// interesting in relation to it. `dioBayDir` gives a direction `ang` radians from the middle
+// of the bay on a compass `bear` around it, so "just outside the water on the north side" is
+// a thing that can be written down -- and the water's edge is at acos(0.90) = 0.451 radians,
+// which is the number every placement below is measured against.
+const _bbE = new THREE.Vector3(), _bbN = new THREE.Vector3(), _bbT = new THREE.Vector3();
+function dioBayDir(ang, bear, out) {
+  _bbE.set(0, 1, 0).cross(DIO_BAY).normalize();
+  _bbN.crossVectors(DIO_BAY, _bbE);
+  return (out || new THREE.Vector3()).copy(DIO_BAY).multiplyScalar(Math.cos(ang))
+    .addScaledVector(_bbE, Math.sin(ang) * Math.cos(bear))
+    .addScaledVector(_bbN, Math.sin(ang) * Math.sin(bear)).normalize();
+}
+// Stand a thing on the surface AND turn it so its own +Z faces `toward`. dioStand alone
+// leaves the yaw arbitrary, which is fine for a rock and useless for a waterfall.
+const _bfZ = new THREE.Vector3(), _bfC = new THREE.Vector3();
+function dioFace(o, dir, toward) {
+  _bbT.copy(toward).addScaledVector(dir, -toward.dot(dir)).normalize();   // the tangent that points at it
+  _bfZ.set(0, 0, 1).applyQuaternion(o.quaternion);
+  o.rotateY(Math.atan2(_bfC.crossVectors(_bfZ, _bbT).dot(dir), _bfZ.dot(_bbT)));
+}
+
+// Falling water, as a texture rather than as geometry: vertical streaks that fade out at both
+// edges and thin toward the bottom. Two of these on slightly different planes, scrolling at
+// different speeds, is the whole waterfall -- and it is one 48x128 canvas.
+function dioFallTex() {
+  const W = 48, H = 128, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d'), img = g.createImageData(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const u = x / (W - 1), v = y / (H - 1);
+    // streaks along the fall, and a soft edge left and right so it has no hard sides
+    const streak = .55 + .45 * Math.sin(u * 41.0 + Math.sin(u * 13.0) * 2.0);
+    const edge = Math.sin(Math.PI * u);
+    const a = streak * edge * edge * (1 - v * .45) * (v < .06 ? v / .06 : 1);
+    const i = (y * W + x) * 4;
+    img.data[i] = 236; img.data[i + 1] = 250; img.data[i + 2] = 255;
+    img.data[i + 3] = Math.round(255 * clamp(a, 0, 1) * .92);
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+function dioBayWorks(g) {
+  const R = DIO.R;
+  const M = {
+    rock: new THREE.MeshStandardMaterial({ color: 0x8b8378, roughness: 1, metalness: 0 }),
+    wood: new THREE.MeshStandardMaterial({ color: 0xa97c4e, roughness: .95, metalness: 0 }),
+    post: new THREE.MeshStandardMaterial({ color: 0x8a6339, roughness: .95, metalness: 0 }),
+    shell: new THREE.MeshStandardMaterial({ color: 0xe6dfcd, roughness: .82, metalness: 0 }),
+    trim: new THREE.MeshStandardMaterial({ color: 0xe08a34, roughness: .8, metalness: 0 }),
+    glass: new THREE.MeshStandardMaterial({ color: 0x2ec8d8, roughness: .3, metalness: 0,
+      emissive: new THREE.Color(0x1d7f8c), emissiveIntensity: .8 }),
+    foam: new THREE.MeshStandardMaterial({ color: 0xf4fbff, roughness: 1, metalness: 0 }),
+  };
+  for (const k in M) M[k].userData.noHole = true;
+  const box = (par, mat, sx, sy, sz, px, py, pz, rx, ry, rz) => {
+    const m = new THREE.Mesh(dioOwn(new THREE.BoxGeometry(sx, sy, sz)), mat);
+    m.position.set(px, py, pz); m.rotation.set(rx || 0, ry || 0, rz || 0);
+    m.castShadow = m.receiveShadow = true; par.add(m); return m;
+  };
+  const cyl = (par, mat, r0, r1, h, px, py, pz, seg) => {
+    const m = new THREE.Mesh(dioOwn(new THREE.CylinderGeometry(r0, r1, h, seg || 10)), mat);
+    m.position.set(px, py, pz); m.castShadow = m.receiveShadow = true; par.add(m); return m;
+  };
+
+  // ---- the headland and the fall ----
+  // The bay is only sunk four per cent of the radius, which is not a cliff -- so the cliff is
+  // BUILT rather than carved: a shelf standing on the shore with the water coming over its
+  // lip. Carving it into the sphere would have meant a deeper bay everywhere.
+  {
+    const dir = dioBayDir(.50, 2.30);
+    const hold = new THREE.Group();
+    dioStand(hold, dir, R * .995, 0);
+    dioFace(hold, dir, DIO_BAY);
+    g.add(hold);
+    box(hold, M.rock, 4.6, 2.3, 3.0, 0, .9, -1.0);
+    box(hold, M.rock, 3.0, 1.5, 1.4, -2.4, .5, -.3, 0, .3, .12);
+    box(hold, M.rock, 2.4, 1.2, 1.3, 2.5, .4, -.4, 0, -.25, -.1);
+    const tex = dioFallTex();
+    DIO.fallTex = [];
+    for (let i = 0; i < 2; i++) {
+      const t = i ? tex.clone() : tex; t.needsUpdate = true;
+      const mat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false,
+        side: THREE.DoubleSide, opacity: i ? .55 : .95, toneMapped: false });
+      mat.userData.noHole = true;
+      const w = 2.5 - i * .5;
+      const m = new THREE.Mesh(dioOwn(new THREE.PlaneGeometry(w, 3.1)), mat);
+      m.position.set(0, .55, .52 + i * .07);
+      m.rotation.x = -.06;
+      hold.add(m);
+      DIO.fallTex.push({ t, sp: 1.5 + i * .7 });
+    }
+    // and the churn where it lands
+    for (let i = 0; i < 5; i++) {
+      const s = rnd(.42, .78);
+      const p = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(s, 12, 9)), M.foam);
+      p.position.set(rnd(-1.2, 1.2), rnd(-1.2, -.7), rnd(.5, 1.5));
+      hold.add(p);
+    }
+  }
+
+  // ---- the pier, the dome and the mill ----
+  {
+    const dir = dioBayDir(.26, -.62);
+    const hold = new THREE.Group();
+    dioStand(hold, dir, R * .972, 0);          // the water sits at .972 of the radius
+    dioFace(hold, dir, DIO_BAY);
+    g.add(hold);
+    // a walkway running out over the water, on its own legs
+    for (let i = 0; i < 6; i++) {
+      box(hold, M.wood, 2.4, .16, .62, 0, .92, -1.9 + i * .66);
+      if (i % 2 === 0) {
+        cyl(hold, M.post, .11, .11, 1.9, -.95, 0, -1.9 + i * .66, 7);
+        cyl(hold, M.post, .11, .11, 1.9, .95, 0, -1.9 + i * .66, 7);
+      }
+    }
+    // the deck it ends on
+    box(hold, M.wood, 4.2, .18, 3.0, 0, .92, 3.0);
+    for (const [px, pz] of [[-1.7, 1.8], [1.7, 1.8], [-1.7, 4.2], [1.7, 4.2]])
+      cyl(hold, M.post, .13, .13, 1.9, px, 0, pz, 7);
+    // a rail down one side, so it reads as somewhere you walk rather than a raft
+    for (let i = 0; i < 5; i++) cyl(hold, M.post, .06, .06, .7, -1.9, 1.35, 1.9 + i * .58, 6);
+    box(hold, M.post, .1, .09, 2.6, -1.9, 1.68, 3.0);
+    // the dome: a squashed shell with a rim, a door and two lit ports
+    const dome = new THREE.Group(); dome.position.set(.5, 1.0, 3.3); hold.add(dome);
+    const sh = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(1.5, 24, 16, 0, Math.PI * 2, 0, Math.PI * .56)), M.shell);
+    sh.castShadow = sh.receiveShadow = true; dome.add(sh);
+    cyl(dome, M.trim, 1.56, 1.62, .22, 0, .1, 0, 24);
+    const door = cyl(dome, M.trim, .42, .42, .12, 0, .5, 1.32, 14);
+    door.rotation.x = Math.PI * .5;
+    for (const [px, py, pz] of [[-.85, .78, .95], [.9, .74, .9]]) {
+      const w = new THREE.Mesh(dioOwn(new THREE.SphereGeometry(.24, 12, 9)), M.glass);
+      w.position.set(px, py, pz); dome.add(w);
+    }
+    // the mill on the corner of the deck
+    const mill = new THREE.Group(); mill.position.set(-1.5, 1.0, 4.0); hold.add(mill);
+    cyl(mill, M.post, .1, .13, 2.9, 0, 1.45, 0, 8);
+    const hub = new THREE.Group(); hub.position.set(0, 2.85, .22); mill.add(hub);
+    for (let i = 0; i < 4; i++) {
+      const b = box(hub, M.wood, .18, 1.5, .05, 0, .82, 0);
+      b.rotation.z = i / 4 * Math.PI * 2;
+      b.position.set(Math.sin(-i / 4 * Math.PI * 2) * .82, Math.cos(i / 4 * Math.PI * 2) * .82, 0);
+    }
+    cyl(hub, M.trim, .14, .14, .22, 0, 0, 0, 10).rotation.x = Math.PI * .5;
+    DIO.mill = hub;
+  }
+}
+
+// ---------- shooting stars ----------
+// In frame coordinates like everything else in the sky, because a meteor is a thing that
+// crosses the PICTURE. Each one waits, then draws itself across in a second and a half on a
+// shallow diagonal, and the tail is a stretched quad rather than a trail of particles: one
+// draw, no allocation, and it looks the same.
+function dioMeteorTex() {
+  const W = 128, H = 8, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d'), img = g.createImageData(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const u = x / (W - 1), v = Math.abs(y / (H - 1) - .5) * 2;
+    const a = Math.pow(u, 2.6) * (1 - v) * (1 - v);
+    const i = (y * W + x) * 4;
+    img.data[i] = 210; img.data[i + 1] = 244; img.data[i + 2] = 255;
+    img.data[i + 3] = Math.round(255 * clamp(a, 0, 1));
+  }
+  g.putImageData(img, 0, 0);
+  return new THREE.CanvasTexture(c);
+}
+function dioMeteors(sc) {
+  const tex = dioMeteorTex();
+  DIO.meteors = [];
+  for (let i = 0; i < 3; i++) {
+    // ONE MATERIAL EACH. They share a texture but not a material: each streak fades on its own
+    // clock, and opacity lives on the material -- shared, the last one to be stepped would
+    // set the alpha for all three and they would blink in unison.
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false });
+    mat.userData.noHole = true;
+    const m = new THREE.Mesh(dioOwn(new THREE.PlaneGeometry(1, .10)), mat);
+    // depthTest stays ON: these are in the sky, so the planet has to be able to pass in front
+    // of one. With it off a meteor draws over the world it is meant to be behind.
+    m.frustumCulled = false; m.visible = false;
+    sc.add(m);
+    DIO.meteors.push({ m, wait: rnd(1, 9), t: -1, sx: 0, sy: 0, dx: 0, dy: 0, len: 1 });
+  }
+}
+function dioMeteorStep(dt, place) {
+  if (!DIO.meteors) return;
+  for (const s of DIO.meteors) {
+    if (s.t < 0) {
+      if ((s.wait -= dt) > 0) { s.m.visible = false; continue; }
+      // start off one edge, run down and across: the reference's all fall the same way
+      s.sx = rnd(-1.3, .9); s.sy = rnd(.35, 1.15);
+      const a = rnd(-.95, -.55);
+      s.dx = Math.cos(a) * 2.6; s.dy = Math.sin(a) * 2.6;
+      s.len = rnd(.10, .18); s.t = 0;
+    }
+    s.t += dt;
+    const T = 1.35;
+    if (s.t > T) { s.t = -1; s.wait = rnd(3, 11); s.m.visible = false; continue; }
+    const k = s.t / T;
+    s.m.visible = true;
+    s.m.material.opacity = Math.sin(k * Math.PI) * .9;
+    place(s.m, s.sx + s.dx * k, s.sy + s.dy * k, 330);
+    s.m.scale.set(s.len * 330 * .7, s.len * 330 * .7, 1);
+    s.m.quaternion.copy(DIO.cam.quaternion);
+    s.m.rotateZ(Math.atan2(s.dy, s.dx));
+  }
+}
+
 function buildDiorama() {
   if (DIO.built) return;
   DIO.built = true;
@@ -8588,9 +8802,11 @@ function buildDiorama() {
   DIO.ball = dioPlanet(); spin.add(DIO.ball);
   dioClouds(spin);
   dioDress(spin);
+  dioBayWorks(spin);
   const sky = new THREE.Group(); sc.add(sky); DIO.sky = sky;
   dioSky(sky);
   titleBackdrop(sc);
+  dioMeteors(sc);
 
   // the alien, standing on top of the world at a size no real body would be
   loadModel('models/alien_orange.glb', e => {
@@ -8650,6 +8866,9 @@ function dioramaFrame(dt, k) {
   };
   for (const b of DIO.bodies) place(b.m, b.spec.sx, b.spec.sy, b.spec.d, b.spec.rf);
   titleBackdropFrame(cam3);
+  dioMeteorStep(dt, place);
+  if (DIO.mill) DIO.mill.rotation.z -= dt * 1.15;
+  if (DIO.fallTex) for (const f of DIO.fallTex) f.t.offset.y = (-DIO.t * f.sp) % 1;
   if (DIO.spin) DIO.spin.rotation.y = DIO.t * .035;
   if (DIO.mix) DIO.mix.update(dt);
   if (DIO.ship) {
