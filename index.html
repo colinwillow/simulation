@@ -1017,7 +1017,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c33';
+const BUILD = 'c34';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -8621,7 +8621,12 @@ const DIO = {
   // its centre sits (0 is the middle, -1 the bottom edge). Both read straight off the
   // reference: the world takes about three quarters of the width and sits a little low, which
   // is what leaves the top of the picture to the name and the ship.
-  fill: .74, drop: -.157,        // 700px of 941 across; centre at 960 of 1660 down
+  // `fill` is roughly the fraction of the frame the ball spans, but only roughly: the camera
+  // distance comes out of a small-angle rule while the silhouette of a sphere does not, so
+  // .74 lands at .752 and .80 lands at .815. Your reference is 738 of its 941 pixels across,
+  // which is .784 and solves to a fill of .771. Set a little past that, since bigger was the
+  // ask -- and the ball still clears the wordmark above and the control below.
+  fill: .80, drop: -.157,        // centre at 960 of 1660 down, which is sy -.157 exactly
   // The world itself. Set to null and dioPlanet builds the vertex-coloured sphere it always
   // has -- green cap, sand shore, sunk bay, craggy underside -- which is what everything else
   // on the surface was placed against. With a model here that procedural terrain is gone, so
