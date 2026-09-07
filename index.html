@@ -1078,7 +1078,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c57';
+const BUILD = 'c58';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -8397,16 +8397,38 @@ function layZones(M) {
       ZPAINT.v = null; ZTAG.v = null;
     }
   }
+  // MERGED, BUT IN CHUNKS -- and this is the difference between having frustum culling and
+  // getting anything out of it. three culls per OBJECT, against that object's bounding
+  // sphere. Merging every grove, ridge, peak and crystal burst on the island into one mesh
+  // per material gives that mesh a bounding sphere the size of the world, so it is in frustum
+  // from everywhere and every triangle in it is submitted on every frame, including the
+  // several hundred thousand behind you. Merging is a trade -- draw calls for culling
+  // granularity -- and it had been taken all the way to one end.
+  // Ninety-unit cells put it back in the middle: each cell is its own mesh with its own tight
+  // sphere, so the ones behind the camera drop out for free. Through a 46-degree portrait
+  // lens that is most of them. The cost is calls -- perhaps sixty merged meshes instead of
+  // twenty -- of which only the handful you are looking at are ever drawn.
+  const CHUNK = 90;
   const grp = new THREE.Group(); grp.userData.flat = true;
   for (const [bin, cast] of [[B.big, true], [B.small, false]]) {
     if (!bin.length) continue;
-    for (const m of mergeBin(bin)) {
+    const cells = new Map();
+    for (const it of bin) {
+      // elements 12 and 14 are the translation: still CHART coordinates at this point, which
+      // is what we want to bucket on -- warpGeo has not run yet.
+      const key = Math.floor(it.matrix.elements[12] / CHUNK) + ',' + Math.floor(it.matrix.elements[14] / CHUNK);
+      let a = cells.get(key); if (!a) cells.set(key, a = []);
+      a.push(it);
+    }
+    for (const a of cells.values()) for (const m of mergeBin(a)) {
       warpGeo(m.geometry);
+      m.geometry.computeBoundingSphere();   // warpGeo moved every vertex; the old sphere is a lie
       m.castShadow = cast; m.receiveShadow = true;
       grp.add(m);
     }
   }
   scene.add(grp);
+  console.info('[zones] ' + grp.children.length + ' chunk meshes, culled per chunk');
 }
 
 // THE SHIP'S BERTH, worked out before anything else is placed and worked out the same way
