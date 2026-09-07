@@ -41,7 +41,14 @@
      and it is also why things looked shifted up: the buffer and the box it is displayed in
      were different shapes. Every panel in this file is fixed with a z-index of 1 or more, so
      the lens can sit under all of them at 0. */
-  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
+  /* body > canvas, NOT canvas. `#mini` is a canvas too, and so is the big map, and so is the
+     studio splash's -- and a bare element selector handed all of them position:fixed with
+     inset:0. #mini overrode width, height and display (an id beats an element) and could not
+     override the position, so the minimap has been pinned to the top-left corner of the
+     screen, over the clock, since the day this rule got `fixed` in it, instead of sitting in
+     #ui with the buttons where it is written to. The renderer's canvas is the only direct
+     child of body, so the child combinator says exactly what was meant all along. */
+  body > canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -1033,7 +1040,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c42';
+const BUILD = 'c43';
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -2163,7 +2170,11 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
                         asin(clamp(d.y, -1.0, 1.0)) * 0.31830988 + 0.5);
         vec3 pl = pow(texture2D(uPlate, puv).rgb, vec3(2.2));
         pl *= mix(vec3(0.66, 0.70, 0.92), vec3(1.02, 0.99, 0.96), dayL);
-        c = mix(c, pl, uPlateK * smoothstep(-0.01, 0.34, h));
+        // The horizon cut is a GROUND rule: down there the band above the sea belongs to
+        // distant land and a galaxy in it looks wrong. From the air there is no horizon band
+        // -- the whole sphere is sky, most of it BELOW you -- and keeping the cut is why the
+        // opening shot came up black. It opens out with height.
+        c = mix(c, pl, uPlateK * mix(smoothstep(-0.01, 0.34, h), 1.0, uHigh));
       }
       // The HDRI, on the dome, under everything else. Sampled as an equirectangular map --
       // the same projection three uses for one -- and tinted by the hour so the day still
@@ -2208,7 +2219,12 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
       // things beyond it are what remain. It goes in HERE instead, before them.
       if (uHigh > 0.001) {
         float limb = exp(-abs(h) * 8.0);
-        vec3 space = mix(vec3(0.011, 0.019, 0.048), c * 1.18, limb * 0.88);
+        // What "out of the air" fades TO. It was a near-black, which was right when there was
+        // nothing out there -- but the plate is drawn above this and would be eighty per cent
+        // erased by it, so the whole point of having a background at altitude was lost at
+        // exactly the altitude that has one. With a plate up, space IS the plate.
+        vec3 bg = mix(vec3(0.011, 0.019, 0.048), c, clamp(uPlateK * 1.3, 0.0, 1.0));
+        vec3 space = mix(bg, c * 1.18, limb * 0.88);
         c = mix(c, space, uHigh * 0.8);
       }
       // The galaxy, in a band across one axis of the sky. It is behind the clouds and behind
@@ -2240,7 +2256,11 @@ new THREE.TextureLoader().load(PLATE.url, t => {
 // stars
 const stars = (() => {
   const n = 1400, p = new Float32Array(n * 3), s = new Float32Array(n);
-  for (let i = 0; i < n; i++) { const t = rnd(Math.PI * 2), u = rnd(.02, 1), r = 800; const ph = Math.acos(u); p[i * 3] = r * Math.sin(ph) * Math.cos(t); p[i * 3 + 1] = r * Math.cos(ph); p[i * 3 + 2] = r * Math.sin(ph) * Math.sin(t); s[i] = rnd(1, 4); }
+  // u over the WHOLE range, not (.02, 1): acos of that is the upper hemisphere only, so from
+  // the air -- where most of the sky is BELOW you -- there were no stars in any of it.
+  // (And the comment goes ABOVE the line. This is one expression on one line and a trailing
+  // // eats the rest of it; that is three times now, and it is in CLAUDE.md.)
+  for (let i = 0; i < n; i++) { const t = rnd(Math.PI * 2), u = rnd(-1, 1), r = 800; const ph = Math.acos(u); p[i * 3] = r * Math.sin(ph) * Math.cos(t); p[i * 3 + 1] = r * Math.cos(ph); p[i * 3 + 2] = r * Math.sin(ph) * Math.sin(t); s[i] = rnd(1, 4); }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('sz', new THREE.BufferAttribute(s, 1));
   const m = new THREE.Points(g, new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending,
