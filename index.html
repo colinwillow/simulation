@@ -1078,7 +1078,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c58';
+const BUILD = 'c59';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -3040,9 +3040,22 @@ grassMat.onBeforeCompile = s => {
     #endif
   `);
 };
+// CHUNKED, for the same reason the zone scenery is. One instanced mesh of seven thousand
+// blades spanning the island has a bounding volume the size of the island, so it is in
+// frustum from everywhere -- which is why it carried frustumCulled = false: the flag was
+// honest, the geometry was the problem. Split into cells and every blade behind you drops.
+//
+// And there is a trap in r128 specifically: frustum culling tests geometry.boundingSphere
+// through matrixWorld and knows NOTHING about the instance matrices. (InstancedMesh grew its
+// own computeBoundingSphere in a much later revision.) The shared leaf geometry's sphere is
+// half a unit at the origin, so culling it as-is would hide the whole field from everywhere
+// except standing on the origin. Each chunk therefore gets its own clone of the leaf with the
+// sphere set BY HAND to cover the blades in that cell.
+const GRASS_CELL = 70;
 const grass = (() => {
-  const n = Q.grass, im = new THREE.InstancedMesh(G.leaf, grassMat, n), gxz = new Float32Array(n * 2);
+  const n = Q.grass;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), q2 = new THREE.Quaternion(), pos = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
+  const cells = new Map();
   let k = 0, guard = 0;
   // How thickly grass grows in each region, and how tall. An even carpet everywhere was the
   // single biggest reason the island read as one place: the pasture should be deep in it and
@@ -3062,16 +3075,37 @@ const grass = (() => {
     planetQ(x, z, q).multiply(q2);            // one instanced mesh, so the wrap is baked in
     const tall = rnd(1.3, 3.1) * (h > 12 ? .6 : 1) * gb[1];
     planetPos(x, h - .1, z, pos); sc.set(rnd(.8, 1.4), tall, 1);
-    m.compose(pos, q, sc); im.setMatrixAt(k, m);
-    gxz[k * 2] = x; gxz[k * 2 + 1] = z;        // the chart point, so a clearing can find it again
+    m.compose(pos, q, sc);
     c.copy(P.grass).lerp(P.grass2, rnd()).offsetHSL(rnd(-.03, .03), rnd(-.1, .1), rnd(-.12, .1));
     c.lerp(BIOME_LOOK[_bio.name].ground, .6 * _bio.k);
     if (h < 2.2) c.lerp(P.sand, .35);
-    im.setColorAt(k, c);
+    const key = Math.floor(x / GRASS_CELL) + ',' + Math.floor(z / GRASS_CELL);
+    let a = cells.get(key); if (!a) cells.set(key, a = []);
+    a.push({ m: m.clone(), c: c.clone(), x, z, p: pos.clone() });
     k++;
   }
-  im.count = k; im.instanceMatrix.needsUpdate = true; im.castShadow = false; im.receiveShadow = true;
-  im.frustumCulled = false; im.userData.flat = true; im.userData.xz = gxz; scene.add(im); return im;
+  const out = [];
+  for (const arr of cells.values()) {
+    const im = new THREE.InstancedMesh(G.leaf.clone(), grassMat, arr.length);
+    const gxz = new Float32Array(arr.length * 2);
+    const c0 = new THREE.Vector3(); let rad = 0;
+    for (const b of arr) c0.add(b.p);
+    c0.multiplyScalar(1 / arr.length);
+    for (let i = 0; i < arr.length; i++) {
+      const b = arr[i];
+      im.setMatrixAt(i, b.m); im.setColorAt(i, b.c);
+      gxz[i * 2] = b.x; gxz[i * 2 + 1] = b.z;
+      rad = Math.max(rad, b.p.distanceTo(c0));
+    }
+    // + 4 for the blade's own height, which the instance origin does not include
+    im.geometry.boundingSphere = new THREE.Sphere(c0, rad + 4);
+    im.instanceMatrix.needsUpdate = true;
+    im.castShadow = false; im.receiveShadow = true;
+    im.userData.flat = true; im.userData.xz = gxz;
+    scene.add(im); out.push(im);
+  }
+  console.info('[grass] ' + k + ' blades in ' + out.length + ' cullable chunks');
+  return out;
 })();
 // Take the grass out of a clearing. The field is laid down long before anything is built on
 // the island, so a village otherwise ends up with blades standing through the middle of its
@@ -3079,16 +3113,22 @@ const grass = (() => {
 // nothing -- and the chart position each one was placed at is kept for exactly this.
 const _cgM = new THREE.Matrix4(), _cgP = new THREE.Vector3(), _cgQ = new THREE.Quaternion(), _cgS = new THREE.Vector3();
 function clearGrass(x, z, r) {
-  const xz = grass.userData.xz; if (!xz) return 0;
   let n = 0;
-  for (let i = 0; i < grass.count; i++) {
-    const dx = xz[i * 2] - x, dz = xz[i * 2 + 1] - z;
-    if (dx * dx + dz * dz > r * r) continue;
-    grass.getMatrixAt(i, _cgM); _cgM.decompose(_cgP, _cgQ, _cgS);
-    if (_cgS.y < 1e-3) continue;
-    _cgM.compose(_cgP, _cgQ, _cgS.setScalar(0)); grass.setMatrixAt(i, _cgM); n++;
+  for (const im of grass) {
+    const xz = im.userData.xz; if (!xz) continue;
+    // the chunk itself can be nowhere near: its own sphere answers that in one test
+    const bs = im.geometry.boundingSphere;
+    if (bs && bs.center.distanceTo(planetPos(x, 0, z, _cgP)) > bs.radius + r + 4) continue;
+    let hit = 0;
+    for (let i = 0; i < im.count; i++) {
+      const dx = xz[i * 2] - x, dz = xz[i * 2 + 1] - z;
+      if (dx * dx + dz * dz > r * r) continue;
+      im.getMatrixAt(i, _cgM); _cgM.decompose(_cgP, _cgQ, _cgS);
+      if (_cgS.y < 1e-3) continue;
+      _cgM.compose(_cgP, _cgQ, _cgS.setScalar(0)); im.setMatrixAt(i, _cgM); hit++;
+    }
+    if (hit) { im.instanceMatrix.needsUpdate = true; n += hit; }
   }
-  if (n) grass.instanceMatrix.needsUpdate = true;
   return n;
 }
 
@@ -12628,6 +12668,7 @@ function obSay(o, d) {
   OBSAY.set(key, world.clock);
   logMsg('blocked by ' + (o.tag || (o.owner ? o.owner.constructor.name : 'unknown'))
     + '  r ' + obRad(o).toFixed(1) + (Math.abs(obRad(o) - o.r) > .05 ? ' of ' + o.r.toFixed(1) + ' grown' : '') + '  top ' + (o.top === Infinity ? 'inf' : o.top.toFixed(1))
+    + '  at ' + o.x.toFixed(0) + ',' + o.z.toFixed(0)
     + '  you are ' + d.toFixed(1) + ' from its centre');
 }
 function resolvePlayer(x, z, feetY) {
@@ -13496,7 +13537,11 @@ function updateHUD() {
     `${count(C, Grazer)} mossbacks, ${count(C, Weaver)} tinkers, ${count(C, Burrower)} mudlarks<br>` +
     `${count(C, Skimmer)} glimmerfins, ${count(C, Drifter)} kitewings, ${count(C, Hopper)} hoppers<br>` +
     `${count(C, Walker)} grovewalkers, ${count(C, Leviathan)} leviathans, ${NM} motes<br>` +
-    `${count(S, Cairn)} cairns, ${world.beacons} lit, tallest ${Math.round(Math.max(0, ...S.filter(o => o.alive && o instanceof Cairn).map(o => o.y)))}m`;
+    `${count(S, Cairn)} cairns, ${world.beacons} lit, tallest ${Math.round(Math.max(0, ...S.filter(o => o.alive && o instanceof Cairn).map(o => o.y)))}m<br>` +
+    // WHERE HE IS STANDING, so "I hit another invisible one" can come with a grid reference
+    // and be looked at directly instead of hunted for. Same numbers every zone, prop and
+    // collider in the file is placed in.
+    `at ${player.pos.x.toFixed(0)}, ${player.pos.z.toFixed(0)} \u00b7 ${biomeAt(player.pos.x, player.pos.z).name}`;
   const era = eraName(); if (era !== world.lastEra) { world.lastEra = era; eraEl.textContent = era; }
 }
 setInterval(updateHUD, 600); updateHUD();
