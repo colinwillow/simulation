@@ -74,6 +74,21 @@
       var lay = document.documentElement.clientHeight || innerHeight;
       d.setProperty('--uit', Math.max(0, Math.round(top)) + 'px');
       d.setProperty('--uib', Math.max(0, Math.round(lay - top - vish)) + 'px');
+      // AND THE HEIGHT OF THE GLASS, which is not any of the numbers above. See glassH()
+      // further down for why it is the screen and the page's own scale and nothing else; this
+      // is the same arithmetic, run before the first paint so the boot card and the studio
+      // splash are not short either. They were: his own photograph of the splash has a wider
+      // strip under it than the title screen has.
+      try {
+        var de = document.documentElement;
+        var cw = de.clientWidth || innerWidth, ch = de.clientHeight || innerHeight;
+        if (screen && screen.width && screen.height) {
+          var a = Math.min(screen.width, screen.height), b = Math.max(screen.width, screen.height);
+          var across = ch >= cw ? a : b, down = ch >= cw ? b : a;
+          var g = Math.round(down * (cw / across));
+          if (g > ch && g < ch * 1.6) d.setProperty('--lensH', g + 'px');
+        }
+      } catch (e) { }
     };
     set();
     // AND AGAIN, FOR THE FIRST FEW SECONDS. A navigation lands with the viewport mid-flight --
@@ -127,7 +142,10 @@
      number. Whichever is larger, plus whatever lensProbe() measures still missing. */
   :root{--lvh:100vh}
   @supports (height:100lvh){:root{--lvh:max(100vh,100lvh)}}
-  body > canvas{position:fixed;left:0;top:0;width:100%;height:var(--lvh,100vh);display:block;z-index:0;touch-action:none}
+  /* --lensH is glassH()'s answer in pixels and it wins, because on his phone every unit and
+     every API here comes back 932 for a screen that is 1002 tall. The var chain is the
+     fallback for the first paint and for anything where screen/ is not trustworthy. */
+  body > canvas{position:fixed;left:0;top:0;width:100%;height:var(--lensH,var(--lvh,100vh));display:block;z-index:0;touch-action:none}
   /* ONE BUILD OF PAINT, TO END TWENTY-FIVE ROUNDS OF ARITHMETIC.
      Every theory about the band has been about which box is short, and each fix has been
      shipped blind because the only way to tell them apart is to look at the thing on the
@@ -136,6 +154,12 @@
      have been argued about. What colour the band is, and which lines are above or below it,
      is the entire answer -- no numbers to read off a photograph. BAND = 0 removes all of it.*/
   .bandmark{position:fixed;left:0;right:0;height:3px;z-index:9999;pointer-events:none}
+  /* THE OTHER THINGS THAT COVER THE SCREEN. The studio splash and the start veil are both
+     `position:fixed; inset:0` written inline, so they are the layout viewport -- 932 on a
+     1002-tall glass -- exactly like the lens was. His splash photograph has a wider magenta
+     strip under it than the title screen does, which is that. Overridden here rather than in
+     the lifted MAJIA block, which is meant to stay verbatim. */
+  #majia-splash,#veil{height:var(--lensH,var(--lvh,100vh))!important;bottom:auto!important}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -1148,7 +1172,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c83';
+const BUILD = 'c84';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -13797,11 +13821,13 @@ let _vw = 0, _vh = 0;
 // animation frame is not free. `over` is what the measurement bought, kept so it survives a
 // re-measure that happens to catch the bar mid-slide.
 let _over = 0, _gap = 0;
-// THE BAND, MADE TO NAME ITSELF. Set to 0 and every trace of this goes.
-const BAND = 1;
+// THE BAND, MADE TO NAME ITSELF. It answered: magenta, so it is uncovered page and the lens
+// really is short. Kept on for one more build as the check on the fix -- no magenta anywhere
+// means the lens now reaches the bottom. The hairlines have said what they had to say.
+const BAND = 1, BANDMARKS = 0;
 const _marks = {};
 function bandMark(id, col, y) {
-  if (!BAND) return;
+  if (!BANDMARKS) return;
   let d = _marks[id];
   if (!d) {
     d = _marks[id] = document.createElement('div');
@@ -13810,15 +13836,49 @@ function bandMark(id, col, y) {
   }
   d.style.top = Math.round(y - 3) + 'px';
 }
+// THE SCREEN, WHICH IS THE ONE THING NOT LYING.
+// His c83 photograph: the band is magenta, so it is uncovered page and the lens is genuinely
+// short; the orange mark -- the lens's own bottom edge -- sits exactly on the top of it. And
+// lensProbe measured no gap, because visualViewport.height comes back 932 for an area that is
+// visibly about 1002 tall. So on this phone innerHeight, documentElement.clientHeight,
+// visualViewport.height, 100vh and 100lvh ALL report the same 932, and every one of them is
+// wrong about where the glass ends. There is no CSS unit and no viewport API left to try.
+//
+// screen is not part of that family and does not move with the browser's furniture: it is the
+// display, in device points, 393x852 on his phone. What it does not know is the page's scale
+// -- Safari's per-site page zoom, which he has at about 85%, is why clientWidth reads 462 for
+// 393 points across. But the page is not zoomed differently in x and y, so the ratio the WIDTH
+// gives (462/393 = 1.1756) is the same one the height needs, and 852 x 1.1756 = 1002. Which is
+// the number his own probe reported for 100vh two builds before any of the units agreed with
+// each other, and it is the height of the glass.
+// screen does not swap with orientation on iOS, so which of its two numbers is "across" is
+// decided by the page's own shape rather than by trusting them to be in the right order. And
+// the result is clamped to the box it is correcting -- a screen object reporting nonsense
+// should cost a few wasted pixels, not a canvas twice the height of the phone.
+function glassH() {
+  try {
+    const de = document.documentElement;
+    const cw = de.clientWidth || innerWidth, ch = de.clientHeight || innerHeight;
+    if (typeof screen === 'undefined' || !screen.width || !screen.height) return 0;
+    const a = Math.min(screen.width, screen.height), b = Math.max(screen.width, screen.height);
+    const across = ch >= cw ? a : b, down = ch >= cw ? b : a;
+    const g = Math.round(down * (cw / across));
+    return (g > ch && g < ch * 1.6) ? g : 0;
+  } catch (e) { return 0; }
+}
 function lensProbe() {
   const cvEl = renderer.domElement, vv = window.visualViewport;
+  {
+    const g = glassH();
+    if (g) document.documentElement.style.setProperty('--lensH', g + 'px');
+  }
   const r = cvEl.getBoundingClientRect();
   const visB = vv ? vv.offsetTop + vv.height : innerHeight;
   const gap = visB - r.bottom;
   _gap = Math.round(gap);
   if (gap > .5) {
     _over = Math.ceil(_over + gap);
-    cvEl.style.height = 'calc(var(--lvh, 100vh) + ' + _over + 'px)';
+    cvEl.style.height = 'calc(var(--lensH, var(--lvh, 100vh)) + ' + _over + 'px)';
   }
   if (BAND) {
     // Three edges, three colours, all measured the same way and drawn where they actually are.
@@ -14346,7 +14406,7 @@ function updateHUD() {
       + `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}`
       + ` doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}<br>`
       + `scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'}`
-      + ` lvh ${_lvh()}+${_over} gap ${_gap}<br>`
+      + ` lvh ${_lvh()} glass ${glassH()}+${_over} gap ${_gap}<br>`
       + `cv ${cv.clientWidth}x${cv.clientHeight} buf ${_vw}x${_vh} chrome ${_uiInset('--uit')}/${_uiInset('--uib')}`
       + ` far ${camera.far | 0} sky ${(900 * skyRig.scale.x) | 0}`;
   }
