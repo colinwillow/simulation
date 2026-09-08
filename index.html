@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd44';
+const BUILD = 'd45';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2068,15 +2068,21 @@ const HALF = !!(gl.getExtension('EXT_color_buffer_half_float') || gl.getExtensio
 // beats any amount of roughness tuning. So it is opt-in per model, and its strength
 // follows the sun, so at night the hull goes dark along with everything else.
 const ENV = {
-  url: 'images/HDRI_01_2K.jpg', map: null, mats: [], k: .7,
-  // The dome gets a BLURRED copy, and the lighting gets the sharp one. A recognisable
-  // photograph behind an alien island is the wrong kind of detail -- you start reading it as
-  // a place, and it is not this place. Softened past the point of identifying anything, it is
-  // a cool sky with the right colours in the right parts of it, which is all it was ever for.
-  // 96 across is the whole trick: the browser's own bilinear downscale is a box filter, so
-  // dropping to 96x48 and letting the sampler blow it back up is a real blur, done once at
-  // load, with no shader and no mip tricks that WebGL 1 would make awkward.
-  blur: 96,
+  // HIS OWN GALAXY, and it is a real equirectangular panorama -- 2:1 to the pixel, and the
+  // wrap seam measures about twice a neighbouring column's difference, which on a starfield
+  // is nothing. The old one was a photograph of somewhere on Earth, which is why everything
+  // downstream of it was written to hide it: blurred past recognising, faded out at the
+  // horizon, turned off entirely on the look the game actually runs. None of that applies to
+  // a sky that IS this world's sky.
+  url: 'images/HDRI_02_galaxy_2K.jpg', map: null, mats: [], k: .7,
+  // The dome used to get a BLURRED copy at 96 across -- the browser's own downscale used as a
+  // real blur -- because a recognisable photograph behind an alien island is the wrong kind
+  // of detail: you start reading it as a place, and it was not this place. This one is. So
+  // the dome gets the sharp texture, which is also the one with mipmaps on it, and minifying
+  // a 2048-wide panorama across a hemisphere is exactly what mipmaps are for -- a 96-wide
+  // canvas texture has none, which is why that path could never have been turned up.
+  // Set `blur` to a width to soften it again; 0 means use the image as authored.
+  blur: 0,
 };
 function envUse(root, k = 1) {
   root.traverse(o => {
@@ -2120,7 +2126,7 @@ function blurEquirect(img, w) {
     ENV.tex = t; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
     // Safe to reach the sky's uniforms from here: this callback only runs once the image has
     // decoded, which is long after the module has finished evaluating.
-    skyUni.uEnv.value = ENV.soft = blurEquirect(t.image, ENV.blur) || t;
+    skyUni.uEnv.value = ENV.soft = (ENV.blur > 0 ? blurEquirect(t.image, ENV.blur) : null) || t;
     skyUni.uEnvK.value = SKY.envK;
     for (const m of ENV.mats) { m.envMap = ENV.map; m.needsUpdate = true; }
   }, undefined, () => console.warn('no environment map; hulls stay matte'));
@@ -2744,7 +2750,8 @@ const skyUni = {
   // THE OWNER'S GALAXY, on the dome. The title screen hangs it flat behind the camera as a
   // plate; from the ground there is no "behind", so it is sampled the same way the HDRI is --
   // equirectangular, wrapped a few times round so a portrait image is not stretched across
-  // a whole horizon. A stopgap by his own description, until an HDRI that matches exists,
+  // a whole horizon. It began as a stopgap until an HDRI that matched existed -- one does
+  // now, and takes the sky above the horizon -- but this keeps the band at and below it,
   // and it is the only thing that puts the title screen's sky over the island today.
   uPlate: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([12, 10, 26, 255]), 1, 1); t.needsUpdate = true; return t; })() },
   uPlateK: { value: 0 }, uPlateRep: { value: 3 }, uPlateH: { value: .34 }, uSpace: { value: 0 }
@@ -2834,8 +2841,8 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
       }
       // The HDRI, on the dome, under everything else. Sampled as an equirectangular map --
       // the same projection three uses for one -- and tinted by the hour so the day still
-      // runs across it. Above the horizon only: the bottom half of that image is the ground
-      // it was shot standing on, and this world has its own.
+      // runs across it. Above the horizon only, which was written to keep a photograph's own
+      // ground out of frame and now simply leaves the waterline band to the plate.
       if (uEnvK > 0.002) {
         vec2 euv = vec2(atan(d.z, d.x) * 0.15915494 + 0.5, asin(clamp(d.y, -1.0, 1.0)) * 0.31830988 + 0.5);
         // The jpeg is sRGB and everything in this shader is linear -- the composite pass
@@ -3173,10 +3180,8 @@ function stepSkyLife(dt) {
 // from a desert without re-authoring a single model. With it gone that difference has to
 // live in the terrain colour instead, which is where it should probably have been anyway.
 // `env` is how much of the HDRI panorama survives on the dome and `plate` how much of the
-// owner's galaxy goes under it. The HDRI is a photograph of somewhere on Earth, softened past
-// recognising -- which is exactly the wrong sky for the shot the title screen makes, and it is
-// the second thing after the tint that made the island look like a different game. It is
-// turned down rather than off: above the horizon it is also the only distant land there is.
+// owner's galaxy goes under it. Both are his galaxy now: the panorama above the horizon, the
+// plate carrying the colour down through the waterline.
 // THE GROUND, which is half of every frame and was the palest thing in it. The terrain's
 // albedo is built out of P -- deliberately near-neutral, because the plan was for the region
 // to supply the colour -- and then the region gets a stain of only BIOME_LOOK.k times the
@@ -3201,7 +3206,13 @@ const LOOKS = {
 // pass that moved the roll-off, the haze or the horizon colour was adjusting the wrong term.
 // At 1 there is no residual. The sky IS the plate above the waterline, the thin band under
 // plateH is the air, and the sun and the clouds still draw on top of it.
-  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: 0, plate: 1, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1, plateH: .05 },
+  // `env` back ON, and it is the whole reason the new panorama exists. The plate stays: the
+  // shader mixes the plate first and the HDRI over it, and the HDRI is above the horizon only
+  // -- so the panorama is the sky, and the plate goes on doing the job it was actually good
+  // at, which is carrying colour all the way down to and below the waterline. Ten rounds went
+  // into getting that band right; taking the plate out to make room for the HDRI would throw
+  // every one of them away for nothing, since both are the same galaxy.
+  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: 1, plate: 1, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1, plateH: .05 },
 };
 const LOOK = Object.assign({ mode: 'title' }, LOOKS.title);
 function setLook(m) { if (LOOKS[m]) { LOOK.mode = m; Object.assign(LOOK, LOOKS[m]); } return LOOK.mode; }
