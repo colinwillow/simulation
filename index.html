@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd53';
+const BUILD = 'd54';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -6020,6 +6020,20 @@ const THROW = {
   // the same thumb position would keep meaning a different place and the mark would crawl
   // out from under him. It holds still and he places into it.
   full: .92,         // thumb travel that counts as maximum range -- short of the rim, which nobody reaches
+  // AND IT HAS WEIGHT. Two things made the absolute mapping twitchy, and only one of them was
+  // the lack of smoothing.
+  //
+  // The other is arithmetic: the thumb was mapped to the launch SPEED, and the range of a
+  // throw goes as the SQUARE of it. From 15 to 54 that is 225 to 2916 -- a thirteenfold
+  // spread -- so the same millimetre of thumb moved the mark a few units near the middle of
+  // the pad and thirty near the rim. It was not sensitive, it was sensitive AT ONE END, which
+  // is exactly what "I do not know how to drive it" feels like. throwPow inverts the square,
+  // so equal thumb travel is equal GROUND wherever on the pad it happens.
+  //
+  // `ease` is the friction on top: the mark chases the thumb at this rate rather than being
+  // pinned to it, so a flick of the thumb is a glide of the indicator and it comes to rest
+  // where it is put.
+  ease: 5.5,
   // How much of the throw a heavy thing eats. `hurl` divides the launch speed by the body's
   // own radius; this is the power that radius is raised to, so above 1 a big animal loses
   // ground faster than its size and a small one barely notices being thrown hard.
@@ -14335,23 +14349,40 @@ function throwMarkStep(show, power, T) {
 // weapon step every frame, so with a single shared latch it cleared the beacon's wind-up out
 // from under it on the way past -- the charge reset and the aim snapped back to straight
 // ahead on every frame, and the beacon could never be steered or wound up at all.
-function throwStick(dt, rx, ry, own) {
+// Thumb travel to power, inverted through the square so the MARK moves at a steady rate. The
+// range of a lobbed throw is proportional to the square of the launch speed, and `power` is a
+// lerp along the speed -- so asking for half the thumb has to mean half the GROUND, not half
+// the speed. `sp` is the launcher's own speed pair, because the three of them differ.
+function throwPow(u, sp) {
+  const a = sp[0] * sp[0], b = sp[1] * sp[1];
+  const v = Math.sqrt(a + (b - a) * clamp(u, 0, 1));
+  return clamp((v - sp[0]) / Math.max(1e-4, sp[1] - sp[0]), 0, 1);
+}
+function throwStick(dt, rx, ry, own, sp) {
   const p = player, mag = Math.hypot(rx, ry);
-  if (p.windOwn !== own) { p.windOwn = own; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0; }
-  p.throwT += dt;
-  // Sampled only while the stick is still travelling outward, so a swipe that has already
-  // pinned against the rim does not average its own speed back down to nothing.
-  if (mag > p.throwPeak) {
-    p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
-    p.throwPeak = mag;
-  }
   // THE PAD IS THE GROUND. Angle is the bearing, distance from centre is the range, read in
   // the LIVE camera frame so up the pad is away from the lens however he has turned. The
   // camera is deliberately left alone while this runs -- see THROW.full.
   const sa = Math.sin(cam.az), ca = Math.cos(cam.az);
-  p.aimH = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
-  p.flickH = p.aimH;
-  p.throwK = clamp((mag - THROW.at) / Math.max(.05, THROW.full - THROW.at), 0, 1);
+  const want = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
+  const wantK = throwPow((mag - THROW.at) / Math.max(.05, THROW.full - THROW.at), sp || THROW.speed);
+  if (p.windOwn !== own) {
+    p.windOwn = own; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0;
+    p.aimH = want; p.throwK = 0;                   // the bearing starts under the thumb; the range winds out to it
+  }
+  p.throwT += dt;
+  // Sampled only while the stick is still travelling outward, so a swipe that has already
+  // pinned against the rim does not average its own speed back down to nothing. The flick
+  // takes the RAW bearing, not the eased one -- a swipe is over before the ease has moved.
+  if (mag > p.throwPeak) {
+    p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
+    p.throwPeak = mag;
+  }
+  p.flickH = want;
+  const e = Math.min(1, dt * THROW.ease);
+  let d = want - p.aimH; d = Math.atan2(Math.sin(d), Math.cos(d));
+  p.aimH += d * e;                                 // the friction: it chases the thumb, it is not pinned to it
+  p.throwK = lerp(p.throwK, wantK, e);
   cam.idle = 0;
   setChargeRing(Math.max(p.throwK, .06));          // a sliver from the first frame, so it reads as armed
   return true;
@@ -14378,7 +14409,7 @@ function stepThrow(dt, rx, ry) {
   }
   const mag = Math.hypot(rx, ry);
   if (mag > THROW.at) {
-    throwStick(dt, rx, ry, what);
+    throwStick(dt, rx, ry, what, what === 'hold' ? HTOSS.speed : THROW.speed);
     p.throwAim = 1;
     throwMarkStep(true, p.throwK, what === 'hold' ? HTOSS : undefined);
     return true;
@@ -14400,7 +14431,7 @@ function stepToss(dt, rx, ry) {
   const p = player;
   const mag = Math.hypot(rx, ry);
   if (mag > THROW.at) {
-    throwStick(dt, rx, ry, 'beacon');
+    throwStick(dt, rx, ry, 'beacon', BTOSS.speed);
     p.tossAim = 1; p.aiming = 1;                   // he stands like a man about to throw
     throwMarkStep(true, p.throwK, BTOSS);
     return true;
