@@ -1183,7 +1183,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c86';
+const BUILD = 'c87';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -13848,7 +13848,7 @@ let _over = 0, _gap = 0;
 // THE BAND, MADE TO NAME ITSELF. It answered: magenta, so it is uncovered page and the lens
 // really is short. Kept on for one more build as the check on the fix -- no magenta anywhere
 // means the lens now reaches the bottom. The hairlines have said what they had to say.
-const BAND = 0, BANDMARKS = 0;
+const BAND = 1, BANDMARKS = 0, BANDPAINT = 0;
 const _marks = {};
 function bandMark(id, col, y) {
   if (!BANDMARKS) return;
@@ -13893,8 +13893,22 @@ function glassH() {
 function lensProbe() {
   const cvEl = renderer.domElement, vv = window.visualViewport;
   {
+    // AN EXPLICIT NUMBER OF PIXELS, INLINE. c86 took three's inline size off the canvas so the
+    // stylesheet could own it, and the band did not move a pixel -- still 179 device px of
+    // #070a13, measured, in the same place as every build before it. So the stylesheet is not
+    // winning either, and there is no rule left to blame: `body > canvas` is the only rule in
+    // the file that touches it.
+    // This settles which of the two remaining possibilities it is, and is the fix if it is the
+    // first. Sizing: an inline pixel height beats everything, so if the lens was being sized
+    // to 932 by something, it is 1002 now and the band is gone. Clipping: if it comes back
+    // measuring 1002 with the band still there, then the lens IS 1002 and something is cutting
+    // the picture off at the layout viewport -- a different problem with different fixes, and
+    // the panel says which.
     const g = glassH();
-    if (g) document.documentElement.style.setProperty('--lensH', g + 'px');
+    if (g) {
+      document.documentElement.style.setProperty('--lensH', g + 'px');
+      cvEl.style.height = (g + _over) + 'px';
+    }
   }
   const r = cvEl.getBoundingClientRect();
   const visB = vv ? vv.offsetTop + vv.height : innerHeight;
@@ -13902,7 +13916,7 @@ function lensProbe() {
   _gap = Math.round(gap);
   if (gap > .5) {
     _over = Math.ceil(_over + gap);
-    cvEl.style.height = 'calc(var(--lensH, var(--lvh, 100vh)) + ' + _over + 'px)';
+    cvEl.style.height = (glassH() || cvEl.clientHeight) + _over + 'px';
   }
   if (BAND) {
     // Three edges, three colours, all measured the same way and drawn where they actually are.
@@ -13922,7 +13936,7 @@ function lensProbe() {
 // TWO COLOURS, ONE BIT. The root is magenta and BODY is lime. If the band stays magenta it is
 // the root background painted on the viewport canvas, outside body's box, and no element can
 // ever reach it. If it turns lime, body's box does reach down there and so can the lens.
-if (BAND) try {
+if (BANDPAINT) try {
   document.documentElement.style.background = '#ff00aa';
   document.body.style.background = '#7cff4a';
 } catch (e) { }
@@ -13959,6 +13973,9 @@ function bandPanel() {
     'cv   ' + (r.top | 0) + '..' + (r.bottom | 0) + '  h ' + renderer.domElement.clientHeight,
     'safe ' + unit('env(safe-area-inset-top)') + '/' + unit('env(safe-area-inset-bottom)')
       + '  standalone ' + (navigator.standalone ? 1 : 0),
+    'inline h "' + renderer.domElement.style.height + '"  over ' + _over,
+    'body ' + (document.body.getBoundingClientRect().height | 0)
+      + '  html ' + (de.getBoundingClientRect().height | 0),
   ].join('\n');
 }
 function syncSize(probe) {
