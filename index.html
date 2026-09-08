@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd43';
+const BUILD = 'd44';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -5913,11 +5913,29 @@ const THROW = {
   // fill -- which makes the charge throw pointless and sends the animal out of sight.
   // Range goes as the SQUARE of the launch speed, so half the distance is 1/sqrt(2) of the
   // speed: 38 of 54, which is a power of .60. That is the cap.
-  quickMax: .60,
+  // HALVED. A flick was reaching .60 of a full wind-up, which is 77% of its range, so the
+  // charge existed but there was never a reason to use it.
+  quickMax: .30,
   lift: .40,         // and the share of it that goes up, which is the arc
   spin: 11,          // how hard it tumbles once it is out of his hands
   cool: .5,          // before he can pick anything up again
+  // AND THE AIM IS STEERED, NOT POINTED. The stick's absolute direction used to BE the throw
+  // direction, so the mark could only ever be at arm's length in whatever bearing the thumb
+  // happened to sit -- there was no aiming, only a compass. Now the wind-up latches straight
+  // ahead and the stick FLIES the mark: X swings the bearing at `turn` radians a second, and
+  // Y is the winch on the range -- pushed forward it charges, pulled back it lets the charge
+  // down again. Sideways alone steers and holds whatever power is already wound up, which is
+  // what makes it a thing you line up rather than a thing you release at the right instant.
+  turn: 2.6,
+  // How much of the throw a heavy thing eats. `hurl` divides the launch speed by the body's
+  // own radius; this is the power that radius is raised to, so above 1 a big animal loses
+  // ground faster than its size and a small one barely notices being thrown hard.
+  mass: 1.25,
 };
+// The turnip, and anything else that rides in his hands rather than in his arms. Lighter than
+// an animal and it does not tumble -- it flies, it lands, and what happens then depends on
+// what is standing where it came down.
+const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7 };
 class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
@@ -6233,7 +6251,10 @@ class Creature {
   // while it is being carried is his hands.
   hurl(hx, hz, speed, lift) {
     if (!this.alive) return;
-    const f = speed / Math.max(.7, this.rad);      // a mossback does not go as far as a tinker
+    // A MOSSBACK DOES NOT GO AS FAR AS A TINKER, and above a power of 1 it loses ground
+    // faster than its size: at THROW.mass 1.25 a two-unit body keeps 42% of the launch speed
+    // where a linear divisor would leave it 50, which is about a third of the range.
+    const f = speed / Math.pow(Math.max(.7, this.rad), THROW.mass);
     this.fling = {
       x: this.pos.x, y: this.pos.y, z: this.pos.z,
       vx: hx * f, vz: hz * f, vy: f * lift,
@@ -13356,6 +13377,9 @@ function holdOffer() {
   const p = player;
   if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5) return;
   if (p.hold) {
+    // Winding up owns the stick and the label. A PLANT IT prompt over the top of a throw is
+    // describing the wrong gesture, the same way SET DOWN was for the animal.
+    if (p.throwAim) { ACT.force = 'THROW'; return; }
     let best = null, bd = HOLD.feed;
     for (const o of world.creatures) {
       if (!o.alive || o.carried || o.net || o.aquatic || o.flying || o.fling) continue;
@@ -13485,19 +13509,9 @@ function plantHeld() {
 // which is the moment the barometer moves.
 function feedCreature(c) {
   const p = player; if (!p.hold || !c || !c.alive) return;
-  const kind = p.hold.kind, likes = (MOOD.likes[c.constructor.name] || []).indexOf(kind) >= 0;
-  const nm = (MOOD.label[c.constructor.name] || 'it').replace(/^the /, '').replace(/s$/, '');
+  const kind = p.hold.kind;
   dropHeld();
-  c.met = HOLD.eatT; c.metWho = null; c.alarm = 0; c.wp = null;     // it stops where it is
-  if (likes) {
-    moodShift(c, MOOD.feed);
-    world.effects.push(new Burst(c.pos.x, c.pos.y + c.rad * .8, c.pos.z, '#d8ffb0', 9, .8));
-    logMsg('The ' + nm + ' takes it out of his hand and eats it where it stands.');
-  } else {
-    moodShift(c, MOOD.spat);
-    world.effects.push(new Burst(p.pos.x + Math.sin(p.faceH), p.pos.y + 1.2, p.pos.z + Math.cos(p.faceH), '#e9dcff', 6, .6));
-    logMsg('The ' + nm + ' sniffs it, spits it back at him, and thinks a little less of him.');
-  }
+  takeFood(c, kind, p.pos.x + Math.sin(p.faceH), p.pos.y + 1.2, p.pos.z + Math.cos(p.faceH));
 }
 const FIX = { hut: null, hack: null, el: null, bar: null };
 function repairOffer() {
@@ -13740,7 +13754,7 @@ function stepChargeFx(c, dt) {
 Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0, charge: 0,
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
-  throwAim: 0, tossAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
+  throwAim: 0, tossAim: 0, windOwn: null, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
   wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeGrip: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
 function attachWeapon(r) {
@@ -14068,7 +14082,8 @@ const _tmArc = new Float32Array(TMARK.steps * 3);
 // beacon lands -- and the whole point of the mark is that it is not a lie.
 function throwArc(power, T) {
   const p = player, c = T ? null : p.carry;
-  const sp = T ? T.speed : THROW.speed, lift = T ? T.lift : THROW.lift, gg = T ? T.g : KNOCK.g;
+  const sp = T ? T.speed : THROW.speed, lift = T ? T.lift : THROW.lift;
+  const gg = (T && T.g != null) ? T.g : KNOCK.g;
   const f = lerp(sp[0], sp[1], power) / (T ? 1 : Math.max(.7, c ? (c.rad || 1) : 1));
   const hx = Math.sin(p.aimH), hz = Math.cos(p.aimH), h = TMARK.h;
   let x = p.pos.x, z = p.pos.z, vy = f * lift;
@@ -14116,44 +14131,76 @@ function throwMarkStep(show, power, T) {
 // the aim while the blaster is out. Returns true while it does, so the caller knows not to
 // orbit the camera with it. A tap is still SET DOWN: a tap is under .3 of travel and this
 // does not wake up until .34, so the two cannot collide.
+// ONE WIND-UP, three things on the end of it: the animal in his arms, the turnip in his
+// hands, the beacon off his belt. Everything about how the stick behaves lives here, so all
+// three line up the same way and only the launch differs.
+//   * the first push past THROW.at latches the aim STRAIGHT AHEAD and the mark comes out
+//   * X steers it, Y winds the range up and down, and neither is a direction on its own
+//   * a flick is still a flick, and takes the bearing the thumb actually swiped
+// Returns true while the stick belongs to it.
+// `own` is which of the three is winding up. It matters because stepThrow runs BEFORE the
+// weapon step every frame, so with a single shared latch it cleared the beacon's wind-up out
+// from under it on the way past -- the charge reset and the aim snapped back to straight
+// ahead on every frame, and the beacon could never be steered or wound up at all.
+function throwStick(dt, rx, ry, own) {
+  const p = player, mag = Math.hypot(rx, ry);
+  if (p.windOwn !== own) {
+    p.windOwn = own; p.throwAz = cam.az; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0;
+    p.aimH = cam.az + Math.PI;                     // out in front of the lens, then he flies it
+    p.throwK = 0; p.flickH = null;
+  }
+  p.throwT += dt;
+  // Sampled only while the stick is still travelling outward, so a swipe that has already
+  // pinned against the rim does not average its own speed back down to nothing. The bearing
+  // is caught with it: a flick has no time to be steered, so it takes the one it was thrown in.
+  if (mag > p.throwPeak) {
+    p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
+    p.throwPeak = mag;
+    const fa = Math.sin(p.throwAz), fc = Math.cos(p.throwAz);
+    p.flickH = Math.atan2(fa * ry + fc * rx, fc * ry - fa * rx);
+  }
+  p.aimH -= rx * THROW.turn * dt;                  // X: swing the mark round him
+  p.throwK = clamp(p.throwK + (-ry) * dt / THROW.chargeT, 0, 1);   // Y: forward winds it out, back reels it in
+  let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
+  cam.az += cd * Math.min(1, dt * WEAPON.camEase * .7); cam.idle = 0;
+  setChargeRing(Math.max(p.throwK, .06));          // a sliver from the first frame, so it reads as armed
+  return true;
+}
+// What the stick had wound up when he let go of it, and by which of the two gestures.
+function throwLetGo() {
+  const p = player;
+  p.throwAim = 0; p.windOwn = null;
+  const quick = p.throwT < THROW.quickT && p.throwPeak > THROW.quickAt;
+  const power = quick
+    ? (p.throwRise - THROW.rise[0]) / (THROW.rise[1] - THROW.rise[0])
+    : p.throwK;
+  if (quick && p.flickH != null) p.aimH = p.flickH;
+  p.throwK = 0; setChargeRing(0); throwMarkStep(false);
+  return { quick, power: clamp(power, THROW.min, quick ? THROW.quickMax : 1) };
+}
 function stepThrow(dt, rx, ry) {
   const p = player;
-  if (!p.carry || p.liftT > 0 || p.placeT > 0 || p.aboard || p.free) {
-    if (p.throwAim) { p.throwAim = 0; p.throwK = 0; }
-    setChargeRing(0); throwMarkStep(false); return false;
+  const what = p.carry ? 'carry' : (p.hold ? 'hold' : null);
+  if (!what || p.liftT > 0 || p.placeT > 0 || p.aboard || p.free) {
+    // only ever tear down a wind-up that is HIS -- the beacon's belongs to the weapon step
+    if (p.windOwn === 'carry' || p.windOwn === 'hold') { p.windOwn = null; p.throwAim = 0; p.throwK = 0; setChargeRing(0); throwMarkStep(false); }
+    return false;
   }
   const mag = Math.hypot(rx, ry);
   if (mag > THROW.at) {
-    // Latch the frame the stick is read in, for the same reason the aim does: reading it off
-    // a camera that is at that moment swinging to follow the stick is a loop.
-    if (!p.throwAim) { p.throwAim = 1; p.throwAz = cam.az; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0; }
-    p.throwT += dt;
-    // Sampled only while the stick is still travelling outward, so a swipe that has already
-    // pinned against the rim does not average its own speed back down to nothing.
-    if (mag > p.throwPeak) {
-      p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
-      p.throwPeak = mag;
-    }
-    p.throwK = clamp(p.throwT / THROW.chargeT, 0, 1);
-    const sa = Math.sin(p.throwAz), ca = Math.cos(p.throwAz);
-    p.aimH = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
-    let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
-    cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
-    setChargeRing(Math.max(p.throwK, .06));       // a sliver from the first frame, so it reads as armed
-    throwMarkStep(true, p.throwK);
+    throwStick(dt, rx, ry, what);
+    p.throwAim = 1;
+    throwMarkStep(true, p.throwK, what === 'hold' ? HTOSS : undefined);
     return true;
   }
   if (p.throwAim) {                               // let go: it goes
-    p.throwAim = 0;
-    const quick = p.throwT < THROW.quickT && p.throwPeak > THROW.quickAt;
-    const power = quick
-      ? (p.throwRise - THROW.rise[0]) / (THROW.rise[1] - THROW.rise[0])
-      : p.throwK;
-    hurlCarried(clamp(power, THROW.min, quick ? THROW.quickMax : 1), quick);
-    p.throwK = 0; setChargeRing(0); throwMarkStep(false);
+    const g = throwLetGo();
+    if (what === 'hold') hurlHeld(g.power, g.quick); else hurlCarried(g.power, g.quick);
     return true;
   }
-  setChargeRing(0); throwMarkStep(false);
+  // and if the beacon happens to be wound up at the same time, that ring and that mark are
+  // its business, not this one's
+  if (p.windOwn !== 'beacon') { setChargeRing(0); throwMarkStep(false); }
   return false;
 }
 // The beacon's wind-up. Deliberately the same shape as stepThrow, down to the flick test, so
@@ -14163,35 +14210,91 @@ function stepToss(dt, rx, ry) {
   const p = player;
   const mag = Math.hypot(rx, ry);
   if (mag > THROW.at) {
-    if (!p.tossAim) { p.tossAim = 1; p.throwAz = cam.az; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0; }
-    p.throwT += dt;
-    if (mag > p.throwPeak) {
-      p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
-      p.throwPeak = mag;
-    }
-    p.throwK = clamp(p.throwT / THROW.chargeT, 0, 1);
-    const sa = Math.sin(p.throwAz), ca = Math.cos(p.throwAz);
-    p.aimH = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
-    let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
-    cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
-    p.aiming = 1;                                  // he stands like a man about to throw
-    setChargeRing(Math.max(p.throwK, .06));
+    throwStick(dt, rx, ry, 'beacon');
+    p.tossAim = 1; p.aiming = 1;                   // he stands like a man about to throw
     throwMarkStep(true, p.throwK, BTOSS);
     return true;
   }
   if (p.tossAim) {
     p.tossAim = 0; p.aiming = 0;
-    const quick = p.throwT < THROW.quickT && p.throwPeak > THROW.quickAt;
-    const power = quick
-      ? (p.throwRise - THROW.rise[0]) / (THROW.rise[1] - THROW.rise[0])
-      : p.throwK;
+    const g = throwLetGo();
     p.heading = p.aimH;
-    fireBeacon(clamp(power, THROW.min, quick ? THROW.quickMax : 1));
-    p.throwK = 0; setChargeRing(0); throwMarkStep(false);
+    fireBeacon(g.power);
     return true;
   }
   p.aiming = 0; p.throwK = 0; setChargeRing(0); throwMarkStep(false);
   return false;
+}
+// THE TURNIP LEAVES HIS HANDS. Same arc the beacon flies, and what it does when it lands is
+// the whole reason to throw one: an animal standing where it comes down eats it, so feeding
+// stops being a thing you can only do at arm's length from a creature that is usually running
+// away from you. Nothing there and it plants itself, exactly as PLANT IT does.
+class TossedItem {
+  constructor(x, y, z, v, kind) {
+    this.alive = true; this.t = 0; this.kind = kind;
+    this.pos = new THREE.Vector3(x, y, z); this.v = v;
+    this.g = heldTurnip();                          // the same little model he was carrying
+    this.g.scale.setScalar(.8);
+    this.g.position.copy(this.pos);
+    this.axis = new THREE.Vector3(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).normalize();
+  }
+  update(dt) {
+    this.t += dt;
+    this.v.y -= KNOCK.g * dt;
+    this.pos.addScaledVector(this.v, dt);
+    this.g.position.copy(this.pos);
+    this.g.rotateOnWorldAxis(this.axis, HTOSS.spin * dt);
+    const fy = Math.max(deckY(this.pos.x, this.pos.z, this.pos.y),
+      standOn(this.pos.x, this.pos.z, this.pos.y), groundY(this.pos.x, this.pos.z));
+    if (this.pos.y > fy && this.t < HTOSS.maxT) return;
+    this.alive = false;
+    this.land(Math.max(fy, this.pos.y));
+  }
+  land(y) {
+    const x = this.pos.x, z = this.pos.z;
+    // Whoever is standing there gets it. Its own taste decides what it makes of that, the
+    // same way it does when it is held out to it by hand.
+    let best = null, bd = 3.4;
+    for (const o of world.creatures) {
+      if (!o.alive || o.carried || o.net || o.aquatic || o.flying || o.fling) continue;
+      const d = Math.hypot(o.pos.x - x, o.pos.z - z);
+      if (d < bd) { bd = d; best = o; }
+    }
+    if (best) { takeFood(best, this.kind, x, y, z); return; }
+    if (isLand(x, z) && height(x, z) > SEA + .3 && count(world.plants, Turnip) < MAX.turnip) {
+      world.plants.push(new Turnip(x, z, .5));
+      world.effects.push(new Burst(x, y + .4, z, '#c9b48a', 7, .5));
+      logMsg('It lands, rolls, and settles into the ground where it fell.');
+    } else world.effects.push(new Burst(x, y + .4, z, '#c9b48a', 6, .5));
+  }
+  dispose() { scene.remove(this.g); }
+}
+// One animal, one mouthful, wherever the food came from -- out of his hand or out of the air.
+function takeFood(c, kind, x, y, z) {
+  const likes = (MOOD.likes[c.constructor.name] || []).indexOf(kind) >= 0;
+  const nm = (MOOD.label[c.constructor.name] || 'it').replace(/^the /, '').replace(/s$/, '');
+  c.met = HOLD.eatT; c.metWho = null; c.alarm = 0; c.wp = null;
+  if (likes) {
+    moodShift(c, MOOD.feed);
+    world.effects.push(new Burst(c.pos.x, c.pos.y + c.rad * .8, c.pos.z, '#d8ffb0', 9, .8));
+    logMsg('The ' + nm + ' finds it where it landed and eats it on the spot.');
+  } else {
+    moodShift(c, MOOD.spat);
+    world.effects.push(new Burst(x, y + .5, z, '#e9dcff', 6, .6));
+    logMsg('The ' + nm + ' noses it, decides against it, and walks off.');
+  }
+}
+function hurlHeld(power, quick) {
+  const p = player, h = p.hold;
+  if (!h) return;
+  const kind = h.kind, a = p.aimH;
+  scene.remove(h.g); p.hold = null; p.holdK = 0;
+  const sp = lerp(HTOSS.speed[0], HTOSS.speed[1], power);
+  const v = new THREE.Vector3(Math.sin(a) * sp, sp * HTOSS.lift, Math.cos(a) * sp);
+  world.effects.push(new TossedItem(
+    p.pos.x + Math.sin(a) * .6, p.pos.y + RIG.height * .72, p.pos.z + Math.cos(a) * .6, v, kind));
+  p.heading = a;
+  logMsg(quick ? 'He tosses it away underarm.' : power > .82 ? 'He winds up and slings it out across the slope.' : 'He lobs it out.');
 }
 function hurlCarried(power, quick) {
   const p = player, c = p.carry;
@@ -14291,7 +14394,11 @@ function stepWeapon(dt, rx, ry) {
   if (!canHold && p.armed < .02) p.armed = 0;
   if (weap.model) weap.model.visible = p.armed > .05;
   armB.classList.toggle('on', !!p.armWant);
-  if (!(canHold && p.armed > .5)) { p.aiming = 0; p.lock = null; p.charge = 0; p.armT = 0; p.tossAim = 0; stepChargeFx(0, dt); return false; }
+  if (!(canHold && p.armed > .5)) {
+    p.aiming = 0; p.lock = null; p.charge = 0; p.armT = 0;
+    if (p.tossAim) { p.tossAim = 0; p.windOwn = null; p.throwK = 0; setChargeRing(0); throwMarkStep(false); }
+    stepChargeFx(0, dt); return false;
+  }
   // THE BEACON IS A THING HE THROWS, so it gets the throw's gesture rather than the gun's.
   // It was on the trigger: push the stick straight up inside a sixty-degree arc, hold, let go
   // -- which is how you fire a rifle and has nothing to do with lobbing something underarm.
