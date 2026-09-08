@@ -1229,7 +1229,16 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
       if(e>=p.born){ p.launched=true; p.vx=p.bdx*p.bspd; p.vy=p.bdy*p.bspd;
         if(EM&&EM.on&&window._BOOT_FLY!==false){                                  // seeded from INSIDE the bud — and FIRED, not released
           const sa=Math.random()*6.283, sr=Math.sqrt(Math.random())*(EM.r||12);   // even area fill, not a box
-          p.x=EM.x+Math.cos(sa)*sr; p.y=EM.y+Math.sin(sa)*sr*0.62;
+          // AND THE ORIGIN HAS TO BE A PLACE. This block was written for the flyover, where
+          // _BOOTFLY_ORIGIN carries the screen position of the bud the seeds crack out of.
+          // Released by anything that does not supply x and y -- which is what this file's own
+          // loader does, since it has no bud, only a moment -- every launched particle got
+          // `undefined + number` and flew to NaN, and a particle at NaN is never drawn again.
+          // That is the zero-particle splash, and it is why plugging the pre-release leak in
+          // d40 took the last visible one with it: the leaked ones were the only particles that
+          // had NOT been through here. Fall back to the mark's own centre.
+          const _ox=(EM.x!=null&&EM.x===EM.x)?EM.x:cx, _oy=(EM.y!=null&&EM.y===EM.y)?EM.y:cy;
+          p.x=_ox+Math.cos(sa)*sr; p.y=_oy+Math.sin(sa)*sr*0.62;
           const pw=(window._BF_SHOT_PW||1.85);                              // eased off: the seeds were cracking out faster than anything else in the shot                                     // muzzle velocity: an upward cone with real spread
           // A CONE, AIMED UP: lateral spread stays narrow and every seed carries real upward speed. A burst that
           // spreads equally in all directions on a flat plane is what reads as "coming at the camera".
@@ -1557,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd42';
+const BUILD = 'd43';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -17105,7 +17114,15 @@ function frame(now) {
       const _play = () => {
         if (_went) return; _went = true;
         // one instant: the mark's timeline is released and the runners set off together
-        try { window._BOOTFLY_ORIGIN = { on: true, k: 1 }; } catch (_) { }
+        // A PLACE, not just a moment. The splash bursts its shards out of this point, so it
+        // needs one -- the middle of where the mark is about to form, in the same CSS pixels
+        // the splash lays itself out in. Without x and y every shard flies to NaN.
+        try {
+          window._BOOTFLY_ORIGIN = { on: true, k: 1,
+            x: innerWidth * .5,
+            y: innerHeight * (window._MAJIA_Y != null ? window._MAJIA_Y : .468),
+            r: Math.max(7, Math.min(innerWidth, innerHeight) * .028), up: 2.4 };
+        } catch (_) { }
         CHASE.start(() => {
           if (window._majiaFinish) window._majiaFinish();
           if (INTRO.on) introEl.hidden = false; else document.body.classList.remove('intro');
