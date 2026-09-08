@@ -175,7 +175,16 @@
      canvas clipped at 932. So the lens is exactly that, always, and whatever iOS decides the
      web view is on any phone, the picture fills it and cannot leave a strip. Making the view
      itself the right height is the status-bar meta's job, up in the head. */
-  body > canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
+  /* ABSOLUTE, IN A BODY AS TALL AS THE SCREEN. A `fixed` element is laid out against the
+     LAYOUT viewport and iOS clips it there -- his panel proved it, a canvas measuring
+     0..1002 with its bottom 70 unpainted. An absolutely positioned one is laid out in the
+     DOCUMENT, and the document is whatever height we make it. Nothing here scrolls (see the
+     lock below), so absolute and fixed look identical; the difference is only which box gets
+     to clip them. This is the last lever the page has: if the picture still stops at 932, the
+     strip is the window's and not the page's, and only re-adding to the Home Screen without
+     black-translucent can move it. */
+  body{height:100vh;min-height:100vh;position:relative}
+  body > canvas{position:absolute;left:0;top:0;width:100%;height:100vh;display:block;z-index:0;touch-action:none}
   /* ONE BUILD OF PAINT, TO END TWENTY-FIVE ROUNDS OF ARITHMETIC.
      Every theory about the band has been about which box is short, and each fix has been
      shipped blind because the only way to tell them apart is to look at the thing on the
@@ -1202,7 +1211,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c89';
+const BUILD = 'c90';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -13997,7 +14006,7 @@ function bandPanel() {
   let d = _marks.panel;
   if (!d) {
     d = _marks.panel = document.createElement('div');
-    d.style.cssText = 'position:fixed;left:8px;top:120px;z-index:99999;pointer-events:none;'
+    d.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99999;pointer-events:none;'
       + 'font:13px ui-monospace,Menlo,monospace;color:#fff;background:rgba(0,0,0,.82);'
       + 'padding:8px 10px;border-radius:6px;line-height:1.5;white-space:pre';
     document.body.appendChild(d);
@@ -14012,6 +14021,7 @@ function bandPanel() {
   const unit = u => { probe.style.height = u; return probe.getBoundingClientRect().height | 0; };
   const r = renderer.domElement.getBoundingClientRect();
   d.textContent = [
+    'BUILD ' + BUILD,
     'scr  ' + screen.width + 'x' + screen.height + '  dpr ' + devicePixelRatio,
     'win  ' + innerWidth + 'x' + innerHeight,
     'doc  ' + de.clientWidth + 'x' + de.clientHeight,
@@ -14066,6 +14076,11 @@ function syncSize(probe) {
   // resize handler assumed every psys was a point sprite and threw on every resize.
   for (const ps of world.psys) { const u = ps.mat.uniforms.uScale; if (u) u.value = h * .5; }
 }
+// Body is a screen tall and the layout viewport is shorter, so the page technically has
+// somewhere to go. It must not go there: everything is positioned, so a scroll would only
+// slide the picture off the top. Pinned rather than clipped, because the clip is the thing
+// that was cutting the lens off in the first place.
+addEventListener('scroll', () => { if (scrollY || scrollX) scrollTo(0, 0); }, { passive: true });
 addEventListener('resize', syncSize);
 addEventListener('orientationchange', syncSize);
 // The same schedule the head script runs on, for the same reason: a navigation lands with the
