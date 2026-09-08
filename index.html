@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd58';
+const BUILD = 'd59';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2865,12 +2865,14 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         // does the gamma at the very end -- so it has to be decoded on the way in.
         vec3 e = pow(texture2D(uEnv, euv).rgb, vec3(2.2));
         e *= mix(vec3(0.30, 0.34, 0.52), vec3(1.06, 1.02, 0.96), dayL);
-        // Faded right at the horizon line and nowhere else. The first version rolled it in
-        // from zero to seven degrees to keep the panorama's own ground out of frame -- which
-        // is precisely the band a skyline lives in, so the one part of the image worth
-        // showing was the one part being hidden. Anything below the line is behind the sea
-        // anyway, and a horizon just above ours reads as distant land, which is the point.
-        c = mix(c, e, uEnvK * smoothstep(-0.04, 0.015, h));
+        // ALL THE WAY DOWN NOW. It was faded out at the horizon line to keep a PHOTOGRAPH's
+        // own ground out of the frame -- the bottom half of that image was the field it was
+        // shot standing in. The bottom half of this one is more galaxy, so there is nothing
+        // to hide, and cutting it there is what left a band at the waterline that only the
+        // plate could fill. The plate is what was drawing the seam, so the panorama takes
+        // that band as well: a soft roll-off well below the horizon, where the sea and the
+        // terrain are in front of the dome anyway and nobody can see the difference.
+        c = mix(c, e, uEnvK * smoothstep(-0.55, -0.28, h));
       }
       float sh = fbm(cuv * 2.7 + 3.1);
       vec3 cLit = mix(vec3(1.0), uMid, 0.3) * dayL;
@@ -3228,7 +3230,16 @@ const LOOKS = {
   // at, which is carrying colour all the way down to and below the waterline. Ten rounds went
   // into getting that band right; taking the plate out to make room for the HDRI would throw
   // every one of them away for nothing, since both are the same galaxy.
-  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: 1, plate: 1, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1, plateH: .05 },
+  // PLATE OFF THE DOME. Measured, not guessed: isle.sky('env') -- the panorama alone, plate
+  // suppressed -- and the seam went. It was never the HDRI. `uPlateRep` is 3, so the plate is
+  // a PORTRAIT image tiled three times round the horizon, and a tiled photograph has a hard
+  // vertical join at every repeat. It was the right stopgap while the sky was a blurred
+  // picture of somewhere on Earth and there was nothing else to put up there; with a real
+  // equirectangular panorama in hand it is three seams and no benefit.
+  //
+  // The plate is NOT deleted -- the title screen's backdrop is a different object (a
+  // camera-facing quad, one image, no tiling) and keeps it. This is only the dome.
+  title: { vivid: 1, haze: .22, lift: .12, rig: 1, env: 1, plate: 0, gsat: 1.85, gmul: .78, fogSky: .55, fogSat: 1.5, gpatch: 1, plateH: .05 },
 };
 const LOOK = Object.assign({ mode: 'title' }, LOOKS.title);
 function setLook(m) { if (LOOKS[m]) { LOOK.mode = m; Object.assign(LOOK, LOOKS[m]); } return LOOK.mode; }
@@ -11176,7 +11187,11 @@ function updateSky() {
   // screenshot each and whichever one carries the seam owns it. isle.sky() puts it back.
   const soloE = SKY.solo == null ? 1 : (SKY.solo === 'env' ? 1 : 0);
   const soloP = SKY.solo == null ? 1 : (SKY.solo === 'plate' ? 1 : 0);
-  skyUni.uEnvK.value = SKY.envK * LOOK.env * (1 - spaceK) * (ENV.map ? 1 : 0) * soloE;
+  // AND IT NO LONGER FADES WITH ALTITUDE. (1 - spaceK) took the panorama away as he climbed,
+  // which was right when it was a photograph of the ground -- from up there you are not in it
+  // any more. A starfield is the one thing that gets MORE true with height, and with the
+  // plate off the dome there is nothing else left to hand the sky to.
+  skyUni.uEnvK.value = SKY.envK * LOOK.env * (ENV.map ? 1 : 0) * soloE;
   // The plate stays out at altitude the way the panorama does not: out there it IS the sky,
   // and it is what the title screen has behind the planet.
   // No boost past 1: a mix weight over one EXTRAPOLATES away from the sky underneath rather
