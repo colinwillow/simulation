@@ -1256,7 +1256,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c98';
+const BUILD = 'c99';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -4146,6 +4146,18 @@ const MODEL = {
   runAt: .42, runFull: .74,
   moveAt: .015, moveFull: .13,        // and where idle gives way to the walk
 };
+// AND SOME THINGS WANT MORE OF IT THAN THE ISLAND DOES. The global lift is set for foliage and
+// creatures -- small, busy, self-shadowing shapes standing on lit ground, where a fifth is
+// plenty to keep a silhouette off pure black. The ship is none of that: one big smooth hull,
+// almost no self-shadowing to read the form by, and it is nearly always seen against the night
+// sky with nothing behind it to bounce anything back. At .2 it goes to a dull shape with a
+// texture on it, which is exactly what he is looking at. Half lifts it back into the flat,
+// evenly-lit read the rest of the game has.
+// Keyed by URL because it is a property of the ASSET, not of the class that flies it, and
+// prepModel runs once per file with the URL right there.
+const MODEL_LIFT = {
+  'models/alien_ship_orange.glb': .5,
+};
 // One cache per URL. The GLB is fetched once, prepared once, measured once; every user
 // after that gets a clone that shares the geometry and materials. Measuring is the
 // expensive part (every vertex through boneTransform), so it must not happen per creature.
@@ -4243,7 +4255,7 @@ function loadModel(url, cb) {
   loader.load(url, gltf => {
     e.root = gltf.scene; e.anims = gltf.animations;
     if (SKINS[url]) applySkin(e.root, SKINS[url]);      // an override, if one is named for this model
-    prepModel(e.root);
+    prepModel(e.root, url);
     jointDrift(e.root, e.anims, url);
     // Measure in the idle pose, not the bind pose. Mixamo exports keep the bind pose hips
     // at the origin and the clips a hip-height above it, so a model normalised to its bind
@@ -4389,8 +4401,9 @@ function markBody(root, on = true) {
   root.traverse(o => { for (const m of [].concat(o.material || [])) if (m && !!m.userData.noHole !== !!on) { m.userData.noHole = on; m.needsUpdate = true; } });
   return root;
 }
-function prepModel(root) {
+function prepModel(root, url) {
   let saved = 0; const seen = new Set();
+  const lift = (url && MODEL_LIFT[url] != null) ? MODEL_LIFT[url] : MODEL.ambientLift;
   // Which materials belong to a body. When every model in the file was a rig this was all of
   // them, and the line below said so; now the trees, the plants, the rocks and the buildings
   // are models too, and they inherited a rule that was never about them -- so an elder tree
@@ -4433,10 +4446,10 @@ function prepModel(root) {
       if (MODEL.forceOpaque && m.transparent) {
         m.transparent = false; m.depthWrite = true; m.alphaTest = 0; m.needsUpdate = true;
       }
-      if (MODEL.ambientLift > 0 && m.emissive) {
+      if (lift > 0 && m.emissive) {
         // With a map the lift follows the texture; flat materials follow their colour.
-        if (m.map) { m.emissiveMap = m.map; m.emissive.setScalar(MODEL.ambientLift); }
-        else m.emissive.copy(m.color).multiplyScalar(MODEL.ambientLift);
+        if (m.map) { m.emissiveMap = m.map; m.emissive.setScalar(lift); }
+        else m.emissive.copy(m.color).multiplyScalar(lift);
         m.needsUpdate = true;
       }
     }
