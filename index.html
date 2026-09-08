@@ -128,6 +128,14 @@
   :root{--lvh:100vh}
   @supports (height:100lvh){:root{--lvh:max(100vh,100lvh)}}
   body > canvas{position:fixed;left:0;top:0;width:100%;height:var(--lvh,100vh);display:block;z-index:0;touch-action:none}
+  /* ONE BUILD OF PAINT, TO END TWENTY-FIVE ROUNDS OF ARITHMETIC.
+     Every theory about the band has been about which box is short, and each fix has been
+     shipped blind because the only way to tell them apart is to look at the thing on the
+     phone that has it. So this build makes the band identify itself. The page behind
+     everything is magenta instead of #070a13, and three hairlines mark the three edges that
+     have been argued about. What colour the band is, and which lines are above or below it,
+     is the entire answer -- no numbers to read off a photograph. BAND = 0 removes all of it.*/
+  .bandmark{position:fixed;left:0;right:0;height:3px;z-index:9999;pointer-events:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -1140,7 +1148,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c82';
+const BUILD = 'c83';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -13789,6 +13797,19 @@ let _vw = 0, _vh = 0;
 // animation frame is not free. `over` is what the measurement bought, kept so it survives a
 // re-measure that happens to catch the bar mid-slide.
 let _over = 0, _gap = 0;
+// THE BAND, MADE TO NAME ITSELF. Set to 0 and every trace of this goes.
+const BAND = 1;
+const _marks = {};
+function bandMark(id, col, y) {
+  if (!BAND) return;
+  let d = _marks[id];
+  if (!d) {
+    d = _marks[id] = document.createElement('div');
+    d.className = 'bandmark'; d.style.background = col;
+    (document.body || document.documentElement).appendChild(d);
+  }
+  d.style.top = Math.round(y - 3) + 'px';
+}
 function lensProbe() {
   const cvEl = renderer.domElement, vv = window.visualViewport;
   const r = cvEl.getBoundingClientRect();
@@ -13799,8 +13820,24 @@ function lensProbe() {
     _over = Math.ceil(_over + gap);
     cvEl.style.height = 'calc(var(--lvh, 100vh) + ' + _over + 'px)';
   }
+  if (BAND) {
+    // Three edges, three colours, all measured the same way and drawn where they actually are.
+    //   LIME    the bottom of the LAYOUT viewport -- where `position:fixed; bottom:0` lands,
+    //           which is where every panel in this file sits.
+    //   CYAN    the bottom of the VISUAL viewport -- what the browser says you can see.
+    //   ORANGE  the bottom edge of the LENS itself, after this frame's correction.
+    // And the page behind all of it is magenta, so an uncovered strip cannot be mistaken for
+    // a black one that something is painting.
+    bandMark('lay', '#7cff4a', document.documentElement.clientHeight || innerHeight);
+    bandMark('vis', '#3fe0ff', visB);
+    bandMark('cv', '#ff9c3f', cvEl.getBoundingClientRect().bottom);
+  }
   return gap;
 }
+if (BAND) try {
+  document.documentElement.style.background = '#ff00aa';
+  document.body.style.background = '#ff00aa';
+} catch (e) { }
 function syncSize(probe) {
   // visualViewport is what is ACTUALLY on screen; innerHeight is what the layout thinks, and
   // on a phone the two part company every time the URL bar slides. Reading the wrong one gives
