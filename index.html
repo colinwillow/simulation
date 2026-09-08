@@ -1484,7 +1484,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd14';
+const BUILD = 'd17';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -3864,10 +3864,13 @@ class LanternTree {
     const base = elder ? rnd(5, 6.4) : rnd(2.6, 3.4), mat = pick(M.canopy);
     const layers = (elder ? 9 : 5) + (Math.random() * 3 | 0);
     const leaves = [];
+    const blobs = [];                                  // where the leaves actually are, for the fruit
     for (let i = 0; i < layers; i++) {
-      const t = i / layers, r = base * (1 - t * .45) * rnd(.55, .95);
-      const b = mesh(pick(G.blob), i % 3 === 0 ? pick(M.canopy) : mat, r, r * rnd(.6, .85), r, rnd(-base * .55, base * .55), t * base * .95 - base * .25, rnd(-base * .55, base * .55));
+      const t = i / layers, r = base * (1 - t * .45) * rnd(.55, .95), ry = r * rnd(.6, .85);
+      const bx = rnd(-base * .55, base * .55), by = t * base * .95 - base * .25, bz = rnd(-base * .55, base * .55);
+      const b = mesh(pick(G.blob), i % 3 === 0 ? pick(M.canopy) : mat, r, ry, r, bx, by, bz);
       b.rotation.set(rnd(3), rnd(3), rnd(3)); collect(leaves, b);
+      blobs.push({ x: bx, y: by, z: bz, r, ry });
     }
     for (const m of mergeBin(leaves)) this.canopy.add(m);
     // hanging lantern fruit on short stems
@@ -3876,10 +3879,16 @@ class LanternTree {
     // twenty-seven on an elder, and every sprite carried a material of its own.
     this.fruitG = new THREE.Group(); this.canopy.add(this.fruitG);
     const lights = [];
+    // THE STEM GROWS OUT OF A LEAF, not out of the air beside one. It was hung at a random
+    // point anywhere out to 95% of the canopy's radius, and the leaf blobs only sit out to
+    // about 55% -- so a good share of the crop dangled from nothing, which is the "ropes that
+    // don't touch the tree". Each stem now starts INSIDE a blob, at its underside, and is long
+    // enough that the top of it is buried in leaves and only the hanging part shows.
     for (let i = 0; i < (elder ? 9 : 5); i++) {
-      const a = rnd(Math.PI * 2), r = rnd(1.2, base * .95), y = rnd(-1.6, .4);
-      const st = new THREE.Group(); st.position.set(Math.cos(a) * r, y, Math.sin(a) * r);
-      st.add(mesh(G.cyl, M.barkB, .04, .8, .04, 0, -.4, 0));
+      const bl = pick(blobs);
+      const sx = bl.x + rnd(-.45, .45) * bl.r, sz = bl.z + rnd(-.45, .45) * bl.r, y = bl.y - bl.ry * .35;
+      const st = new THREE.Group(); st.position.set(sx, y, sz);
+      st.add(mesh(G.cyl, M.barkB, .04, 1.3, .04, 0, -.35, 0));       // from inside the leaf down to the fruit
       const fr = mesh(G.sph, M.lantern, .3, .42, .3, 0, -1.0, 0); fr.castShadow = true; st.add(fr);
       this.fruitG.add(st);
       lights.push(new THREE.Vector3(st.position.x, st.position.y - 1, st.position.z));
@@ -7097,6 +7106,7 @@ class MotherTree {
 }
 
 // Leviathan — a long body that follows its own wake, so the humps travel down it
+const _lvP = new THREE.Vector3(), _lvA = new THREE.Vector3();   // above the class that reads them
 class Leviathan extends Creature {
   constructor(x, z) {
     super(x, z, { speed: 5.4, turn: .8, aquatic: true, rad: 3.6, look: 16 });
@@ -7109,7 +7119,8 @@ class Leviathan extends Creature {
     b.add(mesh(G.blob[1], M.levi, 1.5, 1.5, 3.2, 0, 0, .6));
     b.add(mesh(G.blob[3], M.levi, 1.05, .95, 1.9, 0, -.3, 2.7));
     b.add(mesh(G.blob[0], M.leviBelly, 1.0, .5, 2.4, 0, -.9, 1.3));
-    for (let i = 0; i < 5; i++) { const f = mesh(G.cone, M.leviFin, .12, 1.5 - i * .17, .85, 0, 1.15, 1.5 - i * .95); f.rotation.x = -.22; b.add(f); }
+    // A crest of swept blades, not a row of spears: low, wide at the root, leaning back.
+    for (let i = 0; i < 5; i++) { const f = mesh(G.blob[2], M.leviFin, .16, (1.5 - i * .17) * .62, .95, 0, 1.05, 1.5 - i * .95); f.rotation.x = -.55; b.add(f); }
     for (const sx of [1, -1]) { const h = mesh(G.cone, M.leviFin, .2, 2.1, .2, sx * .85, 1.0, .1); h.rotation.set(-.55, 0, sx * .5); b.add(h); }
     b.add(mesh(G.sph, M.leviGlow, .27, .27, .27, .9, .35, 1.95), mesh(G.sph, M.leviGlow, .27, .27, .27, -.9, .35, 1.95));
     this.eyeGlow = glow('#7ff0e0', 3.4, .5); this.eyeGlow.position.set(0, .4, 2.0); b.add(this.eyeGlow);
@@ -7127,7 +7138,10 @@ class Leviathan extends Creature {
       const bd = mesh(pick(G.blob), i % 2 ? M.levi : M.leviBack, r * 1.05, r * 1.15, r * 1.55, 0, 0, 0);
       bd.castShadow = true; g.add(bd);
       g.add(mesh(G.blob[4], M.leviBelly, r * .72, r * .42, r * 1.2, 0, -r * .78, 0));
-      if (i % 2 === 0) { const d = mesh(G.cone, M.leviFin, .13, r * 1.9, r * 1.35, 0, r * 1.1, 0); d.rotation.x = -.1; g.add(d); }
+      // The dorsal ridge: a flat leaf of fin on every other segment, swept back, tall enough to
+      // break the water when the body does and no taller. The cones it replaces were twice the
+      // segment's height and a hand wide -- the spears.
+      if (i % 2 === 0) { const d = mesh(G.blob[2], M.leviFin, r * .16, r * 1.05, r * 1.25, 0, r * .95, -r * .1); d.rotation.x = -.42; g.add(d); }
       if (i % 3 === 0) { const gl = glow('#5fe8d8', 2.6, .45); gl.position.y = r * .35; g.add(gl); g.userData.gl = gl; }
       scene.add(g); this.segs.push(g);
     }
@@ -7166,13 +7180,23 @@ class Leviathan extends Creature {
     this.g.rotation.set(0, this.heading, 0);
     this.body.rotation.x = -Math.atan(Math.cos(this.travel * k) * this.amp * k) * 1.2;
     this.acc += d;
-    if (this.acc >= .5 || !this.trail.length) { this.acc = 0; this.trail.unshift(new THREE.Vector3(this.rx, y, this.rz)); if (this.trail.length > 140) this.trail.pop(); }
-    const step = 2.7 / .5;
+    if (this.acc >= .5 || !this.trail.length) { this.acc -= this.trail.length ? .5 : this.acc; this.trail.unshift(new THREE.Vector3(this.rx, y, this.rz)); if (this.trail.length > 140) this.trail.pop(); }
+    // THE JITTER WAS QUANTISATION. Trail points are laid every half-unit of travel and each
+    // segment was parked ON one of them, so a segment sat still while the head moved half a
+    // unit and then jumped to the next point -- the whole body advancing in half-unit steps.
+    // The head is `acc` units past trail[0], so the arc distance back to trail[j] is
+    // acc + j/2; a segment wanting to be D behind the head sits at j = (D - acc) * 2, and is
+    // interpolated between the two points either side of that. Now it slides.
+    const at = (dist, out) => {
+      const jf = Math.max(0, (dist - this.acc) * 2), j0 = Math.floor(jf), j1 = Math.min(this.trail.length - 1, j0 + 1);
+      const a = this.trail[Math.min(this.trail.length - 1, j0)], b = this.trail[j1];
+      return a ? (b ? out.lerpVectors(a, b, Math.min(1, jf - j0)) : out.copy(a)) : null;
+    };
     for (let i = 0; i < this.segs.length; i++) {
-      const idx = Math.min(this.trail.length - 1, Math.round((i + 1) * step)), p = this.trail[idx];
-      if (!p) break;
-      const sg = this.segs[i]; sg.position.copy(p);
-      const ahead = this.trail[Math.max(0, idx - 2)]; if (ahead && ahead !== p) sg.lookAt(ahead);
+      const D = (i + 1) * 2.7, sg = this.segs[i];
+      if (!at(D, _lvP)) break;
+      sg.position.copy(_lvP);
+      if (at(Math.max(0, D - 1.2), _lvA) && _lvA.distanceToSquared(_lvP) > 1e-4) sg.lookAt(_lvA);
       if (sg.userData.gl) sg.userData.gl.material.opacity = .1 + world.night * .55;
     }
     this.eyeGlow.material.opacity = .15 + world.night * .55;
@@ -8051,7 +8075,7 @@ class FloatingIsle {
     this.alive = true; this.alt = alt; this.pos = new THREE.Vector3(x, alt, z);
     this.g = new THREE.Group(); this.g.position.copy(this.pos); scene.add(this.g);
     const R = this.R = O.R || 34, NA = this.NA = na === undefined ? rnd(Math.PI * 2) : na, cN = Math.cos(NA), sN = Math.sin(NA);
-    const landY = O.landY === undefined ? SEA : O.landY;
+    const landY0 = O.landY === undefined ? SEA : O.landY;   // the caller's guess; the fall measures for itself below
     // Everything below the height field was written for a 34-unit island -- the spires, the
     // grove, the loose rock, the width of the fall, the foam ring. This is what scales it, and
     // it is declared HERE, at the top, because half of what uses it runs before the waterfall
@@ -8169,7 +8193,16 @@ class FloatingIsle {
     // How far it actually has to fall to reach what is underneath. Over the sea that is the
     // waterline; over a hill it is the hill, and the first version of this drove the sheet
     // fifteen units into the ground and splashed at sea level under it.
-    const H = alt + lipY - (landY - 5), W0 = 5.5 * K, OUT = 9 * K;
+    // WHERE IT ACTUALLY LANDS. The arc carries the water 1.2 + OUT units outward from the lip
+    // before it comes down, and the ground THERE is what it has to reach -- not the ground
+    // under the isle's centre, and not the caller's guess. Over a coastline the difference is
+    // the whole beach: the sheet drove itself five units into the sand with the plunge spray
+    // clipped into the hill beside it, which is "the waterfall lands on the land mass".
+    // groundY over water is the seabed, so over the sea it is the waterline instead.
+    const W0 = 5.5 * K, OUT = 9 * K;
+    const footX = x + cN * (lipR + 1.2 + OUT), footZ = z + sN * (lipR + 1.2 + OUT);
+    const landY = Math.max(landY0, isLand(footX, footZ) ? groundY(footX, footZ) : SEA);
+    const H = alt + lipY - (landY - 5);
     const arcU = t => 1.2 + OUT * Math.sqrt(t), fallY = t => lipY - t * H;
     const FS = 10, FT = 26, fp = [], fuv = [], fi = [];
     for (let j = 0; j <= FT; j++) {
