@@ -1262,7 +1262,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd04';
+const BUILD = 'd06';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -5250,6 +5250,54 @@ const _kbA = new THREE.Vector3(), _kbB = new THREE.Vector3();
 const KDBG = /[?&]knock\b/.test(location.search);
 const KOBS = /[?&]obs\b/.test(location.search);
 const KLOOK = /[?&]look\b/.test(location.search);
+// ---------- how a species feels about him ----------
+// NOT PER ANIMAL. The unit of memory is the SPECIES, because that is the thing the player can
+// have a relationship with: shoot one purple one and every purple one on the island has heard
+// about it. One number per species from -1 (they will not let him near, and one day will come
+// at him) through 0 (they have no opinion, which is where the island starts) to +1 (they come
+// to him). Everything that changes it goes through moodShift so there is one place to read
+// what the island thinks of him and one place to tune how fast it changes.
+//
+// It fades. A standing that never decayed would mean one bad afternoon in the first hour
+// poisons the species for the rest of the save, and there would be no winning anything back
+// by behaving -- which is the whole loop. `ease` brings it toward nothing over about seven
+// minutes of play, so being left alone is itself a slow forgiveness and sustained kindness or
+// cruelty is what actually holds a species anywhere.
+const MOOD = {
+  m: {},                 // species name -> standing
+  hit: -.30,             // a full plasma hit. Three of them takes a species from nothing to afraid
+  barge: -.09,           // walking one down
+  carry: -.05,           // being picked up and carried about
+  feedRate: .07,         // per second of an animal actually feeding at a spark he dropped
+  ease: 1 / 420,         // per second, back toward zero
+  spread: 70,            // how far the news of a hit travels
+  afraid: -.35, fond: .35,   // where the behaviour changes, and where it is worth saying so
+  waryK: 2.6,            // fear multiplies a species' own flee radius by up to this
+  waryMin: 34,           // and a terrified species keeps its distance even if it never had one
+  label: { Grazer: 'the mossbacks', Weaver: 'the tinkers', Burrower: 'the mudlarks',
+    Skimmer: 'the glimmerfins', Drifter: 'the kitewings', Hopper: 'the hoppers',
+    Walker: 'the grovewalkers', Leviathan: 'the leviathans' },
+};
+function moodOf(c) { return MOOD.m[c.constructor.name] || 0; }
+function moodShift(c, d) {
+  const k = c.constructor.name, was = MOOD.m[k] || 0;
+  const now = clamp(was + d, -1, 1);
+  MOOD.m[k] = now;
+  // Only on a crossing, and only outward -- the slow fade back through the line is not news.
+  const nm = MOOD.label[k] || 'they';
+  if (was > MOOD.afraid && now <= MOOD.afraid) logMsg(nm.charAt(0).toUpperCase() + nm.slice(1) + ' will not come near him now.');
+  else if (was < MOOD.fond && now >= MOOD.fond) logMsg(nm.charAt(0).toUpperCase() + nm.slice(1) + ' have decided he is worth walking toward.');
+  return now;
+}
+// Every second, everything drifts back toward having no opinion.
+function moodEase(dt) {
+  for (const k in MOOD.m) {
+    const v = MOOD.m[k];
+    if (v === 0) continue;
+    const n = v > 0 ? Math.max(0, v - MOOD.ease * dt) : Math.min(0, v + MOOD.ease * dt);
+    MOOD.m[k] = n;
+  }
+}
 const KNOCK = {
   // Range goes as speed times airtime, and both used to divide by the animal's size -- so a
   // tinker went thirty-four units and a mossback went one, off numbers only 1.8x apart. The
@@ -5550,6 +5598,14 @@ class Creature {
   // shoulder barge.
   knock(from, force = 1) {
     if (!this.alive || this.aquatic) return;
+    // THE SPECIES REMEMBERS. Not this animal -- it has a two-second attention span and half
+    // the time it is thrown clear of the whole event. What is worth carrying is that a purple
+    // one got shot, and every purple one within earshot both hears it and passes it on.
+    const pl = world.player;
+    if (pl && from && Math.hypot(from.x - pl.pos.x, from.z - pl.pos.z) < 3) moodShift(this, MOOD.barge * force);
+    else moodShift(this, MOOD.hit * force);
+    for (const o of world.creatures)
+      if (o !== this && o.alive && o.constructor === this.constructor && this.dist(o.pos) < MOOD.spread) o.spook(this.pos, 0);
     // A GROVEWALKER DOES NOT GO END OVER END. The fling is one arc and one tumble about a
     // horizontal axis through the ROOT of the thing, which is its feet -- fine for a hopper,
     // and for a nine-unit animal with a wood on its back it is a lamppost falling over. It
@@ -5759,7 +5815,14 @@ class Creature {
       if (this.alarm <= 0) this.fleeTo = null;
       this.doing = 'flee'; return true;
     }
-    if (S.wary && him && this.dist(pl.pos) < S.wary) { this.spook(pl.pos, S.flock); return true; }
+    // WHAT THE SPECIES THINKS OF HIM, in front of its own instincts. Fear stretches the flee
+    // radius, and past `afraid` it gives one to species that never had one -- a grovewalker is
+    // written as far too big to mind you, and it should still move off once it has learned
+    // better. Fondness works the other way in the curiosity branch below.
+    const md = moodOf(this);
+    let wary = S.wary * (1 + Math.max(0, -md) * (MOOD.waryK - 1));
+    if (md <= MOOD.afraid) wary = Math.max(wary, MOOD.waryMin * (-md - MOOD.afraid) / (1 + MOOD.afraid));
+    if (wary && him && this.dist(pl.pos) < wary) { this.spook(pl.pos, S.flock); return true; }
     if (this.met > 0) {
       this.met -= dt; this.moving = 0;
       if (this.metWho && this.metWho.alive) this.seek(this.metWho.pos, 1);
@@ -5772,18 +5835,29 @@ class Creature {
       const sp = nearest(world.sparks, this.pos, s => s.alive && !s.spawned, 45);
       if (sp) {
         if (this.dist(sp.pos) > 3.2) { this.moving = 1; this.seek(sp.pos, 1.5); }
-        else { this.moving = 0; this.seek(sp.pos, 1); sp.gathered += dt * 4; }
+        else {
+          this.moving = 0; this.seek(sp.pos, 1); sp.gathered += dt * 4;
+          // THE OTHER HALF OF THE BAROMETER. Until there is something to pull up and hold
+          // out, a dropped spark is the only thing he can do FOR an animal, and an animal
+          // actually feeding at one is the event worth paying for -- not the dropping of it.
+          // When the turnips arrive they call moodShift with MOOD.feedRate the same way.
+          moodShift(this, MOOD.feedRate * dt);
+        }
         this.doing = 'spark'; return true;
       }
     }
     // It comes to look at somebody who has stopped moving -- for a while, and then it has
     // seen enough and will not be interested again for a minute or so.
-    if (S.curious && him && this.curioCool <= 0 && this.stall < 3 && pl.speed < .8 && this.dist(pl.pos) < 32) {
+    // A species that likes him comes over even if it was never a curious one, and comes from
+    // further off. Nothing that is currently afraid of him gets here at all -- the flee branch
+    // above has already taken the wheel.
+    const cur = S.curious || (md >= MOOD.fond ? 1 : 0);
+    if (cur && him && this.curioCool <= 0 && this.stall < 3 && pl.speed < .8 && this.dist(pl.pos) < 32 + md * 26) {
       this.curio += dt;
       if (this.curio >= 15) { this.curio = 0; this.curioCool = rnd(40, 95); }
       else {
         const d = this.dist(pl.pos);
-        if (d > 6) { this.moving = .6; this.seek(pl.pos, S.curious); } else { this.moving = 0; this.seek(pl.pos, 1); }
+        if (d > 6) { this.moving = .6; this.seek(pl.pos, cur); } else { this.moving = 0; this.seek(pl.pos, 1); }
         this.doing = 'watch'; return true;
       }
     } else if (this.curio > 0) this.curio = Math.max(0, this.curio - dt * .5);
@@ -11413,7 +11487,7 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -12021,7 +12095,10 @@ function carryStep(dt) {
   if (p.carry && (p.aboard || p.free || p.swim > .5 || !p.carry.alive)) { p.placeAt = { x: p.pos.x, z: p.pos.z }; p.placeT = 0; finishPlace(); }
   if (p.liftT > 0 && (p.liftT -= dt) <= 0) {        // the stoop is over: it is in his arms now
     p.liftT = 0;
-    if (p.carryPend && p.carryPend.alive) { p.carry = p.carryPend; world.carried = (world.carried || 0) + 1; }
+    if (p.carryPend && p.carryPend.alive) {
+      p.carry = p.carryPend; world.carried = (world.carried || 0) + 1;
+      moodShift(p.carry, MOOD.carry);      // being hoisted about is not an outrage, but it is not nothing
+    }
     else if (p.carryPend) { p.carryPend.carried = 0; p.carryPend.holeOff(0); }
     p.carryPend = null;
   }
@@ -14792,6 +14869,19 @@ function updateHUD() {
     // and be looked at directly instead of hunted for. Same numbers every zone, prop and
     // collider in the file is placed in.
     `at ${player.pos.x.toFixed(0)}, ${player.pos.z.toFixed(0)} \u00b7 ${biomeAt(player.pos.x, player.pos.z).name}<br>` +
+    // WHAT THE ISLAND THINKS OF HIM. Only the species that have formed an opinion, so the line
+    // is empty on a fresh world and fills in as he earns it either way.
+    (() => {
+      const rows = [];
+      for (const k in MOOD.m) {
+        const v = MOOD.m[k];
+        if (Math.abs(v) < .04) continue;
+        const nm = (MOOD.label[k] || k).replace(/^the /, '');
+        const word = v <= MOOD.afraid ? 'afraid' : v >= MOOD.fond ? 'fond' : v < 0 ? 'wary' : 'warming';
+        rows.push(`${nm} ${word} ${v >= 0 ? '+' : ''}${v.toFixed(2)}`);
+      }
+      return rows.length ? rows.join(' \u00b7 ') + '<br>' : '';
+    })() +
     // EVERY VIEWPORT NUMBER THE BROWSER WILL GIVE, because four rounds have been spent
     // guessing which of them is the one that is short. win / vis / doc / scr, then the size
     // the lens is actually being drawn at. Whichever of the first four is smaller than the
@@ -14993,6 +15083,7 @@ function frame(now) {
   carryOffer(); netOffer();                // first, so the ship's own offer wins where they overlap
   for (const e of world.plants) if (e.alive) e.update(dt);
   for (const e of world.structures) if (e.alive) e.update(dt);
+  moodEase(dt);
   for (const e of world.creatures) if (e.alive) e.update(dt);
   for (const e of world.effects) if (e.alive) e.update(dt);
   for (const e of world.sparks) if (e.alive) e.update(dt);
