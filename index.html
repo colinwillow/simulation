@@ -1487,7 +1487,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd25';
+const BUILD = 'd26';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -6622,7 +6622,12 @@ class Weaver extends Creature {
       // into place. Six of them make a village. This is the first thing a species builds for
       // itself that is not a monument, and it is built out of the same economy he uses: the
       // pieces can be shot off, gathered, and taken.
-      if (!c) {
+      // Division of labour, or the village would never start: cairns are capped at nine and
+      // every unfinished one takes logs first, so huts would come deep into a session. Once
+      // three cairns stand, about half the tinkers -- fixed for life off their phase -- turn
+      // to house-building, and the rest keep raising the monuments.
+      const housing = world.cairns >= 3 && ((this.phase * 7.13) % 2) > 1;
+      if (!c || housing) {
         let hh = nearest(world.structures, this.pos, s => s instanceof Hut && s.owner === 'Weaver' && s.nextEmpty(), 160);
         if (!hh && world.structures.filter(s => s.alive && s instanceof Hut && s.owner === 'Weaver').length < MAX.tinkerHut) {
           const p = nearLand(this.pos, 6, 18, 2.5, 11, .3);
