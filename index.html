@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd51';
+const BUILD = 'd52';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -11256,6 +11256,14 @@ const TCARD = { g: null, mats: [], mesh: null, bg: null, bgMat: null, bgA: 1 };
 // is meant to read; the other two are there so it is not a pendulum. All in radians -- .14 is
 // eight degrees, which is a lean you notice without the wordmark ever looking loose.
 const MARK_ROCK = { pitch: .14, pitchR: .24, yaw: .05, yawR: .17, roll: .022, rollR: .13 };
+// AND IT GLOWS, by being brighter than the frame it sits in. The mark is unlit and
+// toneMapped:false, so its colour reaches the composite untouched -- and the bloom pass takes
+// anything over .76 luminance. At 1.0 the wordmark's brightest cream sat just under that and
+// caught nothing. Pushed a little past white it crosses the threshold, so the bloom chain
+// that is already running gives it a soft halo out of its own artwork, with no second mesh,
+// no additive card and nothing new in the render order. Breathes very slightly, because a
+// glow that is perfectly steady reads as the texture being too bright rather than as light.
+const MARK_GLOW = { k: 1.34, breathe: .07, rate: .55 };
 const _tcF = new THREE.Vector3(), _tcU = new THREE.Vector3(), _tcP = new THREE.Vector3();
 const TITLE_MARK = 'models/plutopia_title.glb';
 
@@ -11305,7 +11313,8 @@ function titleMarkFrame(k, cam3) {
   if (!TCARD.g) return;
   const c3 = cam3 || camera;
   TCARD.g.visible = k > .01;
-  for (const m of TCARD.mats) m.opacity = k;
+  const gk = MARK_GLOW.k + Math.sin(DIO.t * MARK_GLOW.rate) * MARK_GLOW.breathe;
+  for (const m of TCARD.mats) { m.opacity = k; m.color.setScalar(gk); }
   if (!TCARD.g.visible) return;
   const D = 34, fh = 2 * D * Math.tan(c3.fov * Math.PI / 360), fw = fh * c3.aspect;
   const w = Math.min(fw * .88, fh * 1.25);
@@ -11600,16 +11609,28 @@ const DIO_BODIES = [
   // this is guessing again, and this screen has cost several rounds of exactly that.
   //
   //                                        measured from                     was
-  { sx:  1.02, sy:  .29, d: 235, rf: .70,  model: 'models/saturn.glb', tilt: [.16, .0, .12] },   // (960, 590) r260
-  // TURNED ROUND, AND PINNED. Only the bodies that carry a `tilt` are placed deliberately;
-  // everything else got m.rotation.set(rnd(3), rnd(3), rnd(3)) -- a fresh random tumble on
-  // every single load. So the blue planet was never "facing away", it was facing a different
-  // way every time the page opened, and half of those were its back. A ringed planet was
-  // given a tilt because a ring has to sit at the angle the picture wants; a planet with a
-  // FACE on it has exactly the same problem and was not. Pinned at a half turn, which is the
-  // 180 that was asked for -- and being one number rather than a dice roll, it is a one-number
-  // fix if this is still the wrong hemisphere.
-  { sx:  -.98, sy:  .34, d: 285, rf: .28,  model: 'models/earth_planet.glb', tilt: [.10, Math.PI, .04] },   // ( 25, 545) r170
+  // OFF THE PLANET. It was never intersecting in DEPTH -- the camera stands about 90 out, the
+  // ball ends at 104, and saturn's nearest point was 200 -- so what overlapped was the
+  // SILHOUETTE. The planet takes .752 of the frame width, so its right limb is at sx +0.752;
+  // saturn's centre at 1.02 with a radius of .70 of the half-frame put its left limb at 0.32,
+  // four tenths of the half-frame INSIDE the planet. Moved out and cut down, both by a little
+  // rather than either by a lot: left limb now lands at 0.78, just clear of the limb, and it
+  // is lifted slightly up the frame as well.
+  { sx:  1.18, sy:  .33, d: 300, rf: .40,  model: 'models/saturn.glb', tilt: [.16, .0, .12] },   // (960, 590) r260
+  // THE BLUE PLANET HAS NO FRONT, and turning it will never find one. Measured out of the
+  // file rather than guessed at a third time: it is a sphere to 0.4% (radius .502, standard
+  // deviation .002, no relief anywhere on it), its texture carries the same colourfulness on
+  // every side (.486 to .504 across all six hemispheres), the same texel density to three
+  // figures, and the same local contrast. There is no detailed half and no plain half.
+  //
+  // So what reads as "the side with the actual colours" is the side the KEY LIGHT is on. It is
+  // a MeshStandardMaterial out here like everything else, the key comes from one direction,
+  // and the far half of a small ball at the edge of frame goes to almost nothing -- which is
+  // a lighting problem, and no rotation touches it. `lift` is the answer: it lights the
+  // material off its own texture, so the whole disc shows what it is painted with whichever
+  // way the key happens to be pointing. The tilt stays pinned only so the picture is the same
+  // on every load, which it was not -- every body without one gets a fresh random tumble.
+  { sx:  -.98, sy:  .34, d: 285, rf: .28,  model: 'models/earth_planet.glb', tilt: [.10, .55, .04], lift: .55 },   // ( 25, 545) r170
   { sx:   .49, sy:  .55, d: 320, rf: .08,  model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },  // (700, 375) r38
   { sx:  -.82, sy: -.81, d:  64, rf: .58,  model: 'models/cratered_asteroid.glb', tint: '#b09678' },  // ( 95,1500) r205
   { sx:   .91, sy: -.84, d:  76, rf: .52,  model: 'models/purple_moon.glb' },                    // (890,1530) r175
@@ -11647,7 +11668,13 @@ function dioSky(g) {
         inst.traverse(o => {
           if (!o.isMesh) return;
           dioMat(o);
-          if (b.tint) for (const mm of [].concat(o.material)) mm.color.set(b.tint);
+          for (const mm of [].concat(o.material)) {
+            if (b.tint) mm.color.set(b.tint);
+            // Lit off its own texture, so the half the key does not reach still shows what it
+            // is painted with. A body out here is scenery in a composition, not a thing whose
+            // form has to be read by its shading.
+            if (b.lift && mm.emissive) { mm.emissiveMap = mm.map || null; mm.emissive.setScalar(b.lift); mm.needsUpdate = true; }
+          }
         });
         m.add(inst);
       });
