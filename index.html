@@ -175,16 +175,24 @@
      canvas clipped at 932. So the lens is exactly that, always, and whatever iOS decides the
      web view is on any phone, the picture fills it and cannot leave a strip. Making the view
      itself the right height is the status-bar meta's job, up in the head. */
-  /* ABSOLUTE, IN A BODY AS TALL AS THE SCREEN. A `fixed` element is laid out against the
-     LAYOUT viewport and iOS clips it there -- his panel proved it, a canvas measuring
-     0..1002 with its bottom 70 unpainted. An absolutely positioned one is laid out in the
-     DOCUMENT, and the document is whatever height we make it. Nothing here scrolls (see the
-     lock below), so absolute and fixed look identical; the difference is only which box gets
-     to clip them. This is the last lever the page has: if the picture still stops at 932, the
-     strip is the window's and not the page's, and only re-adding to the Home Screen without
-     black-translucent can move it. */
-  body{height:100vh;min-height:100vh;position:relative}
-  body > canvas{position:absolute;left:0;top:0;width:100%;height:100vh;display:block;z-index:0;touch-action:none}
+  /* THE STRIP IS THE WINDOW'S AND THE PAGE CANNOT HAVE IT. Every standalone app on his phone
+     has it, his own included -- the ones that look full screen are the ones whose edge colour
+     happens to match. So the lens is exactly the paintable area, which is the layout viewport,
+     and nothing is cropped or stretched to chase seventy pixels that were never on offer.
+     What makes it disappear is #edgeF below: the picture fades into the strip's own colour, so
+     there is no seam to see. That is what the white webpage is doing by accident. */
+  body > canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
+  /* The last fifty-four pixels of the frame ease into --edge, which edgeTint sets to the
+     colour of the picture just above this fade and hands to iOS for the strip at the same
+     time. Both ends of the join are then the same colour and the join is gone. */
+  #edgeF{position:fixed;left:0;right:0;bottom:0;height:54px;z-index:8;pointer-events:none;
+    background:linear-gradient(to bottom,rgba(0,0,0,0),var(--edge,#070a13) 86%)}
+  /* ALWAYS VISIBLE, EVERY SCREEN, INCLUDING THE TITLE. #bld lives inside #ui, which is hidden
+     on the title screen, so the one number he needs to tell builds apart is missing from
+     exactly the screenshots he takes. Twice now he has had to say he cannot read it. */
+  #bldTag{position:fixed;left:7px;bottom:5px;z-index:9998;pointer-events:none;font-size:10px;
+    letter-spacing:.08em;opacity:.5;font-family:ui-monospace,Menlo,monospace;
+    text-shadow:0 1px 3px rgba(0,0,0,.9)}
   /* ONE BUILD OF PAINT, TO END TWENTY-FIVE ROUNDS OF ARITHMETIC.
      Every theory about the band has been about which box is short, and each fix has been
      shipped blind because the only way to tell them apart is to look at the thing on the
@@ -499,6 +507,7 @@
 </style>
 </head>
 <body class="intro">
+<div id="edgeF"></div><div id="bldTag"></div>
 <div id="boot"><div id="bootMark"><i></i><i></i><i></i></div><span>growing a world…</span></div>
 <!-- The company splash. Lifted verbatim out of colinwillow/robits (index.html, the
      "STUDIO MAJIA" block) at 430ef4f, because it is the same studio and the same mark and
@@ -1211,7 +1220,10 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c90';
+const BUILD = 'c91';
+// The build number, on every screen there is. It has to be set here rather than left in the
+// markup so that bumping BUILD is still the only edit a push needs.
+try { const _bt = document.getElementById('bldTag'); if (_bt) _bt.textContent = BUILD; } catch (e) { }
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -9408,10 +9420,14 @@ function edgeTint() {
     const gl = renderer.getContext(), w = renderer.domElement.width | 0;
     if (w < 8) return;
     if (!_tintRow || _tintRow.length < w * 4) _tintRow = new Uint8Array(w * 4);
-    gl.readPixels(0, 0, w, 1, gl.RGBA, gl.UNSIGNED_BYTE, _tintRow);
+    // Sixty pixels up, which is ABOVE #edgeF. Reading the bottom row would read the fade,
+    // whose colour is this measurement -- a loop that slowly eats its own tail. This reads the
+    // picture.
+    gl.readPixels(0, Math.round(60 * Q.dpr), w, 1, gl.RGBA, gl.UNSIGNED_BYTE, _tintRow);
     let r = 0, g = 0, b = 0, n = 0;
     for (let x = 0; x < w; x++) { const i = x * 4; r += _tintRow[i]; g += _tintRow[i + 1]; b += _tintRow[i + 2]; n++; }
     const c = 'rgb(' + (r / n | 0) + ',' + (g / n | 0) + ',' + (b / n | 0) + ')';
+    document.documentElement.style.setProperty('--edge', c);
     document.documentElement.style.background = c;
     document.body.style.background = c;
     const tc = document.querySelector('meta[name="theme-color"]');
@@ -13909,7 +13925,7 @@ let _over = 0, _gap = 0;
 // THE BAND, MADE TO NAME ITSELF. It answered: magenta, so it is uncovered page and the lens
 // really is short. Kept on for one more build as the check on the fix -- no magenta anywhere
 // means the lens now reaches the bottom. The hairlines have said what they had to say.
-const BAND = 1, BANDMARKS = 0, BANDPAINT = 0;
+const BAND = 0, BANDMARKS = 0, BANDPAINT = 0;
 const _marks = {};
 function bandMark(id, col, y) {
   if (!BANDMARKS) return;
@@ -14076,11 +14092,6 @@ function syncSize(probe) {
   // resize handler assumed every psys was a point sprite and threw on every resize.
   for (const ps of world.psys) { const u = ps.mat.uniforms.uScale; if (u) u.value = h * .5; }
 }
-// Body is a screen tall and the layout viewport is shorter, so the page technically has
-// somewhere to go. It must not go there: everything is positioned, so a scroll would only
-// slide the picture off the top. Pinned rather than clipped, because the clip is the thing
-// that was cutting the lens off in the first place.
-addEventListener('scroll', () => { if (scrollY || scrollX) scrollTo(0, 0); }, { passive: true });
 addEventListener('resize', syncSize);
 addEventListener('orientationchange', syncSize);
 // The same schedule the head script runs on, for the same reason: a navigation lands with the
