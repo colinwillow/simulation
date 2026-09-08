@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd52';
+const BUILD = 'd53';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -6007,7 +6007,19 @@ const THROW = {
   // Y is the winch on the range -- pushed forward it charges, pulled back it lets the charge
   // down again. Sideways alone steers and holds whatever power is already wound up, which is
   // what makes it a thing you line up rather than a thing you release at the right instant.
-  turn: 2.6,
+  // THE THUMB IS THE MARK. Two goes at this were both RATE controls -- the first read the
+  // stick's direction and made the time you held it the distance, the second steered the
+  // bearing at so many radians a second and wound the range up and down with Y. Neither is
+  // what was asked for twice: press and hold, the indicator comes out, and you MOVE YOUR
+  // THUMB AROUND TO PLACE IT. So the thumb's angle is the bearing and the thumb's distance
+  // from centre is the range, both absolute -- the pad IS the ground in front of him, and
+  // where the thumb sits is where it lands. Nothing integrates and nothing has to be timed.
+  //
+  // Which means the camera must NOT swing to follow the aim, and that is the other half of
+  // it: the stick is read in the live camera frame, so if the camera turned while he aimed,
+  // the same thumb position would keep meaning a different place and the mark would crawl
+  // out from under him. It holds still and he places into it.
+  full: .92,         // thumb travel that counts as maximum range -- short of the rim, which nobody reaches
   // How much of the throw a heavy thing eats. `hurl` divides the launch speed by the body's
   // own radius; this is the power that radius is raised to, so above 1 a big animal loses
   // ground faster than its size and a small one barely notices being thrown hard.
@@ -13935,7 +13947,7 @@ function stepChargeFx(c, dt) {
 Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0, charge: 0,
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
-  throwAim: 0, tossAim: 0, windOwn: null, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
+  throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
   wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeGrip: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
 function attachWeapon(r) {
@@ -14325,25 +14337,22 @@ function throwMarkStep(show, power, T) {
 // ahead on every frame, and the beacon could never be steered or wound up at all.
 function throwStick(dt, rx, ry, own) {
   const p = player, mag = Math.hypot(rx, ry);
-  if (p.windOwn !== own) {
-    p.windOwn = own; p.throwAz = cam.az; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0;
-    p.aimH = cam.az + Math.PI;                     // out in front of the lens, then he flies it
-    p.throwK = 0; p.flickH = null;
-  }
+  if (p.windOwn !== own) { p.windOwn = own; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0; }
   p.throwT += dt;
   // Sampled only while the stick is still travelling outward, so a swipe that has already
-  // pinned against the rim does not average its own speed back down to nothing. The bearing
-  // is caught with it: a flick has no time to be steered, so it takes the one it was thrown in.
+  // pinned against the rim does not average its own speed back down to nothing.
   if (mag > p.throwPeak) {
     p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
     p.throwPeak = mag;
-    const fa = Math.sin(p.throwAz), fc = Math.cos(p.throwAz);
-    p.flickH = Math.atan2(fa * ry + fc * rx, fc * ry - fa * rx);
   }
-  p.aimH -= rx * THROW.turn * dt;                  // X: swing the mark round him
-  p.throwK = clamp(p.throwK + (-ry) * dt / THROW.chargeT, 0, 1);   // Y: forward winds it out, back reels it in
-  let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
-  cam.az += cd * Math.min(1, dt * WEAPON.camEase * .7); cam.idle = 0;
+  // THE PAD IS THE GROUND. Angle is the bearing, distance from centre is the range, read in
+  // the LIVE camera frame so up the pad is away from the lens however he has turned. The
+  // camera is deliberately left alone while this runs -- see THROW.full.
+  const sa = Math.sin(cam.az), ca = Math.cos(cam.az);
+  p.aimH = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
+  p.flickH = p.aimH;
+  p.throwK = clamp((mag - THROW.at) / Math.max(.05, THROW.full - THROW.at), 0, 1);
+  cam.idle = 0;
   setChargeRing(Math.max(p.throwK, .06));          // a sliver from the first frame, so it reads as armed
   return true;
 }
