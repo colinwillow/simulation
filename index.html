@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd71';
+const BUILD = 'd72';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -13758,9 +13758,23 @@ const MELEE = {
   // blows at the same patch of ground and an animal that backed off half a step is out of
   // reach for the rest of it. Every swing gets a lunge from here: hard at the front, spent by
   // the end, and the steering is off for its length so it goes where it was aimed.
-  lunge: 7.5, lungeT: .26,
-  slideAt: 4.2, slideSpeed: 19, slideT: .62,
+  // A LUNGE HAS TO BE SEEN. 7.5 spent over a quarter of a second is nine tenths of a unit --
+  // a third of a body, over before the arm has come round, under a clip that runs for the
+  // better part of a second. It read as not moving at all because it very nearly was not.
+  // These carry about 2.5 and 8 units, and `tail` keeps a third of the speed to the end so
+  // the move finishes going somewhere instead of stopping dead under the follow-through.
+  lunge: 14, lungeT: .34, tail: .3,
+  // THE SLIDE MUST BEAT THE RUN IT CAME OUT OF. It replaces his velocity rather than adding
+  // to it, so a tackle that starts at 19 and decays is a man braking out of a sprint -- which
+  // is exactly what "he just slides in place" looks like. `lunge` floors the start at a little
+  // over whatever he was already doing, so it can only ever be a gain.
+  slideAt: 4.2, slideSpeed: 22, slideT: .70,
   rate: 1.25,        // the clips play a little hot; a swing wants to be over
+  // WHERE THE NEXT BLOW MAY INTERRUPT THIS ONE, as a fraction of the clip. Without it the
+  // second flick was refused for the whole length of the first swing -- and since the armed
+  // clips run 1.3 to 1.9 s against a 1.15 s combo window, the window shut before the clip
+  // ended and the armed combo could not be chained at all. One flick, one blow, always.
+  cancel: .45,
 };
 function meleeList() {
   const r = player.rigH; if (!r) return null;
@@ -13773,8 +13787,15 @@ function meleeFlick(x, y) {
   if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5 || p.climbing) return;
   if (p.carry || p.hold || p.liftT > 0 || p.drag || p.down > 0) return;
   if (p.aiming || p.throwAim || p.tossAim) return;      // that thumb is doing something else
-  if (!r || !p.grounded || p.actT > 0) return;
+  if (!r || !p.grounded) return;
   const list = meleeList(); if (!list) return;
+  // Mid-swing, this may be the next blow of the combo -- but only past `cancel`, and only if
+  // what is running is a swing of ours. Anything else that owns the body (the stow, the
+  // landing roll) still refuses outright.
+  if (p.actT > 0) {
+    const mine = p.actN && (p.actN === 'slide' || list.indexOf(p.actN) >= 0);
+    if (!mine || p.melT <= 0 || p.actMax - p.actT < p.actMax * MELEE.cancel) return;
+  }
   if (p.melT <= 0) p.melN = 0;
   // face the flick, in the same camera frame the walk is read in
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
@@ -13783,8 +13804,13 @@ function meleeFlick(x, y) {
   // Running, and this is the first of the combo: he goes in low.
   const slide = p.melN === 0 && r.acts.slide && Math.hypot(p.vx, p.vz) > MELEE.slideAt;
   const key = slide ? 'slide' : list[p.melN % list.length];
-  p.melN++; p.melT = MELEE.chain;
+  // The tackle is a FOURTH move in front of the three, not the first of them: it does not
+  // spend a place in the list, so the flick that follows it is still swing one.
+  if (!slide) p.melN++;
   playAct(key, slide ? MELEE.rate * .9 : MELEE.rate);
+  // The combo stays open for the length of what is playing plus the window, so a long clip
+  // cannot outlive the chain that is meant to follow it.
+  p.melT = MELEE.chain + p.actMax;
   lunge(slide ? MELEE.slideSpeed : MELEE.lunge, slide ? MELEE.slideT : MELEE.lungeT);
   if (slide) { p.slideT = MELEE.slideT; logMsg('He goes in low and takes its legs out.'); }
   meleeHit(slide);
@@ -13832,7 +13858,8 @@ function playAct(key, rate) {
 // landing roll all want it and none of their clips travel an inch on their own.
 function lunge(sp, t) {
   const p = player;
-  p.lungeSp = sp; p.lungeT = p.lungeMax = t;
+  p.lungeSp = Math.max(sp, Math.hypot(p.vx, p.vz) * 1.08);   // never a brake
+  p.lungeT = p.lungeMax = t;
   p.lungeH = p.heading;
 }
 function stepAct(dt) {
@@ -13859,24 +13886,36 @@ const FLICK = { at: .72, within: .28 };     // what counts: this much travel, re
 // knees, how fast that clip plays, and the least forward he carries through it -- a roll on
 // the spot is a man falling over.
 const LAND = { roll: 15, rollRate: 1.15, rollGo: 5.5 };
-// Measured off the clip rather than tuned by eye. `roll` is 1.208 s long and its first
-// 0.12 s is a HELD POSE -- the hips do not translate and the body does not pitch, the same
-// values twice -- so starting the travel at frame 0 skated him a foot and a half across the
-// ground before the animation had begun to happen. Skip that, and run what is left brisk:
-// the tumble proper is 0.12 to 0.85 and the rest of the clip is him getting back on his feet.
-// The move then owns him for (1.208 - .12) / 1.35 = 0.81 s, which is a dodge rather than a
-// manoeuvre. `time` is only the fallback for a rig with no roll clip at all.
-// `speed` is what he leaves the ground at and it is spent by the end, so the distance is
-// about half of it times `time`. At 21 over .7 that was seven units, which on a body 2.8 tall
-// is two and a half of him -- a shuffle. 34 puts it near twelve, which is a dodge you can
-// use to get out of the way of something.
+// Measured off the clip rather than tuned by eye, and MEASURED AGAIN after the re-export,
+// because the clip behind it changed out from under these numbers. There is no `roll` in the
+// file any more; `pickClip` resolves it to `landing_to_roll`, which is 1.875 s and is a fall,
+// not a dodge. Reading its hips channel out of the GLB, in centimetres:
+//
+//   0.00 - 0.29   65 -> 73 -> 50   still in the air, coming down
+//   0.29 - 0.55   50 -> 45         the plant, absorbing it
+//   0.55 - 0.88   45 -> 11         the tumble proper -- hips on the floor
+//   0.88 - 1.50   11 -> 69         getting back up
+//   1.50 - 1.875  69 -> 72         standing, done, holding the pose
+//
+// A dodge from a standing run has no business playing either end of that. At skip .12 he was
+// keeping a fifth of a second of descent he had never made and a third of a second of stood
+// still at the end, and OWNED FOR (1.875 - .12) / 1.35 = 1.30 s -- so the travel, which is
+// spent evenly across the ownership, was carrying him 29 units, most of it while he was
+// lying on the ground or standing up. That is the "goes forward way too much, and the
+// animation is too slow for it" -- one fault, not two.
+//
+// So: start at the plant (`skip`), stop where he is upright (`end`), and run the 1.18 s
+// between them at 1.45 -- 0.81 s of ownership, the length a dodge wants to be. `go` ends the
+// travel at four fifths of that, so the last of it is him getting his feet under him on the
+// spot rather than sliding to a halt. 32 over that window is about fourteen units, five body
+// lengths, half of what it was. `time` is only the fallback for a rig with no roll at all.
 // The two feels, so switching is one call and neither is buried in a diff.
 const MOVE_SETS = {
   weighted: { acc: 24, accFall: .93, drag: 46, turn: 52, airAcc: 11, airTurn: 9 },
   direct:   { acc: 95, accFall: .35, drag: 200, turn: 150, airAcc: 26, airTurn: 20 },
 };
 function setMove(m) { const st = MOVE_SETS[m] || MOVE_SETS.weighted; Object.assign(MOVE, st); return m in MOVE_SETS ? m : 'weighted'; }
-const ROLL = { speed: 34, skip: .12, rate: 1.35, time: .7, cool: .28, turn: 1 };
+const ROLL = { speed: 32, skip: .42, end: 1.60, rate: 1.45, go: .8, time: .7, cool: .28, turn: 1 };
 // THE RUN. `k` is how much faster than his own top speed a sprint is; `at` is how far up the
 // right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
 // most of what a game does to say "fast" and costs nothing. in/out are how quickly it comes on
@@ -13890,7 +13929,8 @@ function flickRoll(x, y) {
   const dx = sa * y + ca * x, dz = ca * y - sa * x;      // the same camera-space map the walk uses
   const d = Math.hypot(dx, dz); if (d < 1e-3) return;
   p.rollH = Math.atan2(dx / d, dz / d);
-  p.rollT = p.rollMax = p.rigH.rollT ? (p.rigH.rollT - ROLL.skip) / ROLL.rate : ROLL.time;
+  const dur = Math.min(p.rigH.rollT || 0, ROLL.end);
+  p.rollT = p.rollMax = dur > ROLL.skip ? (dur - ROLL.skip) / ROLL.rate : ROLL.time;
   p.rollCool = p.rollT + ROLL.cool;
   p.jump = 0; p.leadT = 0;
   cam.idle = 0;
@@ -16666,15 +16706,15 @@ function updatePlayer(dt) {
   if (lunging) {
     player.lungeT = Math.max(0, player.lungeT - dt);
     const k = player.lungeT / (player.lungeMax || .25);
-    const sp = player.lungeSp * (.18 + .82 * k * k);
+    const sp = player.lungeSp * (MELEE.tail + (1 - MELEE.tail) * k * k);
     player.vx = Math.sin(player.lungeH) * sp; player.vz = Math.cos(player.lungeH) * sp;
     player.wmag = 0;
   }
   const rolling = player.rollT > 0;
   if (rolling) {
     player.rollT = Math.max(0, player.rollT - dt);
-    const k = 1 - player.rollT / (player.rollMax || ROLL.time);
-    const sp = ROLL.speed * (1 - k * k);      // out of the crouch hard, spent by the time he is up
+    const k = Math.min(1, (1 - player.rollT / (player.rollMax || ROLL.time)) / ROLL.go);
+    const sp = ROLL.speed * (1 - k * k);      // out of the crouch hard, and spent before he stands
     player.vx = Math.sin(player.rollH) * sp; player.vz = Math.cos(player.rollH) * sp;
     player.heading = player.rollH; player.wmag = 0; player.moving = 1;
   }
