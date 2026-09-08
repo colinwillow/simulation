@@ -1487,7 +1487,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd23';
+const BUILD = 'd24';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1568,7 +1568,12 @@ function segDT(px, pz, ax, az, bx, bz) {          // distance to a line segment,
 // every step. Real cliffs need geometry, not a height field at this density. .14 is strata:
 // you can read the levels, and the risers are slopes rather than stairs.
 const PLATEAU = { at: .30, gain: 5, step: 3.4, sharp: .14, k: .9 };
-const MESA = { x: -104 * WS, z: 94 * WS, r: 42 * WS, h: 18 };
+// THE BASE. A flat-topped mesa on the sister isle across the water, and it is the home
+// ground now: the saucer berths on it, the mothership is set down beside the saucer, and he
+// starts there. Thirty high with near-vertical walls, so it is not a hill you walk up -- you
+// leave it by ship or by the line, and you get back the same way. That is the point of a base
+// on an island: it is somewhere, and the world has to be crossed to reach it.
+const MESA = { x: -104 * WS, z: 94 * WS, r: 42 * WS, h: 30 };
 const LAGOON = { x: -30 * WS, z: 52 * WS, r: 42 * WS, d: 13 };
 const CHASM = { x: -62 * WS, z: -58 * WS, r: 15 * WS, d: 25 };
 const STACKS = [{ x: 122, z: -54, r: 8, h: 25 }, { x: 138, z: -38, r: 5, h: 16 }, { x: -66, z: -132, r: 7, h: 22 }, { x: 100, z: 100, r: 6.5, h: 18 }, { x: -146, z: 6, r: 5.5, h: 14 }]
@@ -1607,8 +1612,8 @@ function height(x, z) {
   }
   // flat-topped mesa on the sister isle
   const md = Math.hypot(x - MESA.x, z - MESA.z);
-  const mk = smooth(MESA.r, MESA.r * .6, md);
-  if (mk > 0) h = lerp(h, MESA.h + (fbm(x * .03 + 9, z * .03, 3) - .5) * 3.5, mk * .92);
+  const mk = smooth(MESA.r, MESA.r * .74, md);           // .74, not .6: the wall is a wall now
+  if (mk > 0) h = lerp(h, MESA.h + (fbm(x * .03 + 9, z * .03, 3) - .5) * 2.6, mk * .97);
   // a lagoon bitten out of the south shore
   const ld = Math.hypot(x - LAGOON.x, z - LAGOON.z);
   h -= Math.pow(Math.max(0, 1 - ld / LAGOON.r), 1.4) * LAGOON.d;
@@ -9235,7 +9240,23 @@ function buildSites() {
   const reachable = q => q && Math.hypot(q.x - iso.x, q.z - iso.z) > W * .34;
   const RUNGS = [[.12, 32], [.12, 26], [.12, 22], [.16, 18], [.20, 14], [.28, 10], [.40, 5], [.60, 0]];
   let pad = null;
+  // On the mesa, the mothership is set down beside the saucer: the two of them together are
+  // the base, and the base is one place. The ladder below is the mainland fallback.
+  if (world.baseMesa && world.berth) {
+    const b = world.berth;
+    let bestP = -1e9;
+    for (let i = 0; i < 200; i++) {
+      const a = rnd(6.283), r = rnd(22, 34);
+      const x = b.x + Math.cos(a) * r, z = b.z + Math.sin(a) * r, h = height(x, z);
+      if (h < MESA.h - 5 || Math.hypot(x - MESA.x, z - MESA.z) > MESA.r * .55) continue;
+      const sl = slope(x, z); if (sl > .16 || !obClear(x, z, 14)) continue;
+      const score = -sl * 10 - Math.abs(r - 27) * .05;
+      if (score > bestP) { bestP = score; pad = { x, z }; }
+    }
+    if (pad) world.basePad = pad;
+  }
   for (const [sl, c] of RUNGS) {
+    if (pad) break;
     // It kept SETTLING -- the console said so on most loads: slope .16, clearance 18, which
     // is a knoll with things on it. Not because no flat open ground exists, but because six
     // tries per biome is not enough to find it on an island this size. These are height-field
@@ -9761,6 +9782,25 @@ function layZones(M) {
 // What it wants is what a pilot wants: above the tide, off the hills, flat underfoot, and
 // nothing rising within ten units of the feet.
 function findBerth() {
+  // THE MESA FIRST. The flattest spot on its top that is not right at the rim. This runs
+  // before anything else in the world is placed, so setting world.baseMesa here is what the
+  // pad, the spawn and the hut read; none of them has to know about the mesa themselves.
+  {
+    let bestM = -1e9, mp = null;
+    for (let i = 0; i < 400; i++) {
+      const a = rnd(6.283), r = Math.sqrt(rnd(0, 1)) * MESA.r * .48;
+      const x = MESA.x + Math.cos(a) * r, z = MESA.z + Math.sin(a) * r, h = height(x, z);
+      if (h < MESA.h - 5) continue;
+      const sl = slope(x, z); if (sl > .14) continue;
+      let rough = 0;
+      for (let k = 0; k < 8; k++) { const b = k / 8 * 6.283; rough = Math.max(rough, Math.abs(height(x + Math.cos(b) * 10, z + Math.sin(b) * 10) - h)); }
+      if (rough > 2.2) continue;
+      const score = -sl * 12 - rough - r * .01;
+      if (score > bestM) { bestM = score; mp = { x, z }; }
+    }
+    if (mp) { world.baseMesa = true; return mp; }
+    console.warn('[site] no flat ground on the mesa; the base stays on the mainland');
+  }
   let best = -1e9, sp = null;
   const S = 56, span = W * .60;
   for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) {
@@ -9995,7 +10035,10 @@ function populate() {
       c0: '#ffb069', c1: '#7a2a10', s0: .5, s1: .12,
       spawn: (p, v) => { const a = rnd(Math.PI * 2), r = rnd(0, 7); p.set(cx + Math.cos(a) * r, cy + rnd(0, 3), cz + Math.sin(a) * r); v.set(rnd(-.5, .5), rnd(1.2, 3), rnd(-.5, .5)); } });
   }
-  world.spawn = world.camp ? { x: world.camp.pos.x + 7, z: world.camp.pos.z + 5 } : (randomLand(1.5, 8, .5, 400, 3) || { x: 0, z: 0 });
+  // He starts at the base -- between the mothership and the saucer -- when there is one on
+  // the mesa, and at the camp otherwise. The camp stays on the mainland: it is somewhere to go.
+  world.spawn = world.basePad ? { x: (world.basePad.x + world.berth.x) * .5, z: (world.basePad.z + world.berth.z) * .5 }
+    : world.camp ? { x: world.camp.pos.x + 7, z: world.camp.pos.z + 5 } : (randomLand(1.5, 8, .5, 400, 3) || { x: 0, z: 0 });
   ferry = new Ferry(); initMotes(); scatterDecor(); world.sites = buildSites(); scatterRocks(); placeTitle();
   buildZones(); buildClouds();
 }
@@ -12715,8 +12758,9 @@ function repairOffer() {
 // parts-list structure standing in for whatever gets piped in later, and the only way to know
 // whether taking a building apart and putting it back is any fun is to have one to take apart.
 function placeHut() {
-  const cp = world.camp; if (!cp) return;
-  const hx = cp.pos.x + 13, hz = cp.pos.z + 4;
+  // At the base if there is one, so building starts where he starts; by the camp otherwise.
+  const cp = world.basePad ? { pos: { x: world.basePad.x, z: world.basePad.z } } : world.camp; if (!cp) return;
+  const hx = cp.pos.x + 16, hz = cp.pos.z - 9;
   if (!isLand(hx, hz) || height(hx, hz) < SEA + 1.5) return;
   world.structures.push(new Hut(hx, hz, Math.atan2(cp.pos.x - hx, cp.pos.z - hz)));
 }
