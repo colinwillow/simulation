@@ -1136,7 +1136,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c80';
+const BUILD = 'c81';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -14410,11 +14410,20 @@ function frame(now) {
     if (Math.abs(f - camera.far) > camera.far * .03) { camera.far = f; camera.updateProjectionMatrix(); }
   }
   {   // the see-through hole follows the wanderer's chest on screen
+    // NOT DURING THE DIVE, and that is the whole of it. The hole is a dithered discard of
+    // everything between the lens and his chest -- it exists so a trunk or a canopy cannot
+    // stand in front of him while you play. During the descent from the title the boom is
+    // nine hundred long, so "between the lens and his chest" is nearly the entire world, and
+    // a disc seventeen percent of the frame across gets punched through the island the whole
+    // way in. That is the see-through flying-through-things look on the transition: it is the
+    // gameplay effect arriving before the gameplay. It waits for the landing now.
+    // INTRO.on is already false by the first dive frame -- startGame clears it and starts the
+    // dive in the same breath -- so this needed the dive's own clock, not the title's.
     camera.updateMatrixWorld(); camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
     const p = planetPos(player.pos.x, player.pos.y + RIG.height * .5, player.pos.z, _holeP);
     const vz = _holeV.copy(p).applyMatrix4(camera.matrixWorldInverse).z;   // negative in front of the lens
     p.project(camera);
-    if (!INTRO.on && !player.free && !player.aboard && vz < -1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1) {
+    if (!INTRO.on && INTRO.dive <= 0 && !player.free && !player.aboard && vz < -1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1) {
       holeUni.uHoleC.value.set((p.x * .5 + .5) * rtScene.width, (p.y * .5 + .5) * rtScene.height);
       // Wider when the boom is short. A pinched camera is a camera with something big and
       // close in front of it, and a porthole seventeen percent of the screen across is not
