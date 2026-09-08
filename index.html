@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd66';
+const BUILD = 'd67';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -13486,7 +13486,14 @@ const WEAPONS = {
 // is nothing for a second animation to add, and a swap that plays two of them is a man
 // patting himself down. `equip` stays named on the rig in case a future export gives them
 // different shapes.
-const ARMA = { clip: 'disarm', rate: 1.5, swap: 1.7 };
+// `at` is WHERE IN THE CLIP the hand is behind his head -- the moment the thing is either
+// taken off the rack or put back on it, and the only frame at which it may appear or vanish.
+// It was tied to `armed` instead, which is a draw/holster ramp with no knowledge of the
+// animation at all: the blaster popped into an empty hand on the first frame of the reach and
+// hung there through the whole of the stow.
+// `pop` is how long it takes to come together once it does, and `spark` how far out the
+// pieces of it start.
+const ARMA = { clip: 'disarm', rate: 1.5, swap: 1.7, at: .46, pop: .26, spark: .55 };
 const MELEE = {
   flick: 10,         // stick travel a second that counts as a flick rather than a push
   chain: 1.15,       // how long the combo stays open after a blow
@@ -13557,6 +13564,10 @@ function meleeHit(slide) {
 function playAct(key, rate) {
   const p = player, r = p.rigH, a = r && r.acts[key];
   if (!a) return false;
+  // Only an arm move owns the weapon's hand-off. Without this a melee flick with the blaster
+  // out would run its own clip through the same actT the hand-off reads, and the gun would
+  // blink out halfway through the swing.
+  if (key !== ARMA.clip) p.armAct = null;
   p.actN = key; p.actRate = rate || 1;
   p.actT = p.actMax = a.getClip().duration / (rate || 1);
   a.timeScale = rate || 1;
@@ -14515,9 +14526,44 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
   actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0,
-  lungeT: 0, lungeMax: 0, lungeSp: 0, lungeH: 0,
+  lungeT: 0, lungeMax: 0, lungeSp: 0, lungeH: 0, armAct: null, wpnShow: 0, wpnK: 0,
   wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeGrip: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
+// IT MATERIALISES. A handful of hot motes fly IN to the socket while it comes together and
+// OUT of it while it comes apart, over the same quarter-second the model spends scaling. In
+// chart space like everything else that stands in the world, and it disposes itself.
+class WeaponPop {
+  constructor(x, y, z, inward) {
+    this.alive = true; this.t = 0; this.life = ARMA.pop * 1.5; this.in = inward;
+    this.at = new THREE.Vector3(x, y, z);
+    this.sp = []; this.g = new THREE.Group(); scene.add(this.g);
+    for (let i = 0; i < 9; i++) {
+      const a = rnd(6.283), b = rnd(-1, 1), r = ARMA.spark * (.6 + Math.random() * .9);
+      const cz = Math.sqrt(Math.max(0, 1 - b * b));
+      const m = glow(i % 3 ? '#8fe6ff' : '#eaffff', .3, .9);
+      this.g.add(m);
+      this.sp.push({ m, dx: Math.cos(a) * cz * r, dy: b * r * .8, dz: Math.sin(a) * cz * r, s: rnd(.5, 1) });
+    }
+    world.effects.push(new Burst(x, y, z, '#9fe0ff', 7, .4));
+  }
+  update(dt) {
+    this.t += dt;
+    const u = clamp(this.t / this.life, 0, 1), k = this.in ? 1 - u : u;
+    for (const p of this.sp) {
+      p.m.position.set(this.at.x + p.dx * k, this.at.y + p.dy * k, this.at.z + p.dz * k);
+      p.m.scale.setScalar(.34 * p.s * (this.in ? u : 1 - u * .7));
+      p.m.material.opacity = .95 * (1 - u) * (1 - u);
+    }
+    if (u >= 1) this.alive = false;
+  }
+  dispose() { scene.remove(this.g); this.g.traverse(o => { if (o.material) o.material.dispose(); }); }
+}
+const _wpV = new THREE.Vector3();
+function weaponPop(showing) {
+  if (!weap.bone) return;
+  jointChart(weap.bone, _wpV);
+  world.effects.push(new WeaponPop(_wpV.x, _wpV.y, _wpV.z, !!showing));
+}
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
   // exporter is free to prefix them, and the tip is tested first: 'weapon_direction' ends
@@ -14554,7 +14600,7 @@ function attachWeapon(r) {
     envUse(inst, .55);
     inst.traverse(m => { if (m.isMesh) m.castShadow = true; });
     weap.bone.add(inst);
-    weap.model = inst; inst.visible = false;
+    weap.model = inst; inst.visible = false; weap.k0 = k;
     // AND THE AXE, on the same joint, in the same frame. Built rather than loaded, so it is
     // sized off the SAME tip marker the blaster is -- whatever the rig's scale turns out to
     // be, both of them end at the same place in his hand. The basis and the scale are already
@@ -14582,7 +14628,7 @@ function attachWeapon(r) {
       g2.scale.setScalar(k); g2.position.fromArray(W.drop);
       g2.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
       envUse(g2, .5); markBody(g2);
-      weap.bone.add(g2); weap.axe = g2; g2.visible = false;
+      weap.bone.add(g2); weap.axe = g2; g2.visible = false; weap.axeK0 = k;
     }
     weap.ready = true;
     if (!weap.fx) buildChargeFx();
@@ -15197,9 +15243,22 @@ function stepWeapon(dt, rx, ry) {
   p.armed = lerp(p.armed, canHold, Math.min(1, dt * WEAPON.drawRate));
   if (!canHold && p.armed < .02) p.armed = 0;
   {
-    const out = p.armed > .05, ax = p.wpn === 'axe';
-    if (weap.model) weap.model.visible = out && !ax;
-    if (weap.axe) weap.axe.visible = out && ax;
+    // WHERE IN THE CLIP, not how far through the ramp. While an arm move is running the
+    // weapon is on the far side of the hand-off until `ARMA.at` and on the near side after it,
+    // so it leaves his hand and arrives in it at the one frame the hand is at the rack.
+    const arm = p.armAct;
+    let show = p.armWant ? 1 : 0;
+    if (arm && p.actT > 0 && p.actMax > 0) {
+      const prog = 1 - p.actT / p.actMax;
+      show = prog >= ARMA.at ? arm.to : 1 - arm.to;
+    }
+    if (show !== p.wpnShow) { p.wpnShow = show; weaponPop(show); }
+    p.wpnK = lerp(p.wpnK, show, Math.min(1, dt / ARMA.pop));
+    const k = p.wpnK, vis = k > .02, ax = p.wpn === 'axe';
+    // it assembles rather than appearing: up through its own size with a little overshoot
+    const sc = k * (1.06 - .06 * k);
+    if (weap.model) { weap.model.visible = vis && !ax; if (weap.k0) weap.model.scale.setScalar(weap.k0 * sc); }
+    if (weap.axe) { weap.axe.visible = vis && ax; if (weap.axeK0) weap.axe.scale.setScalar(weap.axeK0 * sc); }
   }
   armB.classList.toggle('on', !!p.armWant);
   if (!(canHold && p.armed > .5)) {
@@ -16067,7 +16126,7 @@ function pickWeapon(k) {
   // seconds of standing still and nobody would ever use the rack twice.
   const swap = player.wpn !== k && player.armWant;
   if (player.wpn !== k) { player.wpn = k; player.charge = 0; player.cool = Math.max(player.cool, .3); }
-  if (swap || !player.armWant) playAct(ARMA.clip, swap ? ARMA.swap : ARMA.rate);
+  if (swap || !player.armWant) { player.armAct = { to: 1 }; playAct(ARMA.clip, swap ? ARMA.swap : ARMA.rate); }
   player.armWant = 1;                       // choosing one is also drawing it
   paintWeapon();
   logMsg('He racks the ' + WEAPONS[k].label + '.');
@@ -16078,6 +16137,7 @@ function toggleArm() {
   if (wdock.hidden || player.aboard || player.free) return;
   if (player.carry || player.liftT > 0) { logMsg('Not with his arms full.'); return; }
   player.armWant = player.armWant ? 0 : 1;
+  player.armAct = { to: player.armWant ? 1 : 0 };
   playAct(ARMA.clip, ARMA.rate);
   paintWeapon();
   logMsg(player.armWant
