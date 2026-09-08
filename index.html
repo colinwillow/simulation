@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd59';
+const BUILD = 'd60';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -11494,6 +11494,21 @@ const DIO = {
   // which is .784 and solves to a fill of .771. Set a little past that, since bigger was the
   // ask -- and the ball still clears the wordmark above and the control below.
   fill: .80, drop: -.157,        // centre at 960 of 1660 down, which is sy -.157 exactly
+  // AND A CEILING ON IT BY HEIGHT, which is the whole of the wide-screen problem. `fill` is a
+  // fraction of the frame's WIDTH, and the standoff that holds it comes out as
+  // R / (fill * tan(hHalf)) -- so the wider the window, the bigger tan(hHalf) is and the
+  // CLOSER the camera comes. It is doing exactly what it was told: on 16:9 the planet still
+  // takes 80% of the width, but 80% of a wide frame is far more than its height, so the lens
+  // ends up inside the composition with the props at arm's length and the ball overflowing
+  // top and bottom. That is the crazy picture.
+  //
+  // fillH is the same rule against the HEIGHT, and the shot takes whichever standoff is
+  // FURTHER: on a phone the width rule is the binding one and nothing changes at all (the
+  // planet already spans .80 x .46 = .37 of the height there, and .44 never bites); on a
+  // desktop the height rule takes over and the planet is held to .44 of the frame height
+  // however wide the window gets. One number, and both orientations are compositions rather
+  // than one composition and one accident.
+  fillH: .44,
   // THE WHOLE COMPOSITION, MOVED AS ONE. Since the canvas went to inset:0 it fills the entire
   // viewport, which is right -- space should run behind the notch rather than stopping at a
   // grey line -- but it means the picture is laid out over a frame whose top strip you cannot
@@ -12191,7 +12206,8 @@ function dioramaFrame(dt, k) {
   const th = tv * cam3.aspect;
   // Distance straight out of the width rule: the planet's screen width is 2R / (2 d tan(hHalf)),
   // so asking for a fraction of the frame fixes d. No constant, no tuning per device.
-  const d = DIO.R / Math.max(.02, DIO.fill * th);
+  const d = Math.max(DIO.R / Math.max(.02, DIO.fill * th),
+                     DIO.R / Math.max(.02, (DIO.fillH != null ? DIO.fillH : 1) * tv));
   // And it is pushed DOWN the frame by aiming above it, which is cheaper and steadier than
   // moving the camera: the lens keeps pointing at the same place while the world drops.
   const up = -(DIO.drop + DIO.shiftY) * tv * d;
