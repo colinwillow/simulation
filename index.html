@@ -1425,6 +1425,9 @@ window._MAJIA_INK = '#7fd8ff';
        ordinary way out; on the line it is the release. One button, because from the seat "get
        out" is one intention and the ship already knows which one it is. -->
   <button id="ejectQ" class="tog" hidden>eject</button>
+  <!-- THE PILE. How many parts he is carrying. Hidden at zero, so it only exists once there is
+       something to build with. -->
+  <div id="pile" class="tog" hidden></div>
   <div id="btns" hidden><button id="ejectB" class="tog">eject</button><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
 </div>
 <div id="mapv" hidden><h2>Plutopia<span id="mapera"></span></h2>
@@ -1484,7 +1487,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd19';
+const BUILD = 'd20';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12270,6 +12273,12 @@ function stepRope(dt) {
 // GLB of primitives will pipe into exactly this list, and the hut is the thing to shoot at
 // while that pipeline is being built.
 const _hutV = new THREE.Vector3();   // declared above the class that reads it
+// WHAT HE IS CARRYING IN BULK. Not the thing in his hand -- the pile. A part gathered off the
+// ground is a part in here, and a hut raised anywhere is a hut spent out of here. Everything
+// he described -- hack a plant apart, carry the pieces off in the ship, put a building up
+// somewhere else -- is a producer or a consumer of these numbers.
+const INV = { part: 0 };
+const RAISE = { min: 8, clear: 4.6, near: 14 };   // parts to raise a hut; ground it needs; distance from another (BUILDING is taken)
 const HUT = {
   r: 3.3, cols: 16, courses: 3, ch: .95, thick: .55, door: 3,
   g: 26, bounce: .3, fric: .55, spin: 5.5, rest: .35,
@@ -12277,7 +12286,7 @@ const HUT = {
   reach: 6.5, each: .5, fly: .85,    // repair: one part every `each` seconds, flying home over `fly`
 };
 class Hut {
-  constructor(x, z, heading) {
+  constructor(x, z, heading, opts = {}) {
     this.alive = true;
     this.pos = new THREE.Vector3(x, groundY(x, z), z);
     this.heading = heading || 0;
@@ -12285,7 +12294,30 @@ class Hut {
     alignTo(this.g, x, z, 1); this.g.rotateY(this.heading); scene.add(this.g);
     this.parts = []; this.working = 0; this.fixT = 0;
     this.build();
+    // RAISED OUT OF THE PILE. `present` is how many parts he has to spend; the rest of the
+    // building is simply not there yet -- its slots exist and repair fills them from the pile
+    // later. The ones he does have fly in from where he is standing, one after another, so the
+    // building assembles out of his hands rather than appearing.
+    if (opts.present !== undefined) {
+      const from = opts.from || this.pos;
+      for (let i = 0; i < this.parts.length; i++) {
+        const p = this.parts[i];
+        if (i < opts.present) this.launch(p, from, i * .07);
+        else this.vanish(p);
+      }
+    }
   }
+  // Gone from the world -- gathered, or never placed. Its slot stays.
+  vanish(p) { this.obOff(p); if (p.m.parent) p.m.parent.remove(p.m); p.state = 4; }
+  // Sent flying to its slot from some point in chart space, after a delay.
+  launch(p, from, delay) {
+    this.obOff(p);
+    scene.add(p.m);
+    p.m.position.set(from.x, from.y + 1.2, from.z);
+    p.from = p.m.position.clone(); p.to = this.chartOf(p.home.p);
+    p.state = 3; p.t = -(delay || 0) / HUT.fly;
+  }
+  gone() { let n = 0; for (const p of this.parts) if (p.state === 4) n++; return n; }
   // Every part is registered the same way, whatever shape it is: put it in the group, then
   // record where it was put. Nothing else in here needs to know how the hut was laid out.
   add(m, wall) {
@@ -12407,6 +12439,7 @@ class Hut {
         // Flying home. It arrives on a curve rather than a straight line, and stands itself
         // up as it comes, so the last thing you see is it seating into its own slot.
         p.t += dt / HUT.fly;
+        if (p.t < 0) continue;                          // its turn has not come yet
         const k = Math.min(1, p.t), e = k * k * (3 - 2 * k);
         p.m.position.lerpVectors(p.from, p.to, e);
         p.m.position.y += Math.sin(e * Math.PI) * 1.6;
@@ -12427,7 +12460,7 @@ class Hut {
     this.fixT -= dt;
     if (this.fixT <= 0) { this.fixT = HUT.each; this.putOneBack(); }
   }
-  down() { let n = 0; for (const p of this.parts) if (p.state === 1 || p.state === 2) n++; return n; }
+  down() { let n = 0; for (const p of this.parts) if (p.state === 1 || p.state === 2 || p.state === 4) n++; return n; }
   // The one lying furthest from where it belongs goes first: the yard tidies itself from the
   // outside in, which reads as work getting done rather than as pieces flickering.
   putOneBack() {
@@ -12438,7 +12471,15 @@ class Hut {
       const d = Math.hypot(c.x - p.m.position.x, c.z - p.m.position.z);
       if (d > bd) { bd = d; best = p; }
     }
-    if (!best) { logMsg('It is whole again.'); return; }
+    if (!best) {
+      // Nothing on the ground to put back. If slots are empty and he has parts on him, the
+      // next one comes out of the pile -- and out of his hands.
+      const empty = this.parts.find(q => q.state === 4);
+      if (empty && INV.part > 0) { INV.part--; this.launch(empty, player.pos, 0); return; }
+      if (empty) logMsg('The rest of it is missing. He has nothing to build it from.');
+      else logMsg('It is whole again.');
+      return;
+    }
     best.state = 3; best.t = 0;
     best.from = best.m.position.clone();
     best.to = this.chartOf(best.home.p);
@@ -12537,13 +12578,47 @@ function repairOffer() {
     const d = Math.hypot(st.pos.x - p.pos.x, st.pos.z - p.pos.z);
     if (d < bd) { bd = d; best = st; }
   }
-  if (!best) return;
+  if (!best) {
+    // Nothing to repair in reach. Enough parts on him and clear ground: raise one here.
+    if (INV.part >= RAISE.min) {
+      const fx = p.pos.x + Math.sin(p.faceH) * 6.5, fz = p.pos.z + Math.cos(p.faceH) * 6.5;
+      const nearHut = world.structures.some(st => st.alive && st instanceof Hut && Math.hypot(st.pos.x - fx, st.pos.z - fz) < RAISE.near);
+      if (!nearHut && isLand(fx, fz) && height(fx, fz) > SEA + 1.5 && obClear(fx, fz, RAISE.clear)) {
+        offerAct({ icon: 'fix', label: 'BUILD', run: () => {
+          const n = Math.min(INV.part, 999);
+          const h = new Hut(fx, fz, Math.atan2(p.pos.x - fx, p.pos.z - fz), { present: n, from: p.pos });
+          INV.part -= Math.min(n, h.parts.length);
+          world.structures.push(h);
+          logMsg(n >= h.parts.length ? 'He raises a hut out of the pile.' : 'He raises what he can of a hut. The rest needs more parts.');
+        } });
+      }
+    }
+    return;
+  }
+  // A piece lying on the ground in reach is a piece to pick up, and that beats mending --
+  // gathering is how a building gets moved.
+  {
+    let pc = null, pd = 2.6;
+    for (const q of best.parts) {
+      if (q.state !== 2) continue;
+      const d = Math.hypot(q.m.position.x - p.pos.x, q.m.position.z - p.pos.z);
+      if (d < pd) { pd = d; pc = q; }
+    }
+    if (pc) {
+      FIX.hut = best;
+      offerAct({ icon: 'lift', label: 'GATHER', run: () => {
+        best.vanish(pc); INV.part++;
+        world.effects.push(new Burst(p.pos.x, p.pos.y + 1, p.pos.z, '#d8d2c0', 5, .4));
+      } });
+      return;
+    }
+  }
   FIX.hut = best;
   // HELD, NOT TOGGLED, and he was right about it. A hold is what the gesture MEANS -- you are
   // doing a thing for as long as you keep doing it, and the moment you stop it stops -- and it
   // is the only version of this that survives somebody else knocking the wall down faster than
   // you can put it up, which is where he is going with it.
-  offerAct({ icon: 'fix', label: 'HOLD TO FIX', hold: dt => best.repair(dt) });
+  offerAct({ icon: 'fix', label: best.gone() && !best.parts.some(q => q.state === 2) ? 'HOLD TO BUILD' : 'HOLD TO FIX', hold: dt => best.repair(dt) });
 }
 // Next to the camp, so it is the first thing he walks past. It is here to be shot at: the
 // parts-list structure standing in for whatever gets piped in later, and the only way to know
@@ -12565,7 +12640,7 @@ function fixBar() {
   const h = FIX.hut;
   if (!h) { if (!FIX.el.hidden) FIX.el.hidden = true; return; }
   if (FIX.el.hidden) FIX.el.hidden = false;
-  const k = 1 - h.down() / Math.max(1, h.parts.length);
+  const k = 1 - h.down() / Math.max(1, h.parts.length);   // empty slots count as missing
   FIX.bar.style.width = (k * 100).toFixed(1) + '%';
   FIX.el.classList.toggle('on', h.working > 0);
 }
@@ -14210,6 +14285,7 @@ addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm();
 // drop. Same button and the same B key either way, because from the pilot's seat "get out" is
 // one intention and the ship already knows which one it is.
 const ejectQ = document.getElementById('ejectQ');
+let _pileEl = null;
 function doEject(e) {
   if (e) e.stopPropagation();
   const sh = world.ship;
@@ -15717,6 +15793,15 @@ function updateHUD() {
     // both near 0 while the camera is high, the altitude terms are what is wrong.
     `plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}<br>` +
     `centre of frame: ${lookingAt()}`;
+  {   // the pile
+    const el = _pileEl || (_pileEl = document.getElementById('pile'));
+    if (el) {
+      const on = INV.part > 0;
+      if (el.hidden === on) el.hidden = !on;
+      const txt = '\u25c6 ' + INV.part + (INV.part === 1 ? ' part' : ' parts');
+      if (on && el.textContent !== txt) el.textContent = txt;
+    }
+  }
   {   // the eject chip is only ever offered when there is something to get out of
     const on = !INTRO.on && (player.aboard || player.roping);
     if (ejectQ.hidden === on) ejectQ.hidden = !on;
