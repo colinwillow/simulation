@@ -1487,7 +1487,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd24';
+const BUILD = 'd25';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1516,7 +1516,7 @@ addEventListener('unhandledrejection', e => {
   if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason);
 });
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { turnip: 64, tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
+const MAX = { turnip: 64, tinkerHut: 6, tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -5579,7 +5579,7 @@ const MOOD = {
 };
 function moodOf(c) { return MOOD.m[c.constructor.name] || 0; }
 function moodShift(c, d) {
-  const k = c.constructor.name, was = MOOD.m[k] || 0;
+  const k = typeof c === 'string' ? c : c.constructor.name, was = MOOD.m[k] || 0;   // a species name will do
   const now = clamp(was + d, -1, 1);
   MOOD.m[k] = now;
   // Only on a crossing, and only outward -- the slow fade back through the line is not news.
@@ -6613,6 +6613,34 @@ class Weaver extends Creature {
         if (p && !nearest(world.structures, p, s => s instanceof Cairn, 40) && !nearest(world.plants, p, e => e instanceof LanternTree, 5)) {
           c = new Cairn(p.x, p.z); world.structures.push(c);
           logMsg(world.cairns === 1 ? 'A tinker set the first stone of a cairn on the hillside.' : 'The tinkers began another cairn.');
+        }
+      }
+      // NO CAIRN TO FEED: THEN A HUT. Cairns are capped, and once they are the tinkers were
+      // walking round with logs on their backs and nowhere to put them. A log is a part, so a
+      // tinker with a log and nothing to build on puts up a hut of its own -- two courses of
+      // split logs under a moss roof -- one delivery per slot, the log flying from its back
+      // into place. Six of them make a village. This is the first thing a species builds for
+      // itself that is not a monument, and it is built out of the same economy he uses: the
+      // pieces can be shot off, gathered, and taken.
+      if (!c) {
+        let hh = nearest(world.structures, this.pos, s => s instanceof Hut && s.owner === 'Weaver' && s.nextEmpty(), 160);
+        if (!hh && world.structures.filter(s => s.alive && s instanceof Hut && s.owner === 'Weaver').length < MAX.tinkerHut) {
+          const p = nearLand(this.pos, 6, 18, 2.5, 11, .3);
+          if (p && obClear(p.x, p.z, 3.4) && !nearest(world.structures, p, s => s instanceof Hut, 16)) {
+            hh = new Hut(p.x, p.z, rnd(6.283), { style: 'tinker', owner: 'Weaver', pay: true, pile: { part: 0, wood: 0 } });
+            world.structures.push(hh);
+            logMsg('A tinker laid out the ground for a hut of its own.');
+          }
+        }
+        if (hh && hh !== this.shun) {
+          this.ignore = hh; this.goal = hh;
+          if (this.dist(hh.pos) < 3.8) {
+            const slot = hh.nextEmpty();
+            if (slot) hh.launch(slot, this.pos, 0);
+            this.body.remove(this.carry.g); this.carry.alive = false; this.carry = null;
+            world.effects.push(new Burst(hh.pos.x, hh.pos.y + 1.5, hh.pos.z, '#d8c9a8', 6, .7)); this.state = 'seek';
+          } else this.seek(hh.pos, 1.5);
+          return;
         }
       }
       if (c === this.shun) c = null;
@@ -12389,8 +12417,21 @@ const HUT = {
   free: 5, push: 7.5, lift: 4.6,     // how many parts a bolt frees, and how hard it throws them
   reach: 6.5, each: .5, fly: .85,    // repair: one part every `each` seconds, flying home over `fly`
 };
+// STYLES. The same parts machine builds every kind of building; a style is the numbers and
+// materials that make one kind different from another. `base` is the moon-base hut he builds
+// out of blocks and timber. `tinker` is what the tinkers put up for themselves: smaller, two
+// courses of split logs, a moss roof, all of it timber -- because a log is what a tinker
+// carries and a log is a part. Species styles slot in here as rows.
+const HUT_STYLES = {
+  base:   { r: 3.3, cols: 16, courses: 3, ch: .95, thick: .55, door: 3, kindWall: 'part',
+            wall: () => M.hullPale, wall2: () => M.hullMid, post: () => M.hullDark, roof: () => M.hullPale, roof2: () => M.hullMid, cap: () => M.hullDark },
+  tinker: { r: 2.25, cols: 12, courses: 2, ch: .88, thick: .5, door: 2, kindWall: 'wood',
+            wall: () => M.elderBark, wall2: () => M.elderBark2, post: () => M.elderBark2, roof: () => M.moss, roof2: () => M.moss2, cap: () => M.moss2 },
+};
 class Hut {
   constructor(x, z, heading, opts = {}) {
+    this.st = HUT_STYLES[opts.style] || HUT_STYLES.base;
+    this.owner = opts.owner || null;          // a species name when a species built it
     this.alive = true;
     this.pos = new THREE.Vector3(x, groundY(x, z), z);
     this.heading = heading || 0;
@@ -12403,10 +12444,10 @@ class Hut {
     // later. The ones he does have fly in from where he is standing, one after another, so the
     // building assembles out of his hands rather than appearing.
     if (opts.pay) {
-      const from = opts.from || this.pos;
+      const from = opts.from || this.pos, P = opts.pile || INV;   // his pile unless told otherwise
       let k = 0;
       for (const p of this.parts) {
-        if (INV[p.kind] > 0) { INV[p.kind]--; this.launch(p, from, k++ * .07); }
+        if (P[p.kind] > 0) { P[p.kind]--; this.launch(p, from, k++ * .07); }
         else this.vanish(p);
       }
     }
@@ -12439,7 +12480,7 @@ class Hut {
   obOn(p) {
     if (p.ob) return;
     const c = this.chartOf(p.home.p, _hutV);
-    p.ob = obAdd(c.x, c.z, HUT.thick * .95, null, c.y + HUT.ch * .5, 'hut', c.y - HUT.ch * .5);
+    p.ob = obAdd(c.x, c.z, this.st.thick * .95, null, c.y + this.st.ch * .5, 'hut', c.y - this.st.ch * .5);
   }
   obOff(p) { if (p.ob) { obRemove(p.ob); p.ob = null; } }
   // A local point on the hut, in chart space. The group carries the planet's own tilt as well,
@@ -12451,46 +12492,47 @@ class Hut {
       this.pos.x + v.x * c + v.z * s, this.pos.y + v.y, this.pos.z - v.x * s + v.z * c);
   }
   build() {
-    const R = HUT.r, T = HUT.thick, W = Math.PI * 2 * R / HUT.cols * .94;
-    // THE WALL: a ring of blocks, three courses high, with a gap left for a door. Odd courses
-    // are offset by half a block so the joints do not line up into a seam you can see through.
-    for (let k = 0; k < HUT.courses; k++) {
-      const y = .1 + HUT.ch * (k + .5), off = (k % 2) * .5;
-      for (let i = 0; i < HUT.cols; i++) {
-        if (i < HUT.door) continue;                       // the doorway, straight ahead
-        const a = (i + off) / HUT.cols * Math.PI * 2;
-        const m = mesh(G.box, i % 3 === 1 ? M.hullMid : M.hullPale, W, HUT.ch * .96, T,
+    const S = this.st, R = S.r, T = S.thick, W = Math.PI * 2 * R / S.cols * .94;
+    // THE WALL: a ring of blocks, with a gap left for a door. Odd courses are offset by half
+    // a block so the joints do not line up into a seam you can see through.
+    for (let k = 0; k < S.courses; k++) {
+      const y = .1 + S.ch * (k + .5), off = (k % 2) * .5;
+      for (let i = 0; i < S.cols; i++) {
+        if (i < S.door) continue;                         // the doorway, straight ahead
+        const a = (i + off) / S.cols * Math.PI * 2;
+        const m = mesh(G.box, i % 3 === 1 ? S.wall2() : S.wall(), W, S.ch * .96, T,
           Math.cos(a) * R, y, Math.sin(a) * R);
         m.rotation.y = -a;
-        this.add(m, true);
+        this.add(m, true, S.kindWall);
       }
     }
     // THE DOOR: two posts and a lintel, so the gap reads as an opening rather than as damage.
-    const da = (HUT.door - .5) / HUT.cols * Math.PI * 2;
-    for (const sg of [-.5, HUT.door - .5]) {
-      const a = sg / HUT.cols * Math.PI * 2;
-      this.add(mesh(G.cyl, M.hullDark, .26, HUT.ch * HUT.courses, .26, Math.cos(a) * R, .1 + HUT.ch * HUT.courses * .5, Math.sin(a) * R), true, 'wood');
+    const da = (S.door - .5) / S.cols * Math.PI * 2;
+    for (const sg of [-.5, S.door - .5]) {
+      const a = sg / S.cols * Math.PI * 2;
+      this.add(mesh(G.cyl, S.post(), .26, S.ch * S.courses, .26, Math.cos(a) * R, .1 + S.ch * S.courses * .5, Math.sin(a) * R), true, 'wood');
     }
     {
       const a = da * .5;
-      const m = mesh(G.box, M.hullDark, W * HUT.door * 1.05, .34, T * .9,
-        Math.cos(a) * R, .1 + HUT.ch * HUT.courses + .1, Math.sin(a) * R);
+      const m = mesh(G.box, S.post(), W * S.door * 1.05, .34, T * .9,
+        Math.cos(a) * R, .1 + S.ch * S.courses + .1, Math.sin(a) * R);
       m.rotation.y = -a; this.add(m, false, 'wood');
     }
     // THE ROOF: panels leaning in off the wall head, and a cap over the hole they leave.
-    const ry = .1 + HUT.ch * HUT.courses;
-    for (let i = 0; i < HUT.cols; i++) {
-      const a = (i + .5) / HUT.cols * Math.PI * 2;
-      const m = mesh(G.box, i % 2 ? M.hullPale : M.hullMid, W * 1.04, .26, R * .92,
+    const ry = .1 + S.ch * S.courses;
+    for (let i = 0; i < S.cols; i++) {
+      const a = (i + .5) / S.cols * Math.PI * 2;
+      const m = mesh(G.box, i % 2 ? S.roof() : S.roof2(), W * 1.04, .26, R * .92,
         Math.cos(a) * R * .58, ry + .62, Math.sin(a) * R * .58);
       m.rotation.set(0, -a, 0); m.rotateX(-.62);
-      this.add(m, false, 'wood');           // the roof is timber; the walls are the moon-base blocks
+      this.add(m, false, 'wood');           // the roof is timber in every style
     }
-    this.add(mesh(G.sph, M.hullDark, 1.05, .7, 1.05, 0, ry + 1.22, 0), false, 'wood');
+    this.add(mesh(G.sph, S.cap(), R * .32, R * .21, R * .32, 0, ry + 1.22, 0), false, 'wood');
     // and a lamp over the door, because a building you are meant to find at night needs one
     const la = da * .5;
     this.add(mesh(G.sph, M.lantern, .22, .28, .22, Math.cos(la) * (R - .5), ry - .35, Math.sin(la) * (R - .5)), false, 'wood');
   }
+  nextEmpty() { return this.parts.find(q => q.state === 4) || null; }
   // A bolt went off at (x,y,z). Free the parts nearest it, throw them away from it, and let
   // the rest of the building stand.
   shatter(x, y, z, rad, blast, charge) {
@@ -12742,6 +12784,8 @@ function repairOffer() {
       FIX.hut = best;
       offerAct({ icon: 'lift', label: 'GATHER', run: () => {
         best.vanish(pc); INV[pc.kind]++;
+        // Taking a piece off something a species built is taking from that species.
+        if (best.owner) moodShift(best.owner, -.06);
         world.effects.push(new Burst(p.pos.x, p.pos.y + 1, p.pos.z, '#d8d2c0', 5, .4));
       } });
       return;
