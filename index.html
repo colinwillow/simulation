@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd60';
+const BUILD = 'd61';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -16226,6 +16226,16 @@ const CLAW = {
   pay: 7, haul: 5.5, // how fast the cable goes out and comes back
   shut: .34,         // how long the fingers take to close
   hold: 2.1,         // how far under the drone the cargo rides once it is up
+  // HIGH ENOUGH TO CARRY, which it never was. Loaded, the drone went back to its ordinary
+  // anchor beside him -- 2.4 above his feet -- and the cargo hangs `hold` under the claw plus
+  // its own half-height plus a little, which lands it about a body's depth BELOW the ground
+  // he is standing on. So it was dragged home through the terrain every time. This is how far
+  // above the GROUND UNDER THE DRONE it flies while it has something, which is the surface
+  // that matters when it crosses a rise on the way back.
+  carryY: 8.5,
+  // And how fast it may travel on a job. There is no speed limit on the spring, which is fine
+  // when the target is two units away and not when it is a hundred.
+  fly: 30,
   fingers: 3, len: .62, rad: .3,
   cable: '#9aa6b4', metal: '#c8d4e0', lit: '#8ff0d8',
 };
@@ -16272,6 +16282,15 @@ function clawRelease() {
   }
   claw.job = claw.out > .05 ? 'up' : null; claw.tgt = null;
 }
+// Loaded, it flies HIGH. The anchor beside him is 2.4 off his feet, which is not enough to
+// hang anything under -- so while it is carrying, the want and the drone itself are both held
+// at least CLAW.carryY over the ground beneath the drone, and the ease is not allowed to let
+// it sag below that on the way.
+function clawLift(f) {
+  const fl = groundY(f.pos.x, f.pos.z) + CLAW.carryY;
+  if (f.want.y < fl) f.want.y = fl;
+  if (f.pos.y < fl) { f.pos.y = lerp(f.pos.y, fl, .35); f.vel.y = Math.max(f.vel.y, 0); }
+}
 function stepClaw(dt) {
   if (!claw.g) return;
   const f = fairy, J = claw.job;
@@ -16297,10 +16316,12 @@ function stepClaw(dt) {
       logMsg('The claw closes on the net and takes the weight.');
     }
   } else if (J === 'up') {
+    if (claw.cargo) clawLift(f);
     claw.out = Math.max(CLAW.hold * (claw.cargo ? 1 : 0), claw.out - CLAW.haul * dt);
     if (claw.out <= (claw.cargo ? CLAW.hold : 0) + .02) { claw.out = claw.cargo ? CLAW.hold : 0; claw.job = claw.cargo ? 'carry' : null; }
   } else if (J === 'carry') {
     if (!claw.cargo || !claw.cargo.alive) { claw.cargo = null; claw.job = 'up'; }
+    else clawLift(f);
   } else {
     claw.shutK = Math.max(0, claw.shutK - dt * 3);
     claw.out = Math.max(0, claw.out - CLAW.haul * dt);
@@ -16311,7 +16332,9 @@ function stepClaw(dt) {
   if (claw.cargo) {
     clawAt(_clP);
     const o = claw.cargo;
-    o.pos.set(_clP.x, _clP.y - o.pivotY() - .35, _clP.z);
+    // and a floor under it regardless: a hill can rise under the pair of them faster than the
+    // drone climbs, and a netted animal ploughing through a bank is the thing being reported.
+    o.pos.set(_clP.x, Math.max(_clP.y - o.pivotY() - .35, groundY(_clP.x, _clP.z) + .3), _clP.z);
     o.rx = _clP.x; o.rz = _clP.z; o.hauled = 1;
   }
   // draw
@@ -16355,6 +16378,12 @@ function updateFairy(dt) {
   f.vel.y += (f.want.y - f.pos.y) * k * dt;
   f.vel.z += (f.want.z - f.pos.z) * k * dt;
   f.vel.multiplyScalar(Math.max(0, 1 - 4.2 * dt));
+  // A hundred units of spring is a hundred units of acceleration. On a job it is capped to
+  // something a drone could plausibly fly, so an errand across the island reads as a trip.
+  if (claw.job && f.hit <= 0) {
+    const sp = f.vel.length();
+    if (sp > CLAW.fly) f.vel.multiplyScalar(CLAW.fly / sp);
+  }
   if ((f.dart -= dt) <= 0 && f.hit <= 0) {   // the sudden little flit that makes it read as alive
     f.dart = rnd(1.6, 4.5);
     f.vel.x += rnd(-2.6, 2.6); f.vel.y += rnd(-1, 2.6); f.vel.z += rnd(-2.6, 2.6);
@@ -16401,7 +16430,14 @@ function updateFairy(dt) {
     // closes at a fixed rate rather than in one frame.
     f.leash = f.hit > 0 ? L.far : Math.max(L.near, (f.leash === undefined ? L.near : f.leash) - L.ease * dt);
     const away = f.pos.distanceTo(f.want);
-    if (away > f.leash) {
+    // AND THE TELEPORT. The leash is there to bring a drone home that has been knocked halfway
+    // across the island, and it closes at (home + 0.8 * overshoot) a second -- eighty units a
+    // second when the overshoot is a hundred. On a FETCH the want is deliberately a hundred
+    // units away, at the animal, so the leash read that as a drone that had gone missing and
+    // hauled it there in a couple of frames: the jump he sees before it picks the net up.
+    // A drone on an outbound job is not lost, it is going somewhere. It flies.
+    const onJob = claw.job === 'goto' || claw.job === 'down' || claw.job === 'shut';
+    if (away > f.leash && !onJob) {
       // A step toward home, capped -- and bigger the further out it is, so a drone parked
       // three hundred units away by something unforeseen still comes back in a second or two
       // rather than crawling. Nothing here can move it more than it could fly.
