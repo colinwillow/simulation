@@ -1197,6 +1197,12 @@ window._MAJIA_PATH = false;
   <canvas id="mini" title="open the map"></canvas>
   <button id="logT" class="tog icon" title="the island's notes">notes</button>
   <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
+  <!-- EJECT, WHERE HE CAN SEE IT. It has existed since the day it was asked for, and so has
+       the line out of the belly port -- both of them behind the folded controls panel, which
+       is why neither has ever been used. In the air this is the line; on the ground it is the
+       ordinary way out; on the line it is the release. One button, because from the seat "get
+       out" is one intention and the ship already knows which one it is. -->
+  <button id="ejectQ" class="tog" hidden>eject</button>
   <div id="btns" hidden><button id="ejectB" class="tog">eject</button><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
 </div>
 <div id="mapv" hidden><h2>Plutopia<span id="mapera"></span></h2>
@@ -1256,7 +1262,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c99';
+const BUILD = 'd03';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -11673,28 +11679,75 @@ class ShipBeacon {
   }
   dispose() { scene.remove(this.g); this.beam.material.dispose(); this.mat.dispose(); }
 }
-function fireBeacon() {
+// IT IS A THING IN HIS HAND, NOT A SHOT. It was written as a ray down the aim -- walk out
+// forty-six units, stand the beacon at the last spot the ship could land on -- which is how a
+// gun works, and it read as one: the reticle out at arm's reach and the beacon appearing a
+// long way off with nothing having travelled there. It is a grenade. So it leaves his hand on
+// an arc, at a speed he chooses by how long he holds, and it plants itself where it lands. The
+// same shape as throwing a creature, which is what he asked for and what the animation coming
+// will want.
+// Arithmetic, not taste: with the lift a fixed share of the launch speed, the range of a throw
+// is 2*v*(v*lift)/g, so at lift .44 and g 30 it is 0.0293*v^2. 26 puts it about twenty units
+// out and 40 about forty-seven -- against the old ray's flat forty-six, so a full wind-up
+// reaches what the gun used to and an untouched tap lands well short of it, which is the whole
+// point of it being thrown. (The first numbers here were 15 to 33 and would have dropped it six
+// units in front of his feet.)
+const BTOSS = { speed: [26, 40], lift: .44, g: 30, spin: 9, r: .26, maxT: 7 };
+class TossedBeacon {
+  constructor(x, y, z, v) {
+    this.alive = true; this.t = 0;
+    this.pos = new THREE.Vector3(x, y, z); this.v = v;
+    this.g = new THREE.Group(); this.g.position.copy(this.pos); scene.add(this.g);
+    const c = col(BEACON.col);
+    this.mat = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.8, roughness: .45 });
+    this.mat.userData.noHole = true;      // it starts at his chest, which is where the hole is
+    this.body = mesh(G.sph, this.mat, BTOSS.r, BTOSS.r, BTOSS.r, 0, 0, 0);
+    this.g.add(this.body);
+    this.gl = glow(BEACON.col, 1.7, .75); this.g.add(this.gl);
+    this.axis = new THREE.Vector3(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).normalize();
+  }
+  update(dt) {
+    this.t += dt;
+    this.v.y -= BTOSS.g * dt;
+    this.pos.addScaledVector(this.v, dt);
+    this.g.position.copy(this.pos);
+    this.body.rotateOnWorldAxis(this.axis, BTOSS.spin * dt);
+    const k = .75 + .25 * Math.sin(this.t * 14);
+    this.mat.emissiveIntensity = 1.8 * k; this.gl.scale.setScalar(1.7 * k);
+    // Whatever it would land ON, the same three candidates the ship's own eject uses, so a
+    // beacon thrown onto a tree deck lands on the deck rather than falling through it.
+    const fy = Math.max(deckY(this.pos.x, this.pos.z, this.pos.y),
+      standOn(this.pos.x, this.pos.z, this.pos.y), groundY(this.pos.x, this.pos.z));
+    if (this.pos.y <= fy || this.t > BTOSS.maxT) { this.alive = false; plantBeacon(this.pos.x, this.pos.z); }
+  }
+  dispose() { scene.remove(this.g); this.mat.dispose(); }
+}
+// Where it comes to rest is where the beacon stands -- if the ship could put its legs there.
+function plantBeacon(x, z) {
+  if (!isLand(x, z) || Math.hypot(x, z) > PLANET.rim || height(x, z) < SEA + 1) {
+    world.effects.push(new Burst(x, Math.max(SEA, groundY(x, z)) + .6, z, BEACON.col, 8, .5));
+    logMsg('It goes into the water. Nothing to stand on there.');
+    return;
+  }
+  if (world.shipBeacon) world.shipBeacon.alive = false;
+  const b = new ShipBeacon(x, z);
+  world.shipBeacon = b; world.effects.push(b);
+  world.effects.push(new Burst(x, b.pos.y + 1, z, BEACON.col, 10, .8));
+  const sh = world.ship;
+  if (sh && sh.bones && sh.summonTo(x, z)) logMsg('The beacon takes. Somewhere behind him the ship comes off its pad.');
+  else logMsg(sh && sh.state === 'piloted' ? 'He is already flying it.' : 'The beacon stands, and nothing answers it.');
+}
+function fireBeacon(charge) {
   const p = player;
   if (p.cool > 0) return;
   p.cool = BEACON.cool; p.shootT = WEAPON.hold;
-  // Down the aim, on the ground, and never in the sea or off the chart: walk out from him
-  // until it stops being somewhere the ship could put its legs, and stand it at the last
-  // spot that was.
+  const pw = clamp(charge || 0, 0, 1);
+  const sp = lerp(BTOSS.speed[0], BTOSS.speed[1], pw);
   const sx = Math.sin(p.aimH), sz = Math.cos(p.aimH);
-  let bx = p.pos.x, bz = p.pos.z;
-  for (let d = 3; d <= BEACON.range; d += 2.5) {
-    const x = p.pos.x + sx * d, z = p.pos.z + sz * d;
-    if (!isLand(x, z) || Math.hypot(x, z) > PLANET.rim) break;
-    if (height(x, z) < SEA + 1) break;
-    bx = x; bz = z;
-  }
-  if (world.shipBeacon) world.shipBeacon.alive = false;
-  const b = new ShipBeacon(bx, bz);
-  world.shipBeacon = b; world.effects.push(b);
-  world.effects.push(new Burst(bx, b.pos.y + 1, bz, BEACON.col, 10, .8));
-  const sh = world.ship;
-  if (sh && sh.bones && sh.summonTo(bx, bz)) logMsg('The beacon takes. Somewhere behind him the ship comes off its pad.');
-  else logMsg(sh && sh.state === 'piloted' ? 'He is already flying it.' : 'The beacon stands, and nothing answers it.');
+  const v = new THREE.Vector3(sx * sp, sp * BTOSS.lift, sz * sp);
+  // Out of the hand, not out of a muzzle: chest height and a step in front of him.
+  world.effects.push(new TossedBeacon(
+    p.pos.x + sx * .6, p.pos.y + RIG.height * .72, p.pos.z + sz * .6, v));
 }
 
 const weap = { model: null, bone: null, tip: null, ready: false, lastMuzzle: new THREE.Vector3(), fx: null };
@@ -12315,7 +12368,7 @@ function stepWeapon(dt, rx, ry) {
     if (p.aiming) {
       // Released from inside the arc: it goes.
       if (p.lock && p.lock.alive) { p.aimH = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z); p.heading = p.aimH; }
-      if (p.wpn === 'net') fireNet(); else if (p.wpn === 'beacon') fireBeacon(); else fireBolt(p.charge);
+      if (p.wpn === 'net') fireNet(); else if (p.wpn === 'beacon') fireBeacon(p.charge); else fireBolt(p.charge);
     }
     p.aiming = 0; p.charge = 0; p.lock = null; p.aimAdj = 0; p.armT = 0;
   }
@@ -13210,13 +13263,16 @@ addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm();
 // EJECT. On the ground it is the ordinary way out; in the air it is the belly hatch and a
 // drop. Same button and the same B key either way, because from the pilot's seat "get out" is
 // one intention and the ship already knows which one it is.
-document.getElementById('ejectB').addEventListener('click', e => {
-  e.stopPropagation();
+const ejectQ = document.getElementById('ejectQ');
+function doEject(e) {
+  if (e) e.stopPropagation();
   const sh = world.ship;
   if (player.roping) ropeLetGo('He lets go of the line.');
   else if (sh && player.aboard) sh.eject();
   else logMsg('He is not in the ship.');
-});
+}
+document.getElementById('ejectB').addEventListener('click', doEject);
+ejectQ.addEventListener('click', doEject);
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
 startB.addEventListener('click', e => { e.stopPropagation(); startGame(); });
 const _prevP = new THREE.Vector3(), _shipR = new THREE.Vector3();
@@ -14660,6 +14716,12 @@ function updateHUD() {
     // both near 0 while the camera is high, the altitude terms are what is wrong.
     `plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}<br>` +
     `centre of frame: ${lookingAt()}`;
+  {   // the eject chip is only ever offered when there is something to get out of
+    const on = !INTRO.on && (player.aboard || player.roping);
+    if (ejectQ.hidden === on) ejectQ.hidden = !on;
+    const lbl = player.roping ? 'let go' : 'eject';
+    if (on && ejectQ.textContent !== lbl) ejectQ.textContent = lbl;
+  }
   const era = eraName(); if (era !== world.lastEra) { world.lastEra = era; eraEl.textContent = era; }
   // THE CENTRE OF THE FRAME, ON THE ALWAYS-VISIBLE LINE. It was in the folded stats panel,
   // which means a screenshot of the thing you are pointing at does not contain the name of the
