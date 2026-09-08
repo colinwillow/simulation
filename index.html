@@ -1557,7 +1557,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd40';
+const BUILD = 'd41';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12622,7 +12622,15 @@ const WEAPON = {
   // animal: at a third of the way there the reticle was drawing a promise the gun did not
   // keep, which is worse than no assist at all. `grab` is 1 and `pull` is the rate he swings
   // onto it, so it is a lead-on rather than a snap.
-  lock: { cone: .30, range: 70, pull: 5.0, grab: 1, keep: .55 },
+  // AN ASSIST, NOT A LOCK, and the difference was two lines. `grab` was 1 -- the aim swung
+  // the WHOLE way onto whatever was in the cone -- and the release then SNAPPED the heading
+  // exactly at it, so once anything was in front of him every shot went to it and a tree, a
+  // hut or a plant behind it could not be hit at all.
+  // Now it takes `grab` of the error and no more, the snap on release is gone, and the help
+  // tapers off toward the edge of the cone (`taper`): dead ahead of an animal it flatters a
+  // near miss, twenty degrees off it barely leans, and past the cone it does nothing. Point
+  // at a trunk and the bolt goes to the trunk.
+  lock: { cone: .38, range: 70, pull: 5.0, grab: .58, taper: .55, keep: .55 },
 };
 
 // ---------- the net gun ----------
@@ -12897,7 +12905,46 @@ const _hutV = new THREE.Vector3();   // declared above the class that reads it
 // ground is a part in here, and a hut raised anywhere is a hut spent out of here. Everything
 // he described -- hack a plant apart, carry the pieces off in the ship, put a building up
 // somewhere else -- is a producer or a consumer of these numbers.
-const INV = { part: 0, wood: 0 };
+// ---------- materials ----------
+// EVERYTHING THAT GROWS BREAKS DOWN INTO SOMETHING. Two tables and nothing else: MATS is what
+// a material IS -- its name on the pile, its mark and its colour -- and YIELD is what each
+// living thing turns into when it is shot or cut. When the real plants are modelled, YIELD is
+// the only place that has to change: one row per species, and everything downstream (the
+// pile, the bursts, the log line, whatever eats what) reads it from here rather than knowing
+// about turnips and mushrooms by name.
+const MATS = {
+  part:  { label: 'block',  mark: '\u25c6', col: '#bfe8ff' },
+  wood:  { label: 'timber', mark: '\u25ae', col: '#d8c9a8' },
+  fibre: { label: 'fibre',  mark: '\u2261', col: '#9fd48a' },
+  spore: { label: 'spore',  mark: '\u2740', col: '#d8a8ff' },
+  sap:   { label: 'sap',    mark: '\u25cf', col: '#ffd08a' },
+};
+const YIELD = {
+  LanternTree: { mat: 'wood',  n: 2 },
+  MossTuft:    { mat: 'fibre', n: 1 },
+  Bloom:       { mat: 'fibre', n: 1 },
+  Mushroom:    { mat: 'spore', n: 1 },
+  Turnip:      { mat: 'sap',   n: 1 },
+};
+const INV = { part: 0, wood: 0, fibre: 0, spore: 0, sap: 0 };
+function gainMat(kind, n, x, y, z) {
+  const m = MATS[kind]; if (!m || !n) return;
+  INV[kind] = (INV[kind] || 0) + n;
+  if (x !== undefined) world.effects.push(new Burst(x, y, z, m.col, 5 + n, .5));
+}
+// Cut one growing thing down into its material. Returns what it gave, or 0. A tree is the one
+// exception: it does not vanish, it GOES OVER, and the trunk it leaves is the wood -- felling
+// it here and handing out timber as well would pay twice for the same tree.
+function harvestPlant(pl) {
+  const y = YIELD[pl && pl.constructor && pl.constructor.name]; if (!y || !pl.alive) return 0;
+  if (pl instanceof LanternTree) {
+    if (pl.falling >= 0 || pl.elder || pl.growth < .55) return 0;
+    pl.fall(); return -1;                      // -1: felled, and the logs are the payment
+  }
+  pl.alive = false; pl.dispose();
+  gainMat(y.mat, y.n, pl.pos.x, pl.pos.y + .6, pl.pos.z);
+  return y.n;
+}
 const HACK = { reach: 3.6, T: 2.4 };   // how close, and how long a hold fells a tree
 // ---------- ladders ----------
 // A LADDER IS A LINE YOU CLIMB. Base and top in chart space, rails and rungs between them,
@@ -13264,7 +13311,27 @@ function holdOffer() {
       const d = Math.hypot(t.pos.x - p.pos.x, t.pos.z - p.pos.z);
       if (d < td) { td = d; tr = t; }
     }
-    if (tr) { FIX.hack = tr; offerAct({ icon: 'fix', label: 'HOLD TO HACK', hold: dt => hackTree(tr, dt) }); }
+    if (tr) { FIX.hack = tr; offerAct({ icon: 'fix', label: 'HOLD TO HACK', hold: dt => hackTree(tr, dt) }); return; }
+  }
+  // ANYTHING SMALL ENOUGH TO CUT BY HAND. A tap, not a hold -- the hold is what fells a tree,
+  // and the tree gets first refusal above, because a stand of trees usually has ground cover
+  // under it and a CUT prompt that shadows the one for the trunk is useless. MOSS IS NOT IN
+  // HERE either: it is on half the island, and a prompt that is on screen everywhere all the
+  // time is not a prompt. Both are still harvested by a shot landing in them.
+  {
+    let pl = null, pd = 2.0;
+    for (const t of world.plants) {
+      if (!t.alive || t instanceof LanternTree || t instanceof Turnip || t instanceof MossTuft) continue;
+      if (!YIELD[t.constructor.name]) continue;
+      const d = Math.hypot(t.pos.x - p.pos.x, t.pos.z - p.pos.z);
+      if (d < pd) { pd = d; pl = t; }
+    }
+    if (pl) {
+      const y = YIELD[pl.constructor.name];
+      offerAct({ icon: 'lift', label: 'CUT', run: () => {
+        if (harvestPlant(pl)) logMsg('He cuts it and stows the ' + MATS[y.mat].label + '.');
+      } });
+    }
   }
 }
 function hackTree(t, dt) {
@@ -14155,7 +14222,10 @@ function stepWeapon(dt, rx, ry) {
     // unwinds the moment the stick is pointed somewhere else.
     let e = 0;
     if (p.lock) { const b = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z);
-      e = Math.atan2(Math.sin(b - raw), Math.cos(b - raw)) * WEAPON.lock.grab; }
+      const err = Math.atan2(Math.sin(b - raw), Math.cos(b - raw));
+      // full help when he is already nearly on it, tailing to `taper` of it at the cone edge
+      const off = Math.min(1, Math.abs(err) / WEAPON.lock.cone);
+      e = err * WEAPON.lock.grab * (1 - off * WEAPON.lock.taper); }
     p.aimAdj = lerp(p.aimAdj, e, Math.min(1, dt * WEAPON.lock.pull));
     p.aimH = raw + p.aimAdj;
     let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
@@ -14165,7 +14235,11 @@ function stepWeapon(dt, rx, ry) {
   } else {
     if (p.aiming) {
       // Released from inside the arc: it goes.
-      if (p.lock && p.lock.alive) { p.aimH = Math.atan2(p.lock.pos.x - p.pos.x, p.lock.pos.z - p.pos.z); p.heading = p.aimH; }
+      // NO SNAP HERE. The bolt leaves on the heading the assist had eased him to, which is
+      // where the reticle has been sitting -- it does not jump to the animal's centre at the
+      // instant of firing, which is what made every shot a guaranteed hit on whatever was
+      // nearest and made the rest of the world unshootable.
+      p.heading = p.aimH;
       if (p.wpn === 'net') fireNet(); else if (p.wpn === 'beacon') fireBeacon(p.charge); else fireBolt(p.charge);
     }
     p.aiming = 0; p.charge = 0; p.lock = null; p.aimAdj = 0; p.armT = 0;
@@ -14308,6 +14382,18 @@ class Bolt {
     // only hear it.
     for (const st of world.structures) {
       if (st.alive && st.shatter) st.shatter(this.x, this.y, this.z, R, BL, this.c);
+    }
+    // AND WHAT IT LANDS IN. Not the whole blast -- that is fourteen units and would strip a
+    // meadow with one shot -- but the impact itself, which is a couple of units across. A
+    // tree in it goes over; anything smaller comes apart into its material.
+    {
+      const HR = R + 2.2; let took = 0;
+      for (const pl of world.plants) {
+        if (took >= 4 || !pl.alive) continue;
+        if (Math.hypot(pl.pos.x - this.x, pl.pos.z - this.z) > HR + (pl.h ? 1.4 : 0)) continue;
+        const got = harvestPlant(pl);
+        if (got) { took++; if (got < 0) logMsg('The shot takes it off at the root and it goes over.'); }
+      }
     }
     for (const o of world.creatures) {
       if (!o.alive) continue;
@@ -16173,7 +16259,14 @@ const bldEl = document.getElementById('bld');
 // N is the cap; `gap` is what actually decides how many you see. Spreading a fixed 44 dots
 // over whatever the distance happens to be made a dashed line at arm's length and a solid
 // one across the island. A fixed spacing reads as a trail either way.
-const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 44, gap: 4.6 };
+// HOW THE MOTES MOVE. `flow` is in units a second and is the whole of the fix: the flow used
+// to be a fraction of the WHOLE RUN per second, so the further away the mark was the faster
+// they tore along it -- a hundred-unit line ran them at twenty-odd units a second, which
+// reads as a chase rather than as a hint. A fixed slow drift looks the same near and far.
+// The rest is noise: two out-of-step sines per axis, per mote, off a phase that never repeats
+// across the line, so they wander a little instead of running on rails.
+const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 44, gap: 4.6,
+  flow: 2.4, sway: .55, swayR: .62, bob: .30, bobR: .74 };
 function buildWaypoint() {
   const g = new THREE.Group(); g.visible = false; scene.add(g); WAY.g = g;
   const uni = { uT: { value: 0 }, uC: { value: col('#7fd8ff') } }; WAY.uni = uni;
@@ -16227,10 +16320,18 @@ function updateWaypoint(dt) {
   const span = Math.max(0, d - 4.5);
   const n = clamp(Math.round(span / WAY.gap), 2, WAY.N);
   WAY.trail.geometry.setDrawRange(0, n);       // the rest of the buffer is simply not drawn
+  const ux = dx / (d || 1), uz = dz / (d || 1);
+  const rgx = -uz, rgz = ux;                   // the line's own right, for the side-to-side
+  const rate = WAY.flow / Math.max(8, span);   // units a second, expressed as runs a second
   for (let i = 0; i < n; i++) {
-    const f = ((i / n) + t * .22) % 1, k = 2.5 + f * span;
-    const x = p.x + dx / (d || 1) * k, z = p.z + dz / (d || 1) * k;
-    planetPos(x, groundY(x, z) + .7 + Math.sin(f * 6.283 + t) * .18, z, _wgV);
+    const ph = i * 2.3999632;                  // the golden angle: no two motes in step
+    const f = ((i / n) + t * rate) % 1, k = 2.5 + f * span;
+    const sway = Math.sin(t * WAY.swayR + ph) * WAY.sway
+               + Math.sin(t * WAY.swayR * 1.73 + ph * 2.1) * WAY.sway * .42;
+    const bob = Math.sin(t * WAY.bobR + ph * 1.31) * WAY.bob
+              + Math.sin(t * WAY.bobR * 2.29 + ph * .7) * WAY.bob * .38;
+    const x = p.x + ux * k + rgx * sway, z = p.z + uz * k + rgz * sway;
+    planetPos(x, groundY(x, z) + .82 + bob, z, _wgV);
     a.array[i * 3] = _wgV.x; a.array[i * 3 + 1] = _wgV.y; a.array[i * 3 + 2] = _wgV.z;
   }
   a.needsUpdate = true;
@@ -16619,10 +16720,11 @@ function updateHUD() {
   {   // the pile
     const el = _pileEl || (_pileEl = document.getElementById('pile'));
     if (el) {
-      const on = INV.part > 0 || INV.wood > 0;
+      const bits = [];
+      for (const k in MATS) { const n = INV[k] || 0; if (n) bits.push(MATS[k].mark + ' ' + n + ' ' + MATS[k].label + (n === 1 ? '' : 's')); }
+      const on = bits.length > 0;
       if (el.hidden === on) el.hidden = !on;
-      const txt = (INV.part ? '\u25c6 ' + INV.part + ' block' + (INV.part === 1 ? '' : 's') : '')
-        + (INV.part && INV.wood ? '  \u00b7  ' : '') + (INV.wood ? '\u25ae ' + INV.wood + ' timber' : '');
+      const txt = bits.join('  \u00b7  ');
       if (on && el.textContent !== txt) el.textContent = txt;
     }
   }
