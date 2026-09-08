@@ -1142,7 +1142,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c75';
+const BUILD = 'c76';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -4002,7 +4002,7 @@ const MODELS = {};
 // So: keep exporting GLB. One request, Draco still works, nothing about the pipeline changes
 // except that the texture box is unticked.
 const SKINS = {
-  // 'models/drone_rigged.glb': 'models/skins/drone_default.webp',
+  'models/drone_game/drone.rigged.glb': 'models/drone_game/drone_texture_512.webp',
 };
 const SKIN_TEX = {};
 // flipY false and sRGB, because those are the two things that are different about a texture
@@ -4035,7 +4035,15 @@ function applySkin(root, url) {
     if (!o.geometry || !o.geometry.attributes.uv) noUV++;
     for (const m of [].concat(o.material)) {
       if (!m || m.userData.noSkin) continue;
-      m.map = t; m.color.setRGB(1, 1, 1); m.needsUpdate = true;
+      m.map = t; m.color.setRGB(1, 1, 1);
+      // AND THIS IS WHAT UNTICKING "MATERIALS" ACTUALLY COSTS. With no material in the file
+      // three hands the mesh its glTF DEFAULT, and the spec's default is metalness 1,
+      // roughness 1 -- a mirror. A base-colour map on a fully metallic surface has no diffuse
+      // to show, so the drone renders as a dark chrome egg with the paint invisible on it,
+      // and nothing anywhere reports a problem. metalness 1 with no metalnessMap is the exact
+      // signature of that default and of nothing anybody would author on purpose.
+      if (m.metalness === 1 && !m.metalnessMap) { m.metalness = 0; m.roughness = .72; }
+      m.needsUpdate = true;
     }
   });
   if (noUV) console.warn('[skin] ' + url + ': ' + noUV + ' of ' + meshes
@@ -10826,7 +10834,7 @@ addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive
 // card shrinks to something that reads as a lens flare rather than a flashbang, and the
 // light becomes a wide cone aimed past him at the ground he is walking on.
 const DRONE = {
-  url: 'models/drone_rigged.glb',
+  url: 'models/drone_game/drone.rigged.glb',
   size: 1.25,                        // across its longest axis, in world units
   turn: 3.4,                         // how briskly it swings onto the way it is going
   // The eye and the strips down its fins glow; the shell does not. Same worldTint machinery
