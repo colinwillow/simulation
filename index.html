@@ -1484,7 +1484,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd18';
+const BUILD = 'd19';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1513,7 +1513,7 @@ addEventListener('unhandledrejection', e => {
   if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason);
 });
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
+const MAX = { turnip: 64, tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -1801,6 +1801,7 @@ const FLORA = {
   moss:     { wetland: 1, jungle: .9, pasture: .42, coast: .34, scrub: .2, highland: .12, crystal: .16, fungal: .3, desert: .04 },
   bloom:    { pasture: 1, wetland: .72, jungle: .5, scrub: .3, coast: .24, highland: .1, crystal: .8, fungal: .5, desert: .06 },
   mushroom: { fungal: 1, jungle: .9, wetland: .85, crystal: .6, pasture: .14, scrub: .1, coast: .1, highland: .05, desert: .03 },
+  turnip:   { pasture: 1, scrub: .55, coast: .35, wetland: .3, jungle: .18, highland: .12, crystal: .1, fungal: .08, desert: .04 },
 };
 function randomBiome(name, minH = 1.4, maxH = 14, maxSl = .6, tries = 900, clear = 3, minEdge = .12) {
   let best = null, bestK = -1;
@@ -4194,6 +4195,27 @@ class MossTuft {
   }
   dispose() { scene.remove(this.g); }
 }
+// ---------- the turnip ----------
+// THE FIRST FOOD. A pale bulb sitting half out of the ground with a fan of leaves over it. It
+// grows from a seed over a couple of minutes, is ripe when it is full size, and is the thing he
+// pulls up and holds out to an animal -- which is the other half of the barometer, the half
+// that does not involve a gun. Which species will take one is a matter of taste, below.
+const TURNIP_MAT = std(col('#e9dcff'), { roughness: .68 }), TURNIP_TOP = std(col('#b28bff'), { roughness: .7 });
+class Turnip {
+  constructor(x, z, size = 1) {
+    this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.size = size;
+    this.g = new THREE.Group(); this.g.position.copy(this.pos); alignTo(this.g, x, z, .8); this.g.rotateY(rnd(6.283));
+    const bulb = mesh(G.sph, TURNIP_MAT, .62, .7, .62, 0, .22, 0); bulb.castShadow = true; this.g.add(bulb);
+    this.g.add(mesh(G.sph, TURNIP_TOP, .5, .32, .5, 0, .74, 0));
+    for (let i = 0; i < 6; i++) { const f = mesh(G.leaf, M.moss2, rnd(1.4, 2.2), rnd(1.4, 2.4), 1, rnd(-.25, .25), .9, rnd(-.25, .25)); f.rotation.set(rnd(-.5, -.15), i / 6 * 6.283 + rnd(.4), 0); this.g.add(f); }
+    flatten(this.g); noCast(this.g);
+    scene.add(this.g); this.apply();
+  }
+  apply() { const k = .18 + .82 * clamp(this.size, 0, 1); this.g.scale.set(k, .55 + .45 * k, k); }
+  get ripe() { return this.size >= .95; }
+  update(dt) { if (this.size < 1) { this.size = Math.min(1, this.size + dt * .011 * (1 + WX.wet * .8)); this.apply(); } }
+  dispose() { scene.remove(this.g); }
+}
 // The mushroom. It is the one plant that lights the ground under it instead of the air
 // above, so it goes in the damp and the shade -- low ground, and the floor of the grove --
 // and it comes up in clumps, because one mushroom on its own has never looked right.
@@ -5512,6 +5534,12 @@ const MOOD = {
   barge: -.09,           // walking one down
   carry: -.05,           // being picked up and carried about
   feedRate: .07,         // per second of an animal actually feeding at a spark he dropped
+  feed: .30,             // a turnip, held out and taken: a whole meal in one go
+  spat: -.08,            // and the wrong thing, held out: an insult, and a small one
+  // WHO EATS WHAT. Each species has a taste, and he has to learn it. The grazers and the
+  // diggers take a turnip; a tinker or a walker spits it out and thinks a little less of him.
+  // More foods slot in here as columns.
+  likes: { Grazer: ['turnip'], Hopper: ['turnip'], Burrower: ['turnip'], Weaver: [], Walker: [], Drifter: [] },
   ease: 1 / 420,         // per second, back toward zero
   spread: 70,            // how far the news of a hit travels
   afraid: -.35, fond: .35,   // where the behaviour changes, and where it is worth saying so
@@ -9832,6 +9860,7 @@ function populate() {
   }
   for (let i = 0; i < 104; i++) { const p = randomFor(FLORA.tree, 1.6, 12, .8); if (p) world.plants.push(new LanternTree(p.x, p.z, rnd(.35, 1))); }
   for (let i = 0; i < 124; i++) { const p = randomFor(FLORA.moss, 1.2, 11, .9); if (p) world.plants.push(new MossTuft(p.x, p.z, rnd(.6, 1))); }
+  for (let i = 0; i < 44; i++) { const p = randomFor(FLORA.turnip, 1.2, 9, .6); if (p) world.plants.push(new Turnip(p.x, p.z, rnd(.55, 1))); }
   for (let i = 0; i < 24; i++) { const p = randomFor(FLORA.bloom, 1.6, 10, .7); if (p) world.plants.push(new Bloom(p.x, p.z, rnd(.5, 1))); }
   // mushrooms come up in clumps, in the damp and the shade, three to seven at a time
   for (let i = 0; i < 21; i++) {
@@ -12421,6 +12450,82 @@ class Hut {
 // rather than a hold: a hold is a thumb pinned to the glass for as long as the job takes, and
 // the job is meant to take a while. Tap again, or walk off, and he stops.
 placeHut();      // after the class, not inside populate() -- see the note where it used to be
+// ---------- something in his hand ----------
+// Not the creature-carry: that is a stoop, a lift timer and both arms, written for a thing
+// that struggles. A turnip is a thing you hold. It rides at his chest, and what it is for is
+// the two offers below -- PULL when he is standing over a ripe one, FEED when he is holding
+// one and an animal is in reach. What the animal makes of it is its species' taste.
+const HOLD = { reach: 3.0, feed: 5.2, eatT: 2.6 };
+const _hdV = new THREE.Vector3();
+function holdOffer() {
+  const p = player;
+  if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5) return;
+  if (p.hold) {
+    // it rides at the chest, a little in front, and it is not something to see through
+    const sx = Math.sin(p.faceH), sz = Math.cos(p.faceH);
+    p.hold.g.position.set(p.pos.x + sx * .55, p.pos.y + RIG.height * .52 + Math.sin(world.clock * 6) * .02, p.pos.z + sz * .55);
+    let best = null, bd = HOLD.feed;
+    for (const o of world.creatures) {
+      if (!o.alive || o.carried || o.net || o.aquatic || o.flying || o.fling) continue;
+      const d = Math.hypot(o.pos.x - p.pos.x, o.pos.z - p.pos.z);
+      if (d < bd) { bd = d; best = o; }
+    }
+    if (best) offerAct({ icon: 'feed', label: 'FEED', run: () => feedCreature(best) });
+    else offerAct({ icon: 'put', label: 'PLANT IT', run: plantHeld });
+    return;
+  }
+  if (p.carry || p.liftT > 0) return;
+  let best = null, bd = HOLD.reach;
+  for (const t of world.plants) {
+    if (!(t instanceof Turnip) || !t.alive || !t.ripe) continue;
+    const d = Math.hypot(t.pos.x - p.pos.x, t.pos.z - p.pos.z);
+    if (d < bd) { bd = d; best = t; }
+  }
+  // An animal in reach keeps its PICK UP unless he is standing right on the turnip.
+  if (best && (!ACT.now || bd < 1.9)) offerAct({ icon: 'lift', label: 'PULL', run: () => pullTurnip(best) });
+}
+function pullTurnip(t) {
+  const p = player;
+  if (!t || !t.alive || p.hold) return;
+  t.alive = false; t.dispose();
+  const g = new THREE.Group();
+  const bulb = mesh(G.sph, solid(TURNIP_MAT), .5, .56, .5, 0, 0, 0); bulb.castShadow = true; g.add(bulb);
+  g.add(mesh(G.sph, solid(TURNIP_TOP), .4, .26, .4, 0, .42, 0));
+  for (let i = 0; i < 4; i++) { const f = mesh(G.leaf, solid(M.moss2), 1.1, 1.5, 1, 0, .5, 0); f.rotation.set(-.4, i / 4 * 6.283, 0); g.add(f); }
+  scene.add(g);
+  p.hold = { kind: 'turnip', g };
+  world.effects.push(new Burst(t.pos.x, t.pos.y + .6, t.pos.z, '#c9b48a', 8, .6));
+  logMsg('He works it loose and pulls it up, roots and all.');
+}
+function dropHeld() {
+  const p = player; if (!p.hold) return null;
+  scene.remove(p.hold.g); const h = p.hold; p.hold = null; return h;
+}
+function plantHeld() {
+  const p = player; if (!p.hold) return;
+  const fx = p.pos.x + Math.sin(p.faceH) * 1.6, fz = p.pos.z + Math.cos(p.faceH) * 1.6;
+  dropHeld();
+  if (isLand(fx, fz) && count(world.plants, Turnip) < MAX.turnip) { world.plants.push(new Turnip(fx, fz, .5)); logMsg('He sets it back in the ground. It will take a while.'); }
+  else logMsg('Nothing will grow there. He lets it fall.');
+}
+// Held out. Whether it is taken is the species' taste; either way the animal stops for it,
+// which is the moment the barometer moves.
+function feedCreature(c) {
+  const p = player; if (!p.hold || !c || !c.alive) return;
+  const kind = p.hold.kind, likes = (MOOD.likes[c.constructor.name] || []).indexOf(kind) >= 0;
+  const nm = (MOOD.label[c.constructor.name] || 'it').replace(/^the /, '').replace(/s$/, '');
+  dropHeld();
+  c.met = HOLD.eatT; c.metWho = null; c.alarm = 0; c.wp = null;     // it stops where it is
+  if (likes) {
+    moodShift(c, MOOD.feed);
+    world.effects.push(new Burst(c.pos.x, c.pos.y + c.rad * .8, c.pos.z, '#d8ffb0', 9, .8));
+    logMsg('The ' + nm + ' takes it out of his hand and eats it where it stands.');
+  } else {
+    moodShift(c, MOOD.spat);
+    world.effects.push(new Burst(p.pos.x + Math.sin(p.faceH), p.pos.y + 1.2, p.pos.z + Math.cos(p.faceH), '#e9dcff', 6, .6));
+    logMsg('The ' + nm + ' sniffs it, spits it back at him, and thinks a little less of him.');
+  }
+}
 const FIX = { hut: null, el: null, bar: null };
 function repairOffer() {
   const p = player;
@@ -15797,7 +15902,7 @@ function frame(now) {
   updateWeather(dt);
   updateSky();
   ACT.now = null;                          // whatever is in reach re-offers itself below
-  carryOffer(); netOffer(); repairOffer();   // first, so the ship's own offer wins where they overlap
+  carryOffer(); netOffer(); repairOffer(); holdOffer();   // first, so the ship's own offer wins where they overlap
   // A held offer is fed every frame the thumb is down. Nothing latches: let go and it stops.
   if (ACT.now && ACT.now.hold && stick.R.down) ACT.now.hold(dt);
   fixBar();
