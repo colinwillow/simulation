@@ -1484,7 +1484,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd17';
+const BUILD = 'd18';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12052,7 +12052,8 @@ const NET = {
   cool: 1.15,          // slower than the blaster: it is a capture, not a rate of fire
   speed: 46, life: 3.0, grace: 1.8,
   ride: 2.4, climb: 40, fall: 14,     // the same terrain-hugging flight the bolt has
-  rings: 4, spokes: 14,               // 57 nodes, 112 cords. Fine enough to read as mesh at ten units.
+  rings: 5, spokes: 16,               // 81 nodes, 176 cords -- a mesh, not a diagram
+  slack: 1.06,                        // cords cut a little long, so at rest they bow instead of ruling lines
   R0: .5, R1: 4.2,                    // furled at the muzzle, open by the time it arrives
   bloom: .16,                         // seconds from one to the other
   spin: 5.2,
@@ -13372,7 +13373,7 @@ function fireNet() {
 // segment a quad turned edge-on to the lens. Thickness for the price of a cross product per
 // vertex, and the curve comes free with the sampling -- a cord under tension samples to a
 // straight line by itself, and only a slack one bows.
-const ROPE = { seg: 4, sag: .6 };
+const ROPE = { seg: 4, sag: .85 };   // more bow per unit of slack: the net now has slack to spend
 class Rope {
   constructor(cords, width, colour, opacity, seg = ROPE.seg) {
     this.seg = seg; this.w = width; this.k = 0;
@@ -13459,24 +13460,36 @@ class NetShot {
     this.p = new Float32Array(n * 3); this.v = new Float32Array(n * 3); this.p0 = new Float32Array(n * 3);
     // The flat pattern at unit radius: a hub and `rings` hoops of `spokes`.
     this.lay = new Float32Array(n * 2);
+    // STAGGERED HOOPS. Every odd hoop is turned half a mesh, so a cord from one hoop to the
+    // next runs diagonally rather than straight out from the middle. That is the whole
+    // difference between a wheel and a net: the twine on a cast net never runs radially.
     for (let r = 0; r < R; r++) for (let s = 0; s < S; s++) {
-      const i = 1 + r * S + s, a = s / S * Math.PI * 2, rr = (r + 1) / R;
+      const i = 1 + r * S + s, a = (s + .5 * (r % 2)) / S * Math.PI * 2, rr = (r + 1) / R;
       this.lay[i * 2] = Math.cos(a) * rr; this.lay[i * 2 + 1] = Math.sin(a) * rr;
     }
-    // The cords: hub out to the inner hoop, hoop to hoop along each spoke, and round each
-    // hoop. The hoops are what stop it collapsing to a bundle; the spokes are what stop it
-    // stretching into a ribbon.
+    // THE CORDS ARE A DIAMOND LATTICE. Hub out to the first hoop; then from every node two
+    // diagonals to the next hoop -- the two nodes it sits between -- which makes each cell a
+    // diamond and gives the sheet shear, so it drapes like cloth instead of holding its shape
+    // like a hoop. The inner hoops are gone: a real net has none, the diagonals hold the
+    // spacing. Only the outer hoop stays, because the lead line on a cast net IS a rope.
     const la = [], lb = [];
     for (let s = 0; s < S; s++) { la.push(0); lb.push(1 + s); }
-    for (let r = 0; r < R - 1; r++) for (let s = 0; s < S; s++) { la.push(1 + r * S + s); lb.push(1 + (r + 1) * S + s); }
-    for (let r = 0; r < R; r++) for (let s = 0; s < S; s++) { la.push(1 + r * S + s); lb.push(1 + r * S + (s + 1) % S); }
+    for (let r = 0; r < R - 1; r++) for (let s = 0; s < S; s++) {
+      const i = 1 + r * S + s, base = 1 + (r + 1) * S;
+      // an even hoop's node s sits between odd-hoop nodes s-1 and s; an odd one between s and s+1
+      const j0 = r % 2 ? s : (s + S - 1) % S, j1 = r % 2 ? (s + 1) % S : s;
+      la.push(i); lb.push(base + j0);
+      la.push(i); lb.push(base + j1);
+    }
+    for (let s = 0; s < S; s++) { la.push(1 + (R - 1) * S + s); lb.push(1 + (R - 1) * S + (s + 1) % S); }
     this.la = la; this.lb = lb;
-    // Each cord is cut to the length it has when the net is OPEN, so the moment the flight
-    // stops the thing is already its proper size and the relaxation has nothing to undo.
+    // Each cord is cut to the length it has when the net is OPEN, plus a little slack: under
+    // tension a cord is straight, and a net that never has any slack in it is a drawing of a
+    // net. The slack is what the ribbons bow with.
     this.rest = new Float32Array(la.length);
     for (let k = 0; k < la.length; k++) {
       const i = la[k] * 2, j = lb[k] * 2;
-      this.rest[k] = Math.hypot(this.lay[i] - this.lay[j], this.lay[i + 1] - this.lay[j + 1]) * NET.R1;
+      this.rest[k] = Math.hypot(this.lay[i] - this.lay[j], this.lay[i + 1] - this.lay[j + 1]) * NET.R1 * NET.slack;
     }
     // The outer hoop is weighted, the way the lead line on a cast net is. It is what turns a
     // sheet into a bag: the rim falls faster than the middle, swings under, and closes.
@@ -13662,7 +13675,7 @@ class NetShot {
         let tx, ty, tz;
         if (i === 0) { tx = o.pos.x; ty = H.cy + H.ey * 1.04; tz = o.pos.z; }
         else {
-          const q = ((i - 1) / S | 0) + 1, pol = q / R * NET.wrapArc, a = ((i - 1) % S) / S * Math.PI * 2;
+          const q = ((i - 1) / S | 0) + 1, pol = q / R * NET.wrapArc, a = (((i - 1) % S) + .5 * ((q - 1) % 2)) / S * Math.PI * 2;   // same stagger as the pattern
           const sp = Math.sin(pol), cp = Math.cos(pol);
           tx = o.pos.x + Math.cos(a) * sp * H.ex * 1.06;
           ty = H.cy + cp * H.ey * 1.06;
