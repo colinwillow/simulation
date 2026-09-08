@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd45';
+const BUILD = 'd46';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -16955,6 +16955,10 @@ function updateHUD() {
     `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}<br>` +
     `doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight} scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'}<br>` +
     `lens ${_vw}x${_vh} \u00b7 canvas ${renderer.domElement.clientWidth}x${renderer.domElement.clientHeight} \u00b7 chrome ${_uiInset('--uit')}/${_uiInset('--uib')}<br>` +
+    // lvh/glass/gap and the far plane were the other half of the band hunt and of the black
+    // sky object; both are fixed, so they come off the always-on line and land here with the
+    // rest of the diagnostics, behind the tap on the title.
+    `lvh ${_lvh()} glass ${glassH()}+${_over} gap ${_gap} \u00b7 far ${camera.far | 0} sky ${(900 * skyRig.scale.x) | 0}<br>` +
     // The four numbers that decide whether the background is his galaxy or a black hole:
     // how much plate is being asked for, whether the texture arrived, and the two terms that
     // open its roll-off. If plate reads 0.00 the image has not loaded; if space and high are
@@ -16997,22 +17001,19 @@ function updateHUD() {
   // which means a screenshot of the thing you are pointing at does not contain the name of the
   // thing you are pointing at unless the panel happened to be open. Every screenshot has it
   // now.
-  // BOTH ANSWERS, ALWAYS ON SCREEN, NO TAPPING. He has been asked three times for a
-  // screenshot with a panel open and it has not been possible to get one while the thing he
-  // is reporting is happening. So the two lines that settle the two open questions live here,
-  // where every screenshot already catches them: what the middle of the frame is pointing at,
-  // and every viewport number that could make the lens smaller than the glass.
+  // AND THAT IS ALL THAT IS LEFT HERE. Every viewport number the browser will give was
+  // duplicated onto this line as well, always on, because the black band at the bottom of the
+  // screen took fifteen builds and the panel holding those numbers was never open in any of
+  // the screenshots. That band was the standalone web app's status-bar style and has been
+  // fixed since c88; the numbers themselves never left the stats panel, so this was a second
+  // copy of a diagnostic for a solved bug, printed over the game on every frame.
+  // The build, what he is pointing at, and a latched error are what belong on a line that
+  // cannot be turned off -- the first because Pages caches index.html and it is the only way
+  // to know what you are looking at, the other two because they are the report.
   if (bldEl) {
-    const cv = renderer.domElement;
     if (firstErr) { bldEl.innerHTML = BUILD + '  \u00b7  <span style="color:#ff9c9c">' + firstErr + '</span>'; return; }
     bldEl.innerHTML = BUILD + (KDBG ? '+knock' : '') + (KOBS ? '+obs' : '')
-      + '  \u00b7  ' + (INTRO.on ? 'title' : lookingAt()) + '<br>'
-      + `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}`
-      + ` doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}<br>`
-      + `scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'}`
-      + ` lvh ${_lvh()} glass ${glassH()}+${_over} gap ${_gap}<br>`
-      + `cv ${cv.clientWidth}x${cv.clientHeight} buf ${_vw}x${_vh} chrome ${_uiInset('--uit')}/${_uiInset('--uib')}`
-      + ` far ${camera.far | 0} sky ${(900 * skyRig.scale.x) | 0}`;
+      + '  \u00b7  ' + (INTRO.on ? 'title' : lookingAt());
   }
 }
 setInterval(updateHUD, 600); updateHUD();
