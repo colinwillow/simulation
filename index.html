@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd47';
+const BUILD = 'd48';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -9813,6 +9813,11 @@ const ZONES = [
   // somebody walks this way, and the cheapest possible version of a road.
   { fn: 'track', biome: 'pasture',  n: 4, maxSl: .35, slab: ['sp_stone01', 'sp_stone02'] },
   { fn: 'track', biome: 'coast',    n: 3, maxSl: .35, slab: ['sp_stone02'] },
+  // ON THE WATER, which is where it was drawn to be. `band` is the height window zAnchor
+  // looks in: a strip either side of the tide line rather than the dry 1.6-to-20 inland
+  // ground every other formation wants.
+  { fn: 'dock',  biome: 'coast',    n: 3, maxSl: .30, band: [-.2, 1.5], hut: ['dome_hut'], slab: ['sp_stone02'], rock: ['sp_rock06'] },
+  { fn: 'dock',  biome: 'wetland',  n: 2, maxSl: .30, band: [-.2, 1.6], hut: ['dome_hut'], slab: ['sp_stone01'], rock: ['sp_rock02'] },
   { fn: 'track', biome: 'scrub',    n: 3, maxSl: .35, slab: ['sp_stone01'] },
   // THE FALLS ROCK, which was built for the title screen and had never been in the game. It
   // is the one model in the batch that is all footprint -- a single wet mass with a shelf --
@@ -9951,7 +9956,11 @@ const ZFN = {
     for (let i = 0, n = 1 + (Math.random() * 2 | 0); i < n; i++) {
       const a = face + rnd(1.9, 2.9) * (i ? -1 : 1), r = rnd(22, 32);
       const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
-      if (isLand(x, zz) && obClear(x, zz, 4.5)) zPut(B.big, M[pick(z0.hut)], x, zz, rnd(6.5, 8.5), a + Math.PI, .12, .34);
+      // dome_hut is not a hut either: it is a cabin ON A DECK, on posts, with a ladder up to
+      // it and a wind turbine on the corner. Its door is about an eighth of the assembly's
+      // height, so a door you can walk through wants the whole thing at twelve or so -- which
+      // also puts the deck a ladder's climb off the ground, which is what the ladder is for.
+      if (isLand(x, zz) && obClear(x, zz, 7)) zPut(B.big, M[pick(z0.hut)], x, zz, rnd(11, 14), a + Math.PI, .12, .26);
     }
     {
       const a = face + rnd(-.7, .7), r = rnd(17, 23);
@@ -10125,6 +10134,32 @@ const ZFN = {
       if (isLand(x, zz) && slope(x, zz) < .16) zPut(B.small, M[sp], x, zz, rnd(9, 18), rnd(6.3), 1, 0, { sink: .58 });
     }
   },
+  // THE JETTY. dome_hut was drawn as a cabin on a pier -- posts, a deck, a ladder up to it and
+  // a mill on the corner -- and standing it in the middle of a meadow is the one placement
+  // that makes no sense of any of that. Here it goes AT the tide line, turned to look out at
+  // the water, with its own path of slabs coming up the beach behind it. The posts are meant
+  // to be in the shallows, so it is set only just into the ground.
+  dock(B, M, cx, cz, z0) {
+    if (!obClear(cx, cz, 8)) return;
+    // which way the water is: downhill, measured off the ground's own normal
+    const nn = normalAt(cx, cz);
+    const out = Math.hypot(nn.x, nn.z) > 1e-3 ? Math.atan2(nn.x, nn.z) : rnd(6.3);
+    zPut(B.big, M[pick(z0.hut)], cx, cz, rnd(12, 16), out, .04, .24, { sink: .02 });
+    // the path up the beach, walking AWAY from the water
+    let x = cx - Math.sin(out) * 7, zz = cz - Math.cos(out) * 7, dir = out + Math.PI;
+    for (let i = 0; i < 7; i++) {
+      dir += rnd(-.3, .3);
+      x += Math.sin(dir) * rnd(2.4, 3.4); zz += Math.cos(dir) * rnd(2.4, 3.4);
+      if (!isLand(x, zz)) break;
+      zPut(B.small, M[pick(z0.slab)], x, zz, rnd(2.2, 3.4), rnd(6.3), .9, 0, { sink: .32 });
+    }
+    // a couple of stones holding the bank where the posts go in
+    for (let i = 0, n = 2 + (Math.random() * 3 | 0); i < n; i++) {
+      const a = out + rnd(-2, 2), r = rnd(6, 11);
+      const px = cx + Math.sin(a) * r, pz = cz + Math.cos(a) * r;
+      if (isLand(px, pz) && z0.rock) zPut(B.big, M[pick(z0.rock)], px, pz, rnd(1.8, 3.4), rnd(6.3), .5, .5, { sink: .3 });
+    }
+  },
   // The one built thing in the batch. The stones at its foot are the whole point: they are
   // what turn an object standing in a field into an object somebody stood in a field.
   mast(B, M, cx, cz, z0) {
@@ -10144,14 +10179,14 @@ const ZFN = {
 // way arrive stacked on each other. Anchors here are random within the region's core instead,
 // and rejected if anything already placed is inside the gap.
 const ZGAP = { grove: 40, burst: 24, ridge: 30, bed: 18, track: 26, peak: 58, mast: 16,
-  outpost: 110, caps: 26, crag: 54, spire: 52, plate: 70 };   // an outpost wants a lot of room, and gets it by going first
+  outpost: 110, caps: 26, crag: 54, spire: 52, plate: 70, dock: 64 };   // an outpost wants a lot of room, and gets it by going first
 // HOW FAR EACH FORMATION REACHES FROM ITS ANCHOR. zAnchor only ever knew about other zone
 // anchors, so nothing stopped a peak -- a single mountain twenty-six units across -- being
 // laid straight over the ship's berth. The berth is deterministic and has not moved; a
 // mountain grew under it. Same for the great tree, the spire and the cave mouth: every one of
 // them is a thing the island is navigated BY, and every one of them was fair ground.
 const ZSPAN = { peak: 28, crag: 21, outpost: 36, grove: 18, ridge: 20, burst: 11, caps: 12,
-  bed: 10, track: 20, mast: 5, spire: 14, plate: 30 };
+  bed: 10, track: 20, mast: 5, spire: 14, plate: 30, dock: 18 };
 function zKeepOut() {
   const k = [];
   const add = (o, r) => { if (o) k.push({ x: o.x !== undefined ? o.x : o.pos.x, z: o.z !== undefined ? o.z : o.pos.z, r }); };
@@ -10164,9 +10199,12 @@ function zKeepOut() {
   if (typeof SPIRE !== 'undefined' && SPIRE) add(SPIRE, 30);
   return k;
 }
-function zAnchor(biome, maxSl, used, gap, span = 12, keep = []) {
+// `band` is the height window to look in, for the one formation that does not want dry
+// inland ground: a jetty stands AT the water, so it is sited in the strip either side of the
+// tide line rather than the 1.6-to-20 the others share.
+function zAnchor(biome, maxSl, used, gap, span = 12, keep = [], band) {
   for (let i = 0; i < 700; i++) {
-    const p = randomLand(1.6, 20, maxSl, 1, 4); if (!p) continue;
+    const p = randomLand(band ? band[0] : 1.6, band ? band[1] : 20, maxSl, 1, 4); if (!p) continue;
     const b = biomeAt(p.x, p.z);
     if (b.name !== biome || b.edge < .28) continue;      // well inside it, never on the seam
     let ok = true;
@@ -10188,7 +10226,7 @@ function layZones(M) {
   for (const z of ZONES) {
     const fn = ZFN[z.fn]; if (!fn) continue;
     for (let i = 0; i < z.n; i++) {
-      const p = zAnchor(z.biome, z.maxSl, used, ZGAP[z.fn] || 20, ZSPAN[z.fn] || 12, keep);
+      const p = zAnchor(z.biome, z.maxSl, used, ZGAP[z.fn] || 20, ZSPAN[z.fn] || 12, keep, z.band);
       if (!p) continue;
       ZPAINT.v = z.paint || null;               // read by zPut, cleared the moment this zone is laid
       ZTAG.v = z.fn + '/' + z.biome;
