@@ -604,6 +604,10 @@
   #gllost button{font-family:var(--disp);font-weight:600;letter-spacing:.12em;text-transform:uppercase;
     background:rgba(157,247,255,.16);border:1.5px solid var(--cy);color:#dbfbff;border-radius:13px}
   #fixbar{background:rgba(10,14,40,.62);box-shadow:0 0 0 1.5px var(--rim)}
+  #hitrim{position:fixed;inset:0;z-index:3;pointer-events:none;opacity:0;
+    background:radial-gradient(ellipse at 50% 50%,rgba(255,150,90,0) 48%,rgba(255,140,80,calc(.55 * var(--k,1))) 100%)}
+  #hitrim.go{animation:hitrim .55s ease-out both}
+  @keyframes hitrim{0%{opacity:1}100%{opacity:0}}
   #boot span{font-family:var(--disp);font-style:normal;font-weight:500;letter-spacing:.18em;text-transform:uppercase;font-size:12px;opacity:.55}
   #bldTag{font-family:var(--disp);font-weight:500;letter-spacing:.14em}
 </style>
@@ -1480,7 +1484,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd11';
+const BUILD = 'd12';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -5502,6 +5506,12 @@ const MOOD = {
   ease: 1 / 420,         // per second, back toward zero
   spread: 70,            // how far the news of a hit travels
   afraid: -.35, fond: .35,   // where the behaviour changes, and where it is worth saying so
+  // PAST AFRAID IS ANGRY. Keep shooting a species that already runs from him and the bold
+  // ones stop running: one at a time they come at him, hit him, and break off. It is the
+  // consequence the barometer was built to carry, and it is what makes the third shot at a
+  // hopper a decision rather than a habit.
+  hostile: -.72,
+  charge: { see: 30, speed: 2.6, hit: 1.1, cool: [3.5, 7], push: 11, hop: 4.2, massPush: 18, massHop: 6.5 },
   waryK: 2.6,            // fear multiplies a species' own flee radius by up to this
   waryMin: 34,           // and a terrified species keeps its distance even if it never had one
   label: { Grazer: 'the mossbacks', Weaver: 'the tinkers', Burrower: 'the mudlarks',
@@ -5515,7 +5525,8 @@ function moodShift(c, d) {
   MOOD.m[k] = now;
   // Only on a crossing, and only outward -- the slow fade back through the line is not news.
   const nm = MOOD.label[k] || 'they';
-  if (was > MOOD.afraid && now <= MOOD.afraid) logMsg(nm.charAt(0).toUpperCase() + nm.slice(1) + ' will not come near him now.');
+  if (was > MOOD.hostile && now <= MOOD.hostile) logMsg(nm.charAt(0).toUpperCase() + nm.slice(1) + ' have had enough of him.');
+  else if (was > MOOD.afraid && now <= MOOD.afraid) logMsg(nm.charAt(0).toUpperCase() + nm.slice(1) + ' will not come near him now.');
   else if (was < MOOD.fond && now >= MOOD.fond) logMsg(nm.charAt(0).toUpperCase() + nm.slice(1) + ' have decided he is worth walking toward.');
   return now;
 }
@@ -5601,6 +5612,7 @@ class Creature {
     this.SN = { wary: o.wary || 0, flock: o.flock || 0, notice: o.notice || 0,
       curious: o.curious || 0, spark: o.spark || 0, thirst: o.thirst || 0, social: o.social || 0 };
     this.alarm = 0; this.alarmFrom = null; this.met = 0; this.metWho = null; this.metCool = rnd(0, 30);
+    this.chargeCool = 0;      // initialised, because `undefined <= 0` is false and the charge would never fire
     this.curio = 0; this.curioCool = rnd(0, 40); this.drinking = 0;
     this.drinkT = o.thirst ? rnd(o.thirst * .2, o.thirst) : 1e9;
     this.g = new THREE.Group(); this.body = new THREE.Group(); this.g.add(this.body); this.build();
@@ -5858,6 +5870,24 @@ class Creature {
     this.holeOff(1); this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
     world.effects.push(new Burst(this.pos.x, this.pos.y + this.rad, this.pos.z, '#ffe0a8', 8, .7));
   }
+  // It reaches him. He is shoved off his feet along the line of the charge -- a hopper bowls
+  // him a step or two, a grovewalker puts him in the air -- the screen takes the hit, and the
+  // animal breaks off for a few seconds rather than standing on him pressing the same button.
+  ram(pl) {
+    const C = MOOD.charge;
+    const dx = pl.pos.x - this.pos.x, dz = pl.pos.z - this.pos.z, d = Math.hypot(dx, dz) || 1;
+    const big = !!this.massive;
+    pl.pushX += dx / d * (big ? C.massPush : C.push);
+    pl.pushZ += dz / d * (big ? C.massPush : C.push);
+    if (pl.grounded) { pl.vy = Math.max(pl.vy, big ? C.massHop : C.hop); pl.grounded = 0; }
+    this.chargeCool = rnd(C.cool[0], C.cool[1]);
+    this.alarm = 1.4; this.alarmFrom = { x: pl.pos.x, z: pl.pos.z }; this.fleeTo = null;   // and away
+    world.effects.push(new Burst(pl.pos.x, pl.pos.y + 1.2, pl.pos.z, '#ffd2a8', 10, .7));
+    hitFlash(big ? 1 : .6);
+    const nm = (MOOD.label[this.constructor.name] || 'something').replace(/^the /, '');
+    logMsg(big ? 'A ' + nm.replace(/s$/, '') + ' runs him down. He is a long way from where he was standing.'
+                : 'One of the ' + nm + ' comes at him and bowls him over.');
+  }
   // Rocked, not felled. Direction is kept in chart space and resolved into the body's own
   // pitch and roll at pose time, so a hit from the side rolls it and one from behind pitches
   // it, whichever way it happens to be facing when it lands.
@@ -6050,6 +6080,15 @@ class Creature {
     // written as far too big to mind you, and it should still move off once it has learned
     // better. Fondness works the other way in the curiosity branch below.
     const md = moodOf(this);
+    if (this.chargeCool > 0) this.chargeCool -= dt;
+    if (md <= MOOD.hostile && him && !this.aquatic && !this.flying && !this.fling && !this.stag && this.chargeCool <= 0) {
+      const C = MOOD.charge, d = this.dist(pl.pos);
+      if (d < C.see) {
+        this.moving = 1; this.seek(pl.pos, C.speed);
+        if (d < this.rad + pl.rad + C.hit) this.ram(pl);
+        this.doing = 'charge'; return true;
+      }
+    }
     let wary = S.wary * (1 + Math.max(0, -md) * (MOOD.waryK - 1));
     if (md <= MOOD.afraid) wary = Math.max(wary, MOOD.waryMin * (-md - MOOD.afraid) / (1 + MOOD.afraid));
     if (wary && him && this.dist(pl.pos) < wary) { this.spook(pl.pos, S.flock); return true; }
@@ -15322,6 +15361,18 @@ isle.map = MAP; isle.toggleMap = toggleMap; isle.drawMap = drawMap; isle.way = W
 // `force` is for a state that owns the stick outright rather than offering itself: winding up
 // a throw, where the prompt would be lying about what letting go does. It takes the label and
 // suppresses the pulsing ring, which would fight the charge ring for the same pixels.
+// THE SCREEN TAKES THE HIT. A warm rim that flashes in and fades out, on the interface layer
+// rather than in the camera -- so it cannot fight the gimbal, and so it reads the same on a
+// phone lying flat as it does held up.
+let _hitEl = null;
+function hitFlash(k) {
+  if (!_hitEl) {
+    _hitEl = document.createElement('div'); _hitEl.id = 'hitrim';
+    document.body.appendChild(_hitEl);
+  }
+  _hitEl.style.setProperty('--k', k.toFixed(2));
+  _hitEl.classList.remove('go'); void _hitEl.offsetWidth; _hitEl.classList.add('go');
+}
 const ACT = { now: null, shown: null, force: null };
 function offerAct(a) { ACT.now = a; }
 function showAct() {
@@ -15357,7 +15408,7 @@ function updateHUD() {
         const v = MOOD.m[k];
         if (Math.abs(v) < .04) continue;
         const nm = (MOOD.label[k] || k).replace(/^the /, '');
-        const word = v <= MOOD.afraid ? 'afraid' : v >= MOOD.fond ? 'fond' : v < 0 ? 'wary' : 'warming';
+        const word = v <= MOOD.hostile ? 'hostile' : v <= MOOD.afraid ? 'afraid' : v >= MOOD.fond ? 'fond' : v < 0 ? 'wary' : 'warming';
         rows.push(`${nm} ${word} ${v >= 0 ? '+' : ''}${v.toFixed(2)}`);
       }
       return rows.length ? rows.join(' \u00b7 ') + '<br>' : '';
