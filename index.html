@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd64';
+const BUILD = 'd65';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12976,12 +12976,19 @@ const MOVE = {
   // very nearly flat out at 2.2. At a flat 62 he was doing all of that in a quarter of a
   // second, which is why he seemed to want to run and nothing smaller than a run was
   // possible. A half-held stick still settles on its own speed inside half a second.
-  max: 17, acc: 24, accFall: .93, drag: 46,      // ground
-  airAcc: 11, airDrag: 1.2,                      // in the air
+  // DIRECT, ON PURPOSE, AND THIS IS THE REVERT. The weighted set above is what these were:
+  // acc 24, accFall .93, drag 46, turn 52, airAcc 11. It reads as a body with mass, and it
+  // also reads as skating -- letting go coasts, and a change of direction at speed arcs
+  // rather than turns. These numbers are the same model with the lag taken out: he reaches
+  // his speed in about a tenth, stops in about a twentieth, and turns inside a frame or two.
+  // Everything else here is untouched, so putting the five old numbers back is the whole
+  // undo if it now feels weightless.
+  max: 17, acc: 95, accFall: .35, drag: 200,     // ground
+  airAcc: 26, airDrag: 1.2,                      // in the air
   swimMax: 9, swimAcc: 20, swimDrag: 13,
   // How fast the velocity can be turned sideways, which is a separate question from how
   // fast it can be lengthened. A right angle at full speed takes about a third of a second.
-  turn: 52, airTurn: 9, swimTurn: 16,
+  turn: 150, airTurn: 20, swimTurn: 16,
   // Uphill is work: the fraction of top speed left, against the gradient he is walking into.
   // The cost of a hill was LINEAR and floored early, so a gentle rise and a wall cost nearly
   // the same and neither cost much: 22 degrees took a fifth off him, 37 took less than half,
@@ -13452,14 +13459,24 @@ const WEAPONS = {
 // a clip fitted to one speed reads wrong at every other one.
 // Drawing and stowing. `swap` is the pace they run at when one follows the other, which is
 // most of the time -- the rack is a swap far more often than it is a first draw.
-const ARMA = { rate: 1.35, swap: 1.9 };
+// ONE CLIP, BOTH WAYS. He reaches over his shoulder to stow and reaches over it again to
+// draw, so `disarm` is the whole gesture and `equip` is the same move read backwards -- there
+// is nothing for a second animation to add, and a swap that plays two of them is a man
+// patting himself down. `equip` stays named on the rig in case a future export gives them
+// different shapes.
+const ARMA = { clip: 'disarm', rate: 1.5, swap: 1.7 };
 const MELEE = {
   flick: 10,         // stick travel a second that counts as a flick rather than a push
   chain: 1.15,       // how long the combo stays open after a blow
   gap: .16,          // and the least time between two of them
   reach: 3.4, arc: 1.2,
   push: 9, lift: 2.6,          // what it does to what it hits
-  slideAt: 4.2, slideSpeed: 11, slideT: .55,
+  // NOTHING IN THESE CLIPS TRAVELS. They are all authored on the spot, so a combo is three
+  // blows at the same patch of ground and an animal that backed off half a step is out of
+  // reach for the rest of it. Every swing gets a lunge from here: hard at the front, spent by
+  // the end, and the steering is off for its length so it goes where it was aimed.
+  lunge: 7.5, lungeT: .26,
+  slideAt: 4.2, slideSpeed: 19, slideT: .62,
   rate: 1.25,        // the clips play a little hot; a swing wants to be over
 };
 function meleeList() {
@@ -13485,11 +13502,8 @@ function meleeFlick(x, y) {
   const key = slide ? 'slide' : list[p.melN % list.length];
   p.melN++; p.melT = MELEE.chain;
   playAct(key, slide ? MELEE.rate * .9 : MELEE.rate);
-  if (slide) {
-    p.slideT = MELEE.slideT;
-    p.vx = Math.sin(p.heading) * MELEE.slideSpeed; p.vz = Math.cos(p.heading) * MELEE.slideSpeed;
-    logMsg('He goes in low and takes its legs out.');
-  }
+  lunge(slide ? MELEE.slideSpeed : MELEE.lunge, slide ? MELEE.slideT : MELEE.lungeT);
+  if (slide) { p.slideT = MELEE.slideT; logMsg('He goes in low and takes its legs out.'); }
   meleeHit(slide);
   cam.idle = 0;
 }
@@ -13526,6 +13540,14 @@ function playAct(key, rate) {
   a.timeScale = rate || 1;
   return true;
 }
+// A move that carries him. Speed at the front, spent by the end, steering off for its length
+// -- the same shape the dodge already had, factored out because the melee, the slide and the
+// landing roll all want it and none of their clips travel an inch on their own.
+function lunge(sp, t) {
+  const p = player;
+  p.lungeSp = sp; p.lungeT = p.lungeMax = t;
+  p.lungeH = p.heading;
+}
 function stepAct(dt) {
   const p = player;
   p.melT = Math.max(0, (p.melT || 0) - dt);
@@ -13557,7 +13579,11 @@ const LAND = { roll: 15, rollRate: 1.15, rollGo: 5.5 };
 // the tumble proper is 0.12 to 0.85 and the rest of the clip is him getting back on his feet.
 // The move then owns him for (1.208 - .12) / 1.35 = 0.81 s, which is a dodge rather than a
 // manoeuvre. `time` is only the fallback for a rig with no roll clip at all.
-const ROLL = { speed: 21, skip: .12, rate: 1.35, time: .7, cool: .28, turn: 1 };
+// `speed` is what he leaves the ground at and it is spent by the end, so the distance is
+// about half of it times `time`. At 21 over .7 that was seven units, which on a body 2.8 tall
+// is two and a half of him -- a shuffle. 34 puts it near twelve, which is a dodge you can
+// use to get out of the way of something.
+const ROLL = { speed: 34, skip: .12, rate: 1.35, time: .7, cool: .28, turn: 1 };
 // THE RUN. `k` is how much faster than his own top speed a sprint is; `at` is how far up the
 // right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
 // most of what a game does to say "fast" and costs nothing. in/out are how quickly it comes on
@@ -14467,6 +14493,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
   actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0,
+  lungeT: 0, lungeMax: 0, lungeSp: 0, lungeH: 0,
   wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeGrip: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
 function attachWeapon(r) {
@@ -14525,7 +14552,12 @@ function attachWeapon(r) {
       spur.rotation.z = Math.PI / 2;
       g2.add(hd, bit, spur);
       g2.add(mesh(G.sph, M.domeGlass, L * .045, L * .045, L * .045, 0, L * .13, hz(.92)));
-      g2.quaternion.copy(inst.quaternion); g2.scale.setScalar(k); g2.position.fromArray(W.drop);
+      // NO BASIS CORRECTION. `inst.quaternion` exists to carry the BLASTER MODEL's own axes
+      // onto the joint's -- its barrel is -X in its file and the joint's forward is +Z, which
+      // is a quarter turn. This axe was assembled in the joint's frame to begin with, along
+      // +Z with its head on +Y, so copying that correction turned it ninety degrees for no
+      // reason. Identity is the answer.
+      g2.scale.setScalar(k); g2.position.fromArray(W.drop);
       g2.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
       envUse(g2, .5); markBody(g2);
       weap.bone.add(g2); weap.axe = g2; g2.visible = false;
@@ -16013,8 +16045,7 @@ function pickWeapon(k) {
   // seconds of standing still and nobody would ever use the rack twice.
   const swap = player.wpn !== k && player.armWant;
   if (player.wpn !== k) { player.wpn = k; player.charge = 0; player.cool = Math.max(player.cool, .3); }
-  if (swap) { playAct('disarm', ARMA.swap); player.actNext = 'equip'; player.actNextRate = ARMA.swap; }
-  else if (!player.armWant) playAct('equip', ARMA.rate);
+  if (swap || !player.armWant) playAct(ARMA.clip, swap ? ARMA.swap : ARMA.rate);
   player.armWant = 1;                       // choosing one is also drawing it
   paintWeapon();
   logMsg('He racks the ' + WEAPONS[k].label + '.');
@@ -16025,7 +16056,7 @@ function toggleArm() {
   if (wdock.hidden || player.aboard || player.free) return;
   if (player.carry || player.liftT > 0) { logMsg('Not with his arms full.'); return; }
   player.armWant = player.armWant ? 0 : 1;
-  playAct(player.armWant ? 'equip' : 'disarm', ARMA.rate);
+  playAct(ARMA.clip, ARMA.rate);
   paintWeapon();
   logMsg(player.armWant
     ? 'He unclips the ' + WEAPONS[player.wpn].label + '. Push the right stick all the way UP to aim; let go to fire.'
@@ -16292,6 +16323,15 @@ function updatePlayer(dt) {
   // The dodge takes the wheel: its own heading, its own speed curve, no steering. The rest of
   // the frame -- gravity, the ground, the collider -- runs exactly as it does otherwise.
   player.rollCool = Math.max(0, player.rollCool - dt);
+  // A lunge drives him the way the dodge does, and for the same reason: the clip does not.
+  const lunging = player.lungeT > 0 && !player.rollT;
+  if (lunging) {
+    player.lungeT = Math.max(0, player.lungeT - dt);
+    const k = player.lungeT / (player.lungeMax || .25);
+    const sp = player.lungeSp * (.18 + .82 * k * k);
+    player.vx = Math.sin(player.lungeH) * sp; player.vz = Math.cos(player.lungeH) * sp;
+    player.wmag = 0;
+  }
   const rolling = player.rollT > 0;
   if (rolling) {
     player.rollT = Math.max(0, player.rollT - dt);
@@ -16336,7 +16376,7 @@ function updatePlayer(dt) {
     // which is the whole reason this sits inside the block rather than replacing it. Gated
     // round the outside instead, he rolled on the spot: the line that actually moves him is
     // four statements further down.
-    if (rolling) { /* nothing steers a roll */ }
+    if (rolling || lunging) { /* nothing steers a roll or a swing */ }
     else if (sp0 > .5) {
       const ux = player.vx / sp0, uz = player.vz / sp0;
       const along = ax * ux + az * uz;                       // how much faster or slower
@@ -16922,7 +16962,10 @@ function updateRig(dt) {
     // The landing clip is planted, so at speed it slides. Fade it out as the ground speed
     // rises and let the run carry the landing instead. A proper roll clip would be better.
     start: p.leadT > 0, landK: p.landT > 0 ? smooth(0, .12, p.landT) * clamp(1 - p.speed / 7, 0, 1) : 0,
-    armed: p.armed, shoot: p.shootT > 0,
+    // The armed SET is the rifle set -- braced, muzzle up, both hands forward -- and that is
+    // the wrong body for anything you swing. A melee weapon keeps the ordinary idle, walk and
+    // run until there are clips authored for holding one.
+    armed: (WEAPONS[p.wpn] && WEAPONS[p.wpn].melee) ? 0 : p.armed, shoot: p.shootT > 0,
     act: p.actN, actK: p.actK,
     // Holding the stick out with the blaster up is a wind-up, and he stands like it.
     aim: p.aiming ? 1 : 0,
