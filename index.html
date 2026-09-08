@@ -65,36 +65,13 @@
       // the time and is the black rectangle along the bottom that keeps coming back. The
       // largest of the three candidates is the layout viewport however the browser is
       // currently reporting it.
-      var lw = Math.max(innerWidth, vv ? vv.width : 0, document.documentElement.clientWidth || 0);
-      var lh = Math.max(innerHeight, vv ? vv.height : 0, document.documentElement.clientHeight || 0);
-      var sc = typeof screen !== 'undefined' ? screen : null;
-      if (sc && sc.height > lh && sc.height < lh * 1.34) lh = sc.height;
-      if (sc && sc.width > lw && sc.width < lw * 1.34) lw = sc.width;
-      // AND THEN ASK THE BROWSER WHAT 100vh ACTUALLY IS, because after twenty rounds of this
-      // the honest conclusion is that no API here reliably means "the glass": innerHeight,
-      // visualViewport, documentElement.clientHeight and screen.height each mean something
-      // slightly different and each one has been short at some point. A hidden probe styled
-      // 100vw x 100vh is not an opinion about the viewport -- it IS the viewport unit, the
-      // same one the canvas rule below is written in, measured by the engine that will lay
-      // the canvas out. The two cannot disagree, which is the only property that matters.
-      var pr = document.getElementById('vprobe');
-      if (!pr && document.body) {
-        pr = document.createElement('div'); pr.id = 'vprobe';
-        pr.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;visibility:hidden;pointer-events:none;z-index:-1';
-        document.body.appendChild(pr);
-      }
-      if (pr) { lw = Math.max(lw, pr.offsetWidth); lh = Math.max(lh, pr.offsetHeight); }
-      d.setProperty('--cvw', Math.round(lw) + 'px'); d.setProperty('--cvh', Math.round(lh) + 'px');
-      // THE UI INSET DOES NOT COME OFF screen.height, AND THAT IS THE BUG. --cv* is the
-      // canvas and being generous there is free -- the extra hangs off the bottom. --ui* is
-      // how far the PANELS are pushed in, and measuring that against the glass double-counts
-      // the safe area: env(safe-area-inset-bottom) already moves them clear of the home
-      // indicator, and then this moved them clear of it a second time. Forty-odd pixels of
-      // nothing along the bottom, appearing or not depending on which candidate won the max
-      // on that particular load -- which is exactly why it came back the moment the page was
-      // reloaded through the update chip and not before.
-      // The inset is the LAYOUT viewport against the VISUAL one and nothing else.
-      var lay = pr ? pr.offsetHeight : (document.documentElement.clientHeight || innerHeight);
+      // THE LAYOUT VIEWPORT, WHICH IS THE ONE `position: fixed; inset: 0` COVERS. His own
+      // readout settled it: win, vis and doc all read 462x932 and the 100vh probe read 1002.
+      // 100vh on iOS is the LARGE viewport -- what the page would be with the browser's bars
+      // hidden -- and it is NOT what a fixed element is laid out against. Using it as the
+      // layout height made --uib 70px on a phone whose chrome covers nothing, which pushed
+      // the whole interface up by seventy pixels: the screen moving up twice.
+      var lay = document.documentElement.clientHeight || innerHeight;
       d.setProperty('--uit', Math.max(0, Math.round(top)) + 'px');
       d.setProperty('--uib', Math.max(0, Math.round(lay - top - vish)) + 'px');
     };
@@ -126,14 +103,10 @@
      screen, over the clock, since the day this rule got `fixed` in it, instead of sitting in
      #ui with the buttons where it is written to. The renderer's canvas is the only direct
      child of body, so the child combinator says exactly what was meant all along. */
-  /* OVERSCAN BY THE CHROME. inset:0 covers the layout viewport, and if the browser's own
-     furniture sits OVER part of that viewport rather than beside it, the last strip is still
-     page and still shows. --uib is exactly how much, measured; anchored at the top so the
-     extra hangs off the bottom where you cannot see it and the framing does not move. When
-     the two viewports agree it is a no-op. */
-  body > canvas{position:fixed;left:0;top:0;right:0;width:100%;
-    height:calc(100% + var(--uib,0px) + var(--uit,0px) + 2px);
-    display:block;z-index:0;touch-action:none}
+  /* inset:0 and nothing else. The overscan was wrong: it made the drawing buffer taller than
+     the element it is shown in (462x1074 against 462x933 on his phone), which stretches the
+     picture and puts the camera on the wrong aspect. */
+  body > canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -1142,8 +1115,17 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c78';
+const BUILD = 'c79';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
+// THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
+// updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
+// script. That is the landmine in CLAUDE.md and it has now cost seven.
+// bootFail writes into the boot card and the boot card is then removed, so an exception that
+// fires after the world is up flashes a red box for a moment and is gone. Which is exactly
+// what he saw, and it left nothing to work from. The HUD line shows it until a reload.
+let firstErr = '';
+addEventListener('error', e => { if (!firstErr) firstErr = (e.message || 'error') + ' @' + (e.lineno || '?'); });
+addEventListener('unhandledrejection', e => { if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason); });
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
@@ -5062,6 +5044,7 @@ const _kbA = new THREE.Vector3(), _kbB = new THREE.Vector3();
 // drawn, and what pivot it is turning about. Four numbers, on the phone, no console.
 const KDBG = /[?&]knock\b/.test(location.search);
 const KOBS = /[?&]obs\b/.test(location.search);
+const KLOOK = /[?&]look\b/.test(location.search);
 const KNOCK = {
   // Range goes as speed times airtime, and both used to divide by the animal's size -- so a
   // tinker went thirty-four units and a mossback went one, off numbers only 1.8x apart. The
@@ -13775,17 +13758,11 @@ function syncSize() {
   // on a phone the two part company every time the URL bar slides. Reading the wrong one gives
   // a camera whose aspect does not match the box its picture is shown in.
   const vv = window.visualViewport;
-  // The size of the CANVAS, which is now the whole screen rather than the visible box -- the
-  // buffer and the element it is shown in have to be the same shape or the picture stretches,
-  // and that was the whole point of reading visualViewport here in the first place.
-  let w = Math.max(innerWidth, vv ? vv.width : 0, document.documentElement.clientWidth || 0);
-  let h = Math.max(innerHeight, vv ? vv.height : 0, document.documentElement.clientHeight || 0);
-  const sc = typeof screen !== 'undefined' ? screen : null;
-  if (sc && sc.height > h && sc.height < h * 1.34) h = sc.height;
-  if (sc && sc.width > w && sc.width < w * 1.34) w = sc.width;
-  // the probe, which is what the canvas rule's own 100vw/100vh will resolve to
-  const pr = document.getElementById('vprobe');
-  if (pr) { w = Math.max(w, pr.offsetWidth); h = Math.max(h, pr.offsetHeight); }
+  // The canvas is `fixed; inset:0`, so it is exactly the layout viewport -- and the buffer has
+  // to be exactly that too or the picture stretches. His readout caught mine doing 462x1074
+  // into a 462x933 element.
+  const de = document.documentElement;
+  let w = de.clientWidth || innerWidth, h = de.clientHeight || innerHeight;
   w |= 0; h |= 0;
   // The page's own box first, and every frame rather than only when the size changes: the
   // offset moves on its own while the bar slides, without the height ever differing. Body is
@@ -13793,13 +13770,8 @@ function syncSize() {
   // are the whole of what keeps the interface over the part of the screen you can see.
   const ds = document.documentElement.style;
   const vTop = vv ? vv.offsetTop : 0, vH = vv ? vv.height : innerHeight;
-  // the LAYOUT viewport for the inset, not the biggest candidate -- see the note in the head
-  const lay = pr ? pr.offsetHeight : (document.documentElement.clientHeight || innerHeight);
-  const uib = Math.max(0, Math.round(lay - vTop - vH)), uit = Math.max(0, Math.round(vTop));
-  ds.setProperty('--cvw', w + 'px'); ds.setProperty('--cvh', h + 'px');
-  ds.setProperty('--uit', uit + 'px'); ds.setProperty('--uib', uib + 'px');
-  // and the buffer is the element, overscan included, or the picture stretches
-  h = h + uib + uit + 2;
+  ds.setProperty('--uit', Math.max(0, Math.round(vTop)) + 'px');
+  ds.setProperty('--uib', Math.max(0, Math.round(h - vTop - vH)) + 'px');
   if (w === _vw && h === _vh) return;
   _vw = w; _vh = h;
   camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -14070,7 +14042,12 @@ function _uiInset(k) {
   catch (e) { return '?'; }
 }
 const _lkR = new THREE.Raycaster();
+// OFF BY DEFAULT, AND THAT WAS A BAD MISS. A ray against scene.children with `true` walks the
+// terrain (88,000 triangles), the ocean, forty-six grass chunks and every merged zone mesh,
+// and it was doing it every HUD tick -- a stall several times a second on a phone already at
+// thirty frames. Put ?look on the URL when there is something to identify.
 function lookingAt() {
+  if (!KLOOK) return 'look: add ?look to the URL';
   try {
     _lkR.setFromCamera({ x: 0, y: 0 }, camera);
     _lkR.far = 4000;
@@ -14251,6 +14228,7 @@ function updateHUD() {
   // and every viewport number that could make the lens smaller than the glass.
   if (bldEl) {
     const cv = renderer.domElement;
+    if (firstErr) { bldEl.innerHTML = BUILD + '  \u00b7  <span style="color:#ff9c9c">' + firstErr + '</span>'; return; }
     bldEl.innerHTML = BUILD + (KDBG ? '+knock' : '') + (KOBS ? '+obs' : '')
       + '  \u00b7  ' + (INTRO.on ? 'title' : lookingAt()) + '<br>'
       + `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}`
@@ -14276,6 +14254,7 @@ let last = performance.now(), booted = false;
 // is. A blank splash asks "what happened"; this answers it.
 let bootBad = 0;
 function bootFail(e) {
+  if (!firstErr) firstErr = (e && e.message ? e.message : String(e));
   if (bootBad) return;
   bootBad = 1;
   console.error(e);
