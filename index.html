@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd69';
+const BUILD = 'd70';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1601,7 +1601,7 @@ addEventListener('unhandledrejection', e => {
   if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason);
 });
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { turnip: 64, tinkerHut: 6, tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
+const MAX = { turnip: 64, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -1629,7 +1629,11 @@ function fbm(x, y, o = 5) { let a = .5, f = 1, s = 0; for (let i = 0; i < o; i++
 function fbm3(x, y, z, o = 3) { let a = .5, f = 1, s = 0; for (let i = 0; i < o; i++) { s += a * vnoise3(x * f, y * f, z * f); f *= 2.07; a *= .5; } return s; }
 
 // ---------- terrain field ----------
-const CENTERS = [[0.04, 0.02, 1.14], [-0.66, 0.58, 0.62]];
+// THE JUNGLE ISLAND is the third entry: off to the south-east, opposite the sister isle so
+// the world has land in three quarters of it, and big -- .72 against the sister's .62.
+// Everything downstream reads the height field, so a new entry here IS a new island: the
+// coast, the biome, the scatter, the sites and the creatures all find it on their own.
+const CENTERS = [[0.04, 0.02, 1.14], [-0.66, 0.58, 0.62], [0.56, -0.56, 0.72]];
 // named landforms — the island reads as a place rather than a lump of noise
 // a range running along the north shoulder, not a cone in the middle
 const RANGE = { ax: -0.44 * W, az: -0.30 * W, bx: 0.16 * W, bz: -0.52 * W, w: 30, h: 27, crest: 14 };
@@ -1659,6 +1663,12 @@ const PLATEAU = { at: .30, gain: 5, step: 3.4, sharp: .14, k: .9 };
 // leave it by ship or by the line, and you get back the same way. That is the point of a base
 // on an island: it is somewhere, and the world has to be crossed to reach it.
 const MESA = { x: -104 * WS, z: 94 * WS, r: 42 * WS, h: 30 };
+// THE PLATEAU on the jungle island, and it is the verticality that was asked for: two
+// terraces, a broad one at 22 and a crown at 44, each with the mesa's own cliff -- steep
+// enough to need a ladder and there is one on each -- so the island reads in three floors
+// rather than as a slope. Both are placed off the island's centre, a little toward the
+// mainland so the cliffs face the way you arrive.
+const PLAT = { x: 0.60 * W, z: -0.60 * W, r: 76, h: 22, r2: 34, h2: 44 };
 const LAGOON = { x: -30 * WS, z: 52 * WS, r: 42 * WS, d: 13 };
 const CHASM = { x: -62 * WS, z: -58 * WS, r: 15 * WS, d: 25 };
 const STACKS = [{ x: 122, z: -54, r: 8, h: 25 }, { x: 138, z: -38, r: 5, h: 16 }, { x: -66, z: -132, r: 7, h: 22 }, { x: 100, z: 100, r: 6.5, h: 18 }, { x: -146, z: 6, r: 5.5, h: 14 }]
@@ -1699,6 +1709,14 @@ function height(x, z) {
   const md = Math.hypot(x - MESA.x, z - MESA.z);
   const mk = smooth(MESA.r, MESA.r * .9, md);            // .9: thirty units of rise over ten across -- a cliff a ladder can lean on
   if (mk > 0) h = lerp(h, MESA.h + (fbm(x * .03 + 9, z * .03, 3) - .5) * 2.6, mk * .97);
+  // the jungle island's two terraces, same construction as the mesa, one inside the other
+  {
+    const pd = Math.hypot(x - PLAT.x, z - PLAT.z);
+    const k1 = smooth(PLAT.r, PLAT.r * .88, pd);
+    if (k1 > 0) h = lerp(h, PLAT.h + (fbm(x * .028 + 3, z * .028 + 17, 3) - .5) * 4, k1 * .96);
+    const k2 = smooth(PLAT.r2, PLAT.r2 * .84, pd);
+    if (k2 > 0) h = lerp(h, PLAT.h2 + (fbm(x * .04 + 7, z * .04 + 2, 3) - .5) * 3, k2 * .96);
+  }
   // a lagoon bitten out of the south shore
   const ld = Math.hypot(x - LAGOON.x, z - LAGOON.z);
   h -= Math.pow(Math.max(0, 1 - ld / LAGOON.r), 1.4) * LAGOON.d;
@@ -1791,6 +1809,10 @@ const REGIONS = [
   // to be, and because leaving it unclaimed made whichever region happened to be nearest
   // stretch across the sea to take it, which is how the swamp came to be a third of the world.
   { name: 'fungal',   x:     0, z:    0, pull: 1.00, iso: 1 },   // Mushroom Biome
+  // And the jungle island: the third landmass, pinned to its own centre the same way. A
+  // second anchor with the same name is fine -- biomeAt takes the nearest -- and it means
+  // every 'jungle' zone, plant and creature weight in the file lays it out with no new rows.
+  { name: 'jungle',   x:     0, z:    0, pull: 1.00, iso: 2 },   // the Jungle Island
   { name: 'scrub',    x:   104, z:   44, pull: 1.00 },   // Savannah & Dry Grassland
 ].map(r => ({ ...r, x: r.x * RS, z: r.z * RS, pull: r.pull * RS }));
 // Declared above the fitting pass below, which assigns it: a `let` referenced before its own
@@ -9974,6 +9996,171 @@ class DomeDoor {
   dispose() { this.bar(false); scene.remove(this.g); }
 }
 const _ddQ = new THREE.Quaternion();
+// LADDERS, DECLARED UP HERE. The class used to sit two thousand lines further down, after the
+// module has already called populate() -> buildSites(). That was fine while the only ladder
+// was placed from a later block; the poachers' tower puts one up during worldgen, and a
+// class read before its declaration is the dead zone that has now cost this file ten
+// sessions. check:intro caught it in three seconds.
+// ---------- ladders ----------
+// A LADDER IS A LINE YOU CLIMB. Base and top in chart space, rails and rungs between them,
+// and while he is on it he owns his own height the way he does on the ship's line: the stick's
+// forward is up, back is down, a tap lets go, and off either end he simply steps. It is the
+// rung between the ground and every level added lately, and the first one is the honest way
+// up the mesa -- thirty units of cliff with a tower leaning on it.
+// scratch for the class below; it moved up with it (see the note above LADDER)
+const _ldY = new THREE.Vector3(0, 1, 0), _ldV = new THREE.Vector3();
+const LADDER = { speed: 3.4, reach: 2.4, rung: .55, w: 1.1 };
+class Ladder {
+  constructor(bx, bz, tx, tz, ty) {
+    this.alive = true;
+    const by = groundY(bx, bz);
+    this.a = new THREE.Vector3(bx, by, bz); this.b = new THREE.Vector3(tx, ty, tz);
+    this.pos = this.a.clone(); this.len = this.a.distanceTo(this.b);
+    const dir = this.b.clone().sub(this.a).normalize();
+    this.dir = dir;
+    // which way it faces: away from the rise, so he climbs with his back to the drop
+    const flat = Math.hypot(dir.x, dir.z) || 1e-4;
+    this.face = Math.atan2(-dir.x / flat, -dir.z / flat);
+    this.side = new THREE.Vector3(-dir.z / flat, 0, dir.x / flat);
+    // the geometry: two rails as tubes, rungs as one instanced cylinder
+    this.g = new THREE.Group(); scene.add(this.g); this.g.userData.flat = true;
+    for (const sg of [1, -1]) {
+      const pts = [this.a.clone().addScaledVector(this.side, sg * LADDER.w * .5), this.b.clone().addScaledVector(this.side, sg * LADDER.w * .5)];
+      pts[0].y += .1; pts[1].y += .1;
+      const wpts = pts.map(q => planetPos(q.x, q.y, q.z));
+      const rail = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(wpts), 4, .09, 6, false), M.elderBark2);
+      rail.castShadow = true; this.g.add(rail);
+    }
+    const n = Math.max(2, Math.round(this.len / LADDER.rung));
+    const rungs = new THREE.InstancedMesh(G.cyl, M.elderBark, n); rungs.castShadow = true; rungs.frustumCulled = false;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(.055, LADDER.w, .055);
+    for (let i = 0; i < n; i++) {
+      const t = (i + .5) / n;
+      const c = this.a.clone().lerp(this.b, t); c.y += .1;
+      const wc = planetPos(c.x, c.y, c.z);
+      // the rung runs along `side`, which in world space is that direction rotated onto the sphere
+      const ws = planetPos(c.x + this.side.x, c.y, c.z + this.side.z).sub(wc).normalize();
+      q.setFromUnitVectors(_ldY, ws); m.compose(wc, q, sc); rungs.setMatrixAt(i, m);
+    }
+    this.g.add(rungs);
+  }
+  // Where he stands on it at parameter t, in chart space, a little off the face.
+  at(t, out) { return (out || new THREE.Vector3()).lerpVectors(this.a, this.b, t).add(_ldV.set(Math.sin(this.face), 0, Math.cos(this.face)).multiplyScalar(-.55)); }
+  update() {}
+  dispose() { scene.remove(this.g); }
+}
+
+// ---------- the poachers ----------
+// Their camp is the first built thing on the jungle island, and it is built the way the base
+// and the dome are: a site, merged, with real colliders. A stockade of sharpened stakes with
+// a gap at the front, a lean-to hide, a fire, and the two things that make it THEIRS: cages
+// with animals in them, and a tower to watch the approaches from. The animals are caught
+// with the game's own net -- the same one he fires -- so a bolt cuts one loose and it runs,
+// which is a rescue with no new mechanic in it. The tower has a ladder and a deck you can
+// stand on: that is the verticality, and it is the first thing on the island that has a top.
+const POACH = { r: 15, stakes: 26, cages: 3, tower: 9.5, deck: 3.2 };
+function buildPoacherCamp(x, z, yaw) {
+  const S = siteAt(x, z, yaw); S.kind = 'poachers';
+  const P = POACH, R = P.r;
+  clearGrass(x, z, R + 6);
+  // ---- the stockade: stakes leaning outward, a gap of three at the front ----
+  for (let i = 0; i < P.stakes; i++) {
+    const a = i / P.stakes * Math.PI * 2;
+    if (Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) < .22) continue;
+    const h = rnd(3.2, 4.4), lean = rnd(.12, .26);
+    const px = Math.sin(a) * R, pz = Math.cos(a) * R;
+    S.strut(G.cylT, M.elderBark2, .22, px, 0, pz, px + Math.sin(a) * h * lean, h, pz + Math.cos(a) * h * lean, .22);
+    S.put(G.cone, M.hullPale, .2, .5, .2, px + Math.sin(a) * h * lean, h + .2, pz + Math.cos(a) * h * lean);
+    if (i % 3 === 0) S.block(px, pz, 1.6, h);
+  }
+  // a rail of lashed poles along the inside
+  for (let i = 0; i < P.stakes; i += 2) {
+    const a0 = i / P.stakes * Math.PI * 2, a1 = (i + 2) / P.stakes * Math.PI * 2;
+    if (Math.abs(Math.atan2(Math.sin(a0), Math.cos(a0))) < .3 || Math.abs(Math.atan2(Math.sin(a1), Math.cos(a1))) < .3) continue;
+    S.strut(G.cyl, M.wood, .09, Math.sin(a0) * (R - .3), 2.1, Math.cos(a0) * (R - .3), Math.sin(a1) * (R - .3), 2.1, Math.cos(a1) * (R - .3));
+  }
+  // ---- the hide: a lean-to of planks on four posts, open to the fire ----
+  {
+    const hx = -R * .45, hz = -R * .35, w = 5.2, d = 4.2;
+    for (const [px, pz, ph] of [[-w / 2, -d / 2, 2.6], [w / 2, -d / 2, 2.6], [-w / 2, d / 2, 1.7], [w / 2, d / 2, 1.7]])
+      S.put(G.cyl, M.elderBark2, .14, ph, .14, hx + px, ph / 2, hz + pz);
+    for (let i = 0; i < 6; i++)
+      S.put(G.box, M.wood, w + .6, .12, d / 6 * 1.05, hx, 2.6 - (i + .5) * (.9 / 6), hz - d / 2 + (i + .5) * d / 6, -Math.atan2(.9, d), 0, 0);
+    S.put(G.box, M.domeCrate, 1.3, .9, .9, hx + 1.2, .45, hz - .6, 0, .3, 0);
+    S.put(G.box, M.domeCrate, 1.0, .7, .8, hx - 1.4, .35, hz + .2, 0, -.5, 0);
+    S.block(hx, hz, 2.6, 2.6);
+  }
+  // ---- the cages: a bar frame each, on a base, in a row along the back ----
+  const cagesAt = [];
+  for (let i = 0; i < P.cages; i++) {
+    const cx = (i - (P.cages - 1) / 2) * 5.2, cz = R * .55, cw = 3.6, ch = 3.0;
+    S.put(G.box, M.domeDark, cw + .4, .25, cw + .4, cx, .12, cz);
+    for (const [px, pz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]])
+      S.put(G.cyl, M.domeSteel, .1, ch, .1, cx + px * cw / 2, ch / 2, cz + pz * cw / 2);
+    for (let k = 1; k < 5; k++) {
+      const t = -cw / 2 + k * cw / 5;
+      S.put(G.cyl, M.domeSteel, .05, ch, .05, cx + t, ch / 2, cz - cw / 2);
+      S.put(G.cyl, M.domeSteel, .05, ch, .05, cx + t, ch / 2, cz + cw / 2);
+      S.put(G.cyl, M.domeSteel, .05, ch, .05, cx - cw / 2, ch / 2, cz + t);
+      S.put(G.cyl, M.domeSteel, .05, ch, .05, cx + cw / 2, ch / 2, cz + t);
+    }
+    S.put(G.box, M.domeDark, cw + .4, .16, cw + .4, cx, ch + .08, cz);
+    for (const [px, pz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) S.block(cx + px * cw * .42, cz + pz * cw * .42, .9, ch);
+    cagesAt.push(S.world(cx, cz));
+  }
+  // ---- the tower: four legs, a deck you can stand on, a rail, and a ladder up ----
+  const tx = R * .5, tz = -R * .5, T = P.tower, D = P.deck;
+  for (const [px, pz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]])
+    S.strut(G.cylT, M.elderBark2, .2, tx + px * (D * .7), 0, tz + pz * (D * .7), tx + px * (D * .5), T, tz + pz * (D * .5), .2);
+  for (let i = 0; i < 3; i++) {
+    const y = T * (i + 1) / 4, k = .7 - .2 * (i + 1) / 4;
+    S.strut(G.cyl, M.wood, .08, tx - D * k, y, tz - D * k, tx + D * k, y, tz + D * k);
+    S.strut(G.cyl, M.wood, .08, tx + D * k, y, tz - D * k, tx - D * k, y, tz + D * k);
+  }
+  S.put(G.box, M.wood, D * 1.15, .22, D * 1.15, tx, T + .11, tz);
+  for (const [px, pz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+    S.put(G.box, M.elderBark2, px ? .1 : D * 1.15, .9, pz ? .1 : D * 1.15, tx + px * D * .55, T + .7, tz + pz * D * .55);
+  }
+  S.put(G.cone, M.hullPale, D * .8, 1.6, D * .8, tx, T + 1.9, tz);
+  // the deck is a thing to stand on: one collider with the deck's top as its top
+  S.block(tx, tz, D * .6, T + .22);
+  const foot = S.world(tx + D * .7, tz + D * 1.25), top = S.world(tx + D * .5, tz + D * .5);
+  // ---- the fire, in the middle, where the light reaches the cages ----
+  S.done();
+  const fw = S.world(0, -2);
+  world.structures.push(new Campfire(fw.x, fw.z));
+  world.structures.push(new Ladder(foot.x, foot.z, top.x, top.z, S.base + T + .22));
+  // ---- and what is in the cages: caught, with the game's own net, so a bolt frees it ----
+  // ONE TICK LATER, deliberately. This runs inside populate(), while the module is still
+  // evaluating, and NetShot is a class declared three thousand lines further down with the
+  // rope, the net table and the glow textures behind it -- the dead zone again, and moving
+  // that whole tangle up here is the wrong fix. The walls, the fire and the tower go in now;
+  // the animals and their nets arrive on the next turn of the event loop, by which time
+  // every class in the file exists. Nobody is looking yet.
+  setTimeout(() => {
+    for (const c of cagesAt) {
+      if (!isLand(c.x, c.z)) continue;
+      const Sp = [Hopper, Grazer, Burrower][(Math.random() * 3) | 0];
+      const a = new Sp(c.x, c.z);
+      world.creatures.push(a);
+      const n = new NetShot(c.x, groundY(c.x, c.z) + 2.2, c.z, 0, 1);
+      n.t = 9; n.take(a); world.effects.push(n);
+    }
+  }, 0);
+  return { x, z };
+}
+// Somewhere on the jungle island's lower terrace: on it, off the cliffs, flat, and clear.
+function poacherSpot() {
+  for (let i = 0; i < 400; i++) {
+    const a = rnd(6.283), r = Math.sqrt(rnd(0, 1)) * PLAT.r * .82;
+    const x = PLAT.x + Math.cos(a) * r, z = PLAT.z + Math.sin(a) * r;
+    if (Math.hypot(x - PLAT.x, z - PLAT.z) < PLAT.r2 * 1.15) continue;
+    const h = height(x, z); if (h < PLAT.h - 4 || h > PLAT.h + 6) continue;
+    if (slope(x, z) > .16 || !obClear(x, z, 19)) continue;
+    return { x, z };
+  }
+  return null;
+}
 function buildSites() {
   const out = [];
   const farm = siteSpot('steading', ['pasture'], 2.6, 10, .2, [15, 12, 9, 7, 5], out);
@@ -9982,6 +10169,14 @@ function buildSites() {
   if (ring) out.push(buildStones(ring.x, ring.z));
   const huddle = siteSpot('huddle', ['scrub', 'pasture'], 2.6, 12, .2, [16, 13, 10, 8, 6], out);
   if (huddle) out.push(buildHuddle(huddle.x, huddle.z, rnd(Math.PI * 2)));
+  // The poachers, on the jungle island's lower terrace. Not through siteSpot, which samples
+  // the whole world by biome and would as happily put them in the mainland jungle.
+  {
+    const ps = poacherSpot();
+    if (ps) { out.push(buildPoacherCamp(ps.x, ps.z, Math.atan2(PLAT.x - ps.x, PLAT.z - ps.z)));
+      console.info('[site] the poachers are camped at ' + ps.x.toFixed(0) + ', ' + ps.z.toFixed(0)); }
+    else console.warn('[site] nowhere on the terrace for the poachers');
+  }
   // Near the berth on purpose: it is a thing to go and look at rather than a thing to find.
   {
     const dm = siteSpot('dome', ['pasture', 'scrub', 'coast'], 2.6, 12, .16, [14, 11, 9, 7], out);
@@ -9998,8 +10193,8 @@ function buildSites() {
   // asking for flat open ground in one of three regions and ends up taking anything on the
   // main island that is above water, and only the "reachable" test -- not the sister isle
   // across the sea -- is held all the way through.
-  const iso = { x: CENTERS[1][0] * W, z: CENTERS[1][1] * W };
-  const reachable = q => q && Math.hypot(q.x - iso.x, q.z - iso.z) > W * .34;
+  const iso = { x: CENTERS[1][0] * W, z: CENTERS[1][1] * W }, iso2 = { x: CENTERS[2][0] * W, z: CENTERS[2][1] * W };
+  const reachable = q => q && Math.hypot(q.x - iso.x, q.z - iso.z) > W * .34 && Math.hypot(q.x - iso2.x, q.z - iso2.z) > W * .40;
   const RUNGS = [[.12, 32], [.12, 26], [.12, 22], [.16, 18], [.20, 14], [.28, 10], [.40, 5], [.60, 0]];
   let pad = null;
   // On the mesa, the mothership is set down beside the saucer: the two of them together are
@@ -10943,6 +11138,20 @@ function populate() {
       if (d < bd) { bd = d; best = { bx, bz, tx, tz, ty: height(tx, tz) }; }
     }
     if (best) { world.structures.push(new Ladder(best.bx, best.bz, best.tx, best.tz, best.ty)); world.mesaLadder = best; }
+  }
+  // AND UP THE PLATEAU, one on each cliff, both on the side that faces the mainland so the
+  // way up is the way you came. Same search the mesa's ladder does.
+  for (const [r, hTop] of [[PLAT.r, PLAT.h], [PLAT.r2, PLAT.h2]]) {
+    const a = Math.atan2(-PLAT.z, -PLAT.x);
+    let best = null, bd = 1e9;
+    for (let i = -8; i <= 8; i++) {
+      const aa = a + i * .08;
+      const bx = PLAT.x + Math.cos(aa) * r * 1.06, bz = PLAT.z + Math.sin(aa) * r * 1.06;
+      const tx = PLAT.x + Math.cos(aa) * r * .84, tz = PLAT.z + Math.sin(aa) * r * .84;
+      if (!isLand(bx, bz) || height(tx, tz) < hTop - 5 || height(bx, bz) > hTop - 8) continue;
+      if (Math.abs(i) < bd) { bd = Math.abs(i); best = { bx, bz, tx, tz, ty: height(tx, tz) }; }
+    }
+    if (best) world.structures.push(new Ladder(best.bx, best.bz, best.tx, best.tz, best.ty));
   }
   // He starts at the base -- between the mothership and the saucer -- when there is one on
   // the mesa, and at the camp otherwise. The camp stays on the mainland: it is somewhere to go.
@@ -13846,53 +14055,6 @@ function harvestPlant(pl) {
   return y.n;
 }
 const HACK = { reach: 3.6, T: 2.4 };   // how close, and how long a hold fells a tree
-// ---------- ladders ----------
-// A LADDER IS A LINE YOU CLIMB. Base and top in chart space, rails and rungs between them,
-// and while he is on it he owns his own height the way he does on the ship's line: the stick's
-// forward is up, back is down, a tap lets go, and off either end he simply steps. It is the
-// rung between the ground and every level added lately, and the first one is the honest way
-// up the mesa -- thirty units of cliff with a tower leaning on it.
-const LADDER = { speed: 3.4, reach: 2.4, rung: .55, w: 1.1 };
-class Ladder {
-  constructor(bx, bz, tx, tz, ty) {
-    this.alive = true;
-    const by = groundY(bx, bz);
-    this.a = new THREE.Vector3(bx, by, bz); this.b = new THREE.Vector3(tx, ty, tz);
-    this.pos = this.a.clone(); this.len = this.a.distanceTo(this.b);
-    const dir = this.b.clone().sub(this.a).normalize();
-    this.dir = dir;
-    // which way it faces: away from the rise, so he climbs with his back to the drop
-    const flat = Math.hypot(dir.x, dir.z) || 1e-4;
-    this.face = Math.atan2(-dir.x / flat, -dir.z / flat);
-    this.side = new THREE.Vector3(-dir.z / flat, 0, dir.x / flat);
-    // the geometry: two rails as tubes, rungs as one instanced cylinder
-    this.g = new THREE.Group(); scene.add(this.g); this.g.userData.flat = true;
-    for (const sg of [1, -1]) {
-      const pts = [this.a.clone().addScaledVector(this.side, sg * LADDER.w * .5), this.b.clone().addScaledVector(this.side, sg * LADDER.w * .5)];
-      pts[0].y += .1; pts[1].y += .1;
-      const wpts = pts.map(q => planetPos(q.x, q.y, q.z));
-      const rail = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(wpts), 4, .09, 6, false), M.elderBark2);
-      rail.castShadow = true; this.g.add(rail);
-    }
-    const n = Math.max(2, Math.round(this.len / LADDER.rung));
-    const rungs = new THREE.InstancedMesh(G.cyl, M.elderBark, n); rungs.castShadow = true; rungs.frustumCulled = false;
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(.055, LADDER.w, .055);
-    for (let i = 0; i < n; i++) {
-      const t = (i + .5) / n;
-      const c = this.a.clone().lerp(this.b, t); c.y += .1;
-      const wc = planetPos(c.x, c.y, c.z);
-      // the rung runs along `side`, which in world space is that direction rotated onto the sphere
-      const ws = planetPos(c.x + this.side.x, c.y, c.z + this.side.z).sub(wc).normalize();
-      q.setFromUnitVectors(_ldY, ws); m.compose(wc, q, sc); rungs.setMatrixAt(i, m);
-    }
-    this.g.add(rungs);
-  }
-  // Where he stands on it at parameter t, in chart space, a little off the face.
-  at(t, out) { return (out || new THREE.Vector3()).lerpVectors(this.a, this.b, t).add(_ldV.set(Math.sin(this.face), 0, Math.cos(this.face)).multiplyScalar(-.55)); }
-  update() {}
-  dispose() { scene.remove(this.g); }
-}
-const _ldY = new THREE.Vector3(0, 1, 0), _ldV = new THREE.Vector3();
 function ladderOffer() {
   const p = player;
   if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5 || p.carry || p.hold || p.climbing) return;
@@ -14654,6 +14816,27 @@ function attachWeapon(r) {
       envUse(g2, .5); markBody(g2);
       weap.bone.add(g2); weap.axe = g2; g2.visible = false; weap.axeK0 = k;
     }
+    // THE NET CANNON, the same way. It used to fire out of the blaster, which is a pistol
+    // and reads as one. This is a launcher: a short fat barrel that flares to a bell, a drum
+    // of net under it, and two rails -- sized off the same tip marker so the muzzle lands
+    // where the shot already leaves from.
+    {
+      const g3 = new THREE.Group();
+      const L = tipD * W.fit / Math.max(1e-4, k);
+      const zz = t => t * L;
+      g3.add(mesh(G.cyl, M.domeDark, L * .16, L * .62, L * .16, 0, 0, zz(.36)).rotateX(Math.PI / 2));
+      g3.add(mesh(G.cylT, M.domeSteel, L * .26, L * .3, L * .26, 0, 0, zz(.86)).rotateX(-Math.PI / 2));
+      g3.add(mesh(G.cyl, M.domeTrim, L * .28, L * .05, L * .28, 0, 0, zz(1.0)).rotateX(Math.PI / 2));
+      g3.add(mesh(G.cyl, M.domeCrate, L * .2, L * .22, L * .2, 0, -L * .2, zz(.22)).rotateX(Math.PI / 2));
+      g3.add(mesh(G.torus, M.rope, L * .13, L * .13, L * .13, 0, -L * .2, zz(.22)));
+      for (const sx of [-1, 1]) g3.add(mesh(G.box, M.domeSteel, L * .05, L * .07, L * .8, sx * L * .17, L * .06, zz(.42)));
+      g3.add(mesh(G.box, M.domeDark, L * .1, L * .22, L * .14, 0, -L * .1, zz(-.02)));
+      g3.add(mesh(G.sph, M.domeGlass, L * .05, L * .05, L * .05, 0, L * .17, zz(.5)));
+      g3.scale.setScalar(k); g3.position.fromArray(W.drop);
+      g3.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+      envUse(g3, .5); markBody(g3);
+      weap.bone.add(g3); weap.net = g3; g3.visible = false; weap.netK0 = k;
+    }
     weap.ready = true;
     if (!weap.fx) buildChargeFx();
     if (!INTRO.on) wdock.hidden = false;
@@ -15278,11 +15461,12 @@ function stepWeapon(dt, rx, ry) {
     }
     if (show !== p.wpnShow) { p.wpnShow = show; weaponPop(show); }
     p.wpnK = lerp(p.wpnK, show, Math.min(1, dt / ARMA.pop));
-    const k = p.wpnK, vis = k > .02, ax = p.wpn === 'axe';
+    const k = p.wpnK, vis = k > .02, ax = p.wpn === 'axe', nt = p.wpn === 'net';
     // it assembles rather than appearing: up through its own size with a little overshoot
     const sc = k * (1.06 - .06 * k);
-    if (weap.model) { weap.model.visible = vis && !ax; if (weap.k0) weap.model.scale.setScalar(weap.k0 * sc); }
+    if (weap.model) { weap.model.visible = vis && !ax && !nt; if (weap.k0) weap.model.scale.setScalar(weap.k0 * sc); }
     if (weap.axe) { weap.axe.visible = vis && ax; if (weap.axeK0) weap.axe.scale.setScalar(weap.axeK0 * sc); }
+    if (weap.net) { weap.net.visible = vis && nt; if (weap.netK0) weap.net.scale.setScalar(weap.netK0 * sc); }
   }
   armB.classList.toggle('on', !!p.armWant);
   if (!(canHold && p.armed > .5)) {
