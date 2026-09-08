@@ -7,6 +7,13 @@
 <!-- Add to Home Screen. iOS reads the apple-* tags and the touch icon; everything else
      reads the manifest. The icon is cropped out of its bezel: iOS masks its own corners. -->
 <link rel="manifest" href="manifest.webmanifest">
+<!-- THE DISPLAY FACE. The title logo is a chunky rounded sans -- cream letters, cyan edge --
+     and every control under it was Georgia on amber glass, which is a different game's
+     interface. Fredoka is the nearest web face to those letterforms. display=swap, so a
+     phone with no network gets Arial Black in the same rules and nothing waits on it. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -538,6 +545,67 @@
   /* covers the one frame where the title's scene is swapped for the world's */
   #veil{position:fixed;inset:0;z-index:9;background:#05070d;opacity:1;pointer-events:none;
     transition:opacity 1.2s ease-out}
+
+  /* ══ THE BRAND PASS ══════════════════════════════════════════════════════════════════
+     One language for the whole interface, and it is the title screen's: cream on deep
+     blue-violet glass with a cyan rim, labels in the logo's own chunky rounded face, spaced
+     and uppercase like PRESS TO START. The serif stays for the things the island SAYS -- the
+     era name, the log -- because that is the game's voice; the controls are the game's brand.
+     Everything here overrides by order. Cut this block and the old chrome is back exactly. */
+  :root{--ink:#f6e8cc;--ink2:rgba(246,232,204,.72);--cy:#9df7ff;--cyd:rgba(120,238,255,.55);
+    --glass:rgba(10,14,40,.58);--glass2:rgba(12,18,50,.80);--rim:rgba(157,247,255,.34);
+    --disp:"Fredoka","Arial Black","Helvetica Neue",Helvetica,Arial,sans-serif}
+  .tog{font-family:var(--disp);font-weight:600;font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink);background:var(--glass);border:1.5px solid var(--rim);border-radius:13px;padding:8px 14px;
+    box-shadow:0 4px 14px rgba(0,0,0,.42),inset 0 0 0 1px rgba(255,255,255,.04);
+    -webkit-backdrop-filter:blur(8px) saturate(1.2);backdrop-filter:blur(8px) saturate(1.2)}
+  .tog.icon{padding:8px 12px}
+  .tog.on{background:rgba(157,247,255,.16);border-color:var(--cy);color:#dbfbff;
+    box-shadow:0 0 18px var(--cyd),0 4px 14px rgba(0,0,0,.42)}
+  .tog:active{transform:scale(.95)}
+  #hud h1{font-family:var(--disp);font-weight:700;font-size:25px;letter-spacing:.05em;color:var(--ink);
+    text-shadow:0 2px 0 rgba(20,110,140,.55),0 0 20px rgba(120,238,255,.35),0 2px 6px rgba(0,0,0,.95)}
+  #hud .era{color:var(--ink2);font-size:14.5px}
+  #hudHead::after{content:'';display:block;width:58px;height:2px;margin:2px 0 6px;border-radius:2px;
+    background:linear-gradient(90deg,var(--cy),rgba(157,247,255,0));box-shadow:0 0 8px rgba(120,238,255,.6)}
+  #mini{border:1.5px solid var(--rim);border-radius:11px;
+    box-shadow:0 6px 22px rgba(0,0,0,.5),0 0 16px rgba(120,238,255,.16),inset 0 0 24px rgba(0,0,0,.4)}
+  /* The sticks were amber. Amber is the campfire's colour, not the interface's; the pads
+     sit in the same cyan family as the key, the lock and the prompt, and the knob is the
+     cream of the letters. */
+  #sticks .stick{background:radial-gradient(circle,rgba(157,247,255,.10),rgba(157,247,255,.03) 58%,rgba(157,247,255,0) 74%);
+    border:1.5px solid rgba(157,247,255,.26);box-shadow:inset 0 0 26px rgba(120,238,255,.08)}
+  #sticks .stick.act{border-color:rgba(157,247,255,.62);
+    box-shadow:inset 0 0 30px rgba(120,238,255,.16),0 0 18px rgba(120,238,255,.16)}
+  #sticks .knob{background:radial-gradient(circle at 38% 32%,rgba(255,250,236,.72),rgba(246,232,204,.34) 58%,rgba(110,170,196,.18));
+    border:1px solid rgba(246,232,204,.55);box-shadow:0 0 10px rgba(157,247,255,.22),inset 0 1px 3px rgba(255,255,255,.32)}
+  #sticks .stick.act .knob{box-shadow:0 0 22px rgba(157,247,255,.55),inset 0 1px 3px rgba(255,255,255,.45)}
+  #sticks .lbl{font-family:var(--disp);font-weight:600;font-variant:normal;text-transform:uppercase;
+    font-size:10.5px;letter-spacing:.22em;color:var(--ink);opacity:.55;bottom:-21px}
+  .wbtn{color:var(--ink);border:1.5px solid var(--rim);
+    background:radial-gradient(circle at 40% 32%,rgba(157,247,255,.13),rgba(10,14,40,.52) 62%,rgba(10,14,40,.62));
+    box-shadow:0 4px 16px rgba(0,0,0,.45),inset 0 0 18px rgba(120,238,255,.06)}
+  .wbtn .wlbl,.wslot span:last-child,.dbtn .dlbl{font-family:var(--disp);font-weight:600;font-variant:normal;
+    text-transform:uppercase;letter-spacing:.14em;font-size:9.5px}
+  .wbtn .wlbl{opacity:.62}
+  .wslot,.dbtn{color:var(--ink);background:var(--glass2);border:1.5px solid var(--rim)}
+  .dbtn{border-radius:20px}
+  #log{font-size:14px;line-height:1.55;max-width:74vw}
+  #log div{padding-left:10px;margin-top:5px;border-left:2px solid rgba(157,247,255,.6)}
+  #hint{font-family:var(--disp);font-weight:500;font-size:11px;letter-spacing:.06em;opacity:.42}
+  #mapv h2{font-family:var(--disp);font-weight:700;font-size:18px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+  #mapv h2 span{font-family:Georgia,"Iowan Old Style",serif;font-weight:normal;text-transform:none;letter-spacing:.02em}
+  #mapwrap{border:1.5px solid var(--rim);border-radius:11px;
+    box-shadow:0 10px 44px rgba(0,0,0,.62),0 0 22px rgba(120,238,255,.14),inset 0 0 60px rgba(0,0,0,.4)}
+  #mapzoom,#maplg{font-family:var(--disp);font-weight:500;letter-spacing:.1em;text-transform:uppercase}
+  #stale{font-family:var(--disp);font-weight:600;letter-spacing:.1em;text-transform:uppercase}
+  #gllost{background:var(--glass2);border:1.5px solid var(--rim);border-radius:16px}
+  #gllost b{font-family:var(--disp);font-weight:700;letter-spacing:.06em;color:var(--ink)}
+  #gllost button{font-family:var(--disp);font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+    background:rgba(157,247,255,.16);border:1.5px solid var(--cy);color:#dbfbff;border-radius:13px}
+  #fixbar{background:rgba(10,14,40,.62);box-shadow:0 0 0 1.5px var(--rim)}
+  #boot span{font-family:var(--disp);font-style:normal;font-weight:500;letter-spacing:.18em;text-transform:uppercase;font-size:12px;opacity:.55}
+  #bldTag{font-family:var(--disp);font-weight:500;letter-spacing:.14em}
 </style>
 </head>
 <body class="intro">
@@ -1412,7 +1480,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd10';
+const BUILD = 'd11';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
