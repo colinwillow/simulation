@@ -1202,7 +1202,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c88';
+const BUILD = 'c89';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -9385,18 +9385,28 @@ function renderPost() {
 // under a bright frame reads as a hole, which is what he has been looking at.
 // One pixel, from the bottom row of the frame just drawn, twice a second. readPixels stalls the
 // pipe, so it is deliberately not per-frame, and it is the whole cost of this.
-let _tintAt = 0;
-const _tintPx = new Uint8Array(4);
+// THE WHOLE BOTTOM ROW, not one pixel of it. c88 read the single centre pixel and landed on a
+// lavender that is nothing like the dark navy the frame actually ends in -- one pixel of a star
+// field is whatever happened to be there. An average across the row is the colour of the edge.
+// theme-color as well: which of the two iOS samples for that strip is not documented anywhere,
+// it costs nothing to set both, and they can only agree.
+let _tintAt = 0, _tintRow = null;
 function edgeTint() {
   const now = performance.now();
   if (now - _tintAt < 500) return;
   _tintAt = now;
   try {
-    const gl = renderer.getContext();
-    gl.readPixels(renderer.domElement.width >> 1, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, _tintPx);
-    const c = 'rgb(' + _tintPx[0] + ',' + _tintPx[1] + ',' + _tintPx[2] + ')';
+    const gl = renderer.getContext(), w = renderer.domElement.width | 0;
+    if (w < 8) return;
+    if (!_tintRow || _tintRow.length < w * 4) _tintRow = new Uint8Array(w * 4);
+    gl.readPixels(0, 0, w, 1, gl.RGBA, gl.UNSIGNED_BYTE, _tintRow);
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let x = 0; x < w; x++) { const i = x * 4; r += _tintRow[i]; g += _tintRow[i + 1]; b += _tintRow[i + 2]; n++; }
+    const c = 'rgb(' + (r / n | 0) + ',' + (g / n | 0) + ',' + (b / n | 0) + ')';
     document.documentElement.style.background = c;
     document.body.style.background = c;
+    const tc = document.querySelector('meta[name="theme-color"]');
+    if (tc) tc.setAttribute('content', c);
   } catch (e) { }
 }
 
