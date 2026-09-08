@@ -1538,7 +1538,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd37';
+const BUILD = 'd38';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2369,6 +2369,46 @@ function mesh(geo, mat, sx = 1, sy = 1, sz = 1, px = 0, py = 0, pz = 0) {
 // and cost a fortune: a blob is 221 vertices indexed and 960 unrolled, so the merged world
 // held four million vertices where one would do. Merging keeps the indices now — concatenate
 // the vertex data, and rewrite each part's indices with an offset.
+// EVERY sp_* MODEL IN THE BATCH IS INTERLEAVED, AND THAT IS THE INVISIBLE-COLLIDER BUG.
+// Their GLBs pack position, normal and uv into one bufferView with a 32-byte stride, so
+// GLTFLoader hands back InterleavedBufferAttributes -- and `attribute.array` on one of those
+// is the WHOLE interleaved buffer, eight floats per vertex, not the three this expected.
+// BufferGeometry.clone() does not save you: it forwards a shared `data` object to
+// attribute.clone(data), which takes the branch that PRESERVES the interleaving. So
+// `pos.set(g.attributes.position.array, v * 3)` was copying count*8 floats into room for
+// count*3 and throwing RangeError -- "Range consisting of offset and length are out of
+// bounds", the error that has been latched on the HUD for a dozen builds.
+//
+// The throw happens inside a loadModel callback, which is inside GLTFLoader's promise chain,
+// so it surfaced as an unhandled rejection and nothing else. What it actually killed was
+// layZones: it dies partway through the merge, `scene.add(grp)` at the end never runs, and
+// EVERY grove, ridge, burst, peak, outpost, bed and track on the island is never drawn --
+// while every obAdd zPut made on the way in is already live in the obstacle field.
+// That is the invisible wall you can stand on, and it is the whole island, not one crystal.
+//
+// Deinterleaved once per source geometry and cached, because the same nine parts are merged
+// into dozens of chunks and the copy is only worth doing once.
+const DEINT = new WeakMap();
+function deinterleave(g) {
+  let need = false;
+  for (const k in g.attributes) if (g.attributes[k].isInterleavedBufferAttribute) { need = true; break; }
+  if (!need) return g;
+  let o = DEINT.get(g); if (o) return o;
+  o = new THREE.BufferGeometry();
+  for (const k in g.attributes) {
+    const a = g.attributes[k], n = a.count, s = a.itemSize, arr = new Float32Array(n * s);
+    for (let i = 0; i < n; i++) {
+      arr[i * s] = a.getX(i);
+      if (s > 1) arr[i * s + 1] = a.getY(i);
+      if (s > 2) arr[i * s + 2] = a.getZ(i);
+      if (s > 3) arr[i * s + 3] = a.getW(i);
+    }
+    o.setAttribute(k, new THREE.BufferAttribute(arr, s, a.normalized));
+  }
+  if (g.index) o.setIndex(new THREE.BufferAttribute(g.index.array.slice(), 1));
+  DEINT.set(g, o);
+  return o;
+}
 function mergeBin(bin) {
   const byMat = new Map();
   for (const it of bin) { let a = byMat.get(it.mat); if (!a) { a = []; byMat.set(it.mat, a); } a.push(it); }
@@ -2376,7 +2416,7 @@ function mergeBin(bin) {
   for (const [mat, items] of byMat) {
     let total = 0, idxTotal = 0; const parts = [];
     for (const it of items) {
-      const g = it.geo.clone(); g.applyMatrix4(it.matrix); parts.push(g);
+      const g = deinterleave(it.geo).clone(); g.applyMatrix4(it.matrix); parts.push(g);
       const n = g.attributes.position.count;
       total += n; idxTotal += g.index ? g.index.count : n;
     }
@@ -9978,6 +10018,7 @@ function layZones(M) {
   // twenty -- of which only the handful you are looking at are ever drawn.
   const CHUNK = 90;
   const grp = new THREE.Group(); grp.userData.flat = true;
+  scene.add(grp);
   for (const [bin, cast] of [[B.big, true], [B.small, false]]) {
     if (!bin.length) continue;
     const cells = new Map();
@@ -9988,14 +10029,20 @@ function layZones(M) {
       let a = cells.get(key); if (!a) cells.set(key, a = []);
       a.push(it);
     }
-    for (const a of cells.values()) for (const m of mergeBin(a)) {
-      warpGeo(m.geometry);
-      m.geometry.computeBoundingSphere();   // warpGeo moved every vertex; the old sphere is a lie
-      m.castShadow = cast; m.receiveShadow = true;
-      grp.add(m);
+    for (const a of cells.values()) {
+      // ONE CHUNK'S FAILURE IS ONE CHUNK. The whole of layZones used to hang off this loop
+      // completing: anything that threw took `scene.add(grp)` with it and left the island
+      // with every zone collider and no zone geometry. The group is in the scene before a
+      // single triangle is built now, and a chunk that will not merge says so and is skipped.
+      let ms; try { ms = mergeBin(a); } catch (err) { console.warn('[zones] chunk failed to merge', err); continue; }
+      for (const m of ms) {
+        warpGeo(m.geometry);
+        m.geometry.computeBoundingSphere();   // warpGeo moved every vertex; the old sphere is a lie
+        m.castShadow = cast; m.receiveShadow = true;
+        grp.add(m);
+      }
     }
   }
-  scene.add(grp);
   console.info('[zones] ' + grp.children.length + ' chunk meshes, culled per chunk');
 }
 
