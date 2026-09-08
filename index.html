@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd74';
+const BUILD = 'd75';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -5335,14 +5335,37 @@ function attachRig(parent, cfg, done) {
     // ONE-SHOTS, BY NAME AND NOTHING ELSE. pickClip guesses from a keyword and a veto, which
     // is right for a walk and wrong for a combo: melee_slash and melee_punch would both match
     // any pattern loose enough to catch either, and the ORDER is the whole point of them.
-    const byName = nm => (nm && e.anims.find(a2 => a2.name === nm)) || null;
+    // BY NAME, AND THEN NEARLY BY NAME. An export renamed melee_punch to melee_punch_01 and
+    // the exact match dropped the first blow of the combo silently -- the list was two long
+    // and nothing said so. A prefix match on the stripped name catches a suffix or a change of
+    // punctuation and says which clip it settled for.
+    const byName = nm => {
+      if (!nm) return null;
+      const hit = e.anims.find(a2 => a2.name === nm);
+      if (hit) return hit;
+      const bare = t => t.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const b = bare(nm);
+      const near = e.anims.find(a2 => bare(a2.name) === b) || e.anims.find(a2 => bare(a2.name).indexOf(b) === 0);
+      if (near) console.warn('[rig] no clip called ' + nm + ' — using ' + near.name);
+      return near || null;
+    };
     clips.slide = byName(cfg.slide);
-    clips.equip = byName(cfg.equip); clips.disarm = byName(cfg.disarm);
+    // ONE CLIP, BOTH WAYS, and now it may be either one of them: this export ships
+    // equip_weapon without a disarm_weapon beside it, and the hand-off reads the same gesture
+    // whichever is in the file.
+    clips.equip = byName(cfg.equip) || byName(cfg.disarm);
+    clips.disarm = byName(cfg.disarm) || clips.equip;
     clips.landRoll = byName(cfg.landRoll);
+    // THE THROW, IN TWO PIECES. `throwGo` is the whole gesture; `throwBack` is one frame of
+    // it, the arm cocked. A flick plays the first from zero; a wind-up holds the second and
+    // then plays the first from the frame that matches it. Which frame is not a guess -- see
+    // THROWA.at.
+    clips.throwGo = byName(cfg.throwGo);
+    clips.throwBack = pickPose(e.anims, cfg.throwBack);
     const meleeK = [], wmeleeK = [];
     (cfg.melee || []).forEach((nm, i) => { const k = 'mel' + i; if ((clips[k] = byName(nm))) meleeK.push(k); });
     (cfg.wmelee || []).forEach((nm, i) => { const k = 'wmel' + i; if ((clips[k] = byName(nm))) wmeleeK.push(k); });
-    const oneShot = ['slide', 'equip', 'disarm', 'landRoll'].concat(meleeK, wmeleeK).filter(k => clips[k]);
+    const oneShot = ['slide', 'equip', 'disarm', 'landRoll', 'throwGo'].concat(meleeK, wmeleeK).filter(k => clips[k]);
     // See RIG.stillFingers for why. Cloned rather than edited in place, because the clips
     // belong to the cached file and every future instance of this model would inherit the
     // edit -- and the clone keeps the ORIGINAL NAME, because the stride and floor caches
@@ -5407,10 +5430,18 @@ function attachRig(parent, cfg, done) {
       holdSocket = up.tracks.some(t => new RegExp(WEAPON.bone, 'i').test(t.name));
       if (!holdSocket) console.warn('[rig] the carry pose does not keyframe the `' + WEAPON.bone + '` null — carrying upright instead of on the socket.');
     }
+    // THE COCKED ARM IS AN UPPER-BODY POSE, for the same reason the carry is: he can walk
+    // about with a rock over his shoulder, and a full-body pose would have him sliding across
+    // the ground on a frozen stance. Spine-up only, and the legs come from the same clones.
+    if (clips.throwBack) {
+      const tw = clips.throwBack.clone(); tw.name = 'throw__upper';
+      tw.tracks = tw.tracks.filter(t => CARRY.upper.test(t.name));
+      if (tw.tracks.length) clips.throwUpper = tw;
+    }
     // idleLegs / walkLegs / runLegs: the same gait with every spine-up track dropped, so it
     // moves the hips and legs and says nothing about the arms. Hips stays (it carries the
     // whole body's bounce and travel), because it is not a spine-up bone.
-    if (clips.holdUpper) for (const g of ['idle', 'walk', 'run']) {
+    if (clips.holdUpper || clips.throwUpper) for (const g of ['idle', 'walk', 'run']) {
       if (!clips[g]) continue;
       const legs = clips[g].clone(); legs.name = clips[g].name + '__legs';
       legs.tracks = legs.tracks.filter(t => !CARRY.upper.test(t.name));
@@ -5436,7 +5467,7 @@ function attachRig(parent, cfg, done) {
       if (oneShot.indexOf(k) >= 0) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
       acts[k] = a;
       // A pose holds itself: one frame on repeat is a divide by its own zero length.
-      if (k === 'pickUp' || k === 'hold' || k === 'holdUpper' || k === 'rifleAim') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      if (k === 'pickUp' || k === 'hold' || k === 'holdUpper' || k === 'rifleAim' || k === 'throwBack' || k === 'throwUpper') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
       if (k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
       // The retreat runs its clip backwards, so it has to start at the end of it. From zero a
       // negative time scale spends its first cycle winding round to the far end.
@@ -5638,10 +5669,16 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // proportion to how far into the carry he is, so a pick-up eases into it. Only the three
   // ground gaits have leg clones; the rest (swim, jump, roll) carry nothing anyway.
   const carry = a.holdUpper ? clamp(c.holding || 0, 0, 1) : 0;
-  want.holdUpper = carry;
-  if (carry > 0) for (const [base, legs] of [['idle', 'idleLegs'], ['walk', 'walkLegs'], ['run', 'runLegs']]) {
+  // The wind-up takes the same channel. Two poses cannot both own the arms, so the throw wins
+  // it outright while it is up -- which is right: he is not cradling the thing any more, he
+  // has it back behind his head.
+  const wind = a.throwUpper ? clamp(c.wind || 0, 0, 1) : 0;
+  const upper = Math.max(carry, wind);
+  want.holdUpper = carry * (1 - wind);
+  want.throwUpper = wind;
+  if (upper > 0) for (const [base, legs] of [['idle', 'idleLegs'], ['walk', 'walkLegs'], ['run', 'runLegs']]) {
     if (!a[legs]) continue;
-    const w = want[base] || 0; want[legs] = w * carry; want[base] = w * (1 - carry);
+    const w = want[base] || 0; want[legs] = w * upper; want[base] = w * (1 - upper);
   }
   if (a.walk) a.walk.timeScale = clamp(speed / ref, MODEL.rateMin, r.rateMax || MODEL.rateMax);
   // Every armed gait runs at the pace the unarmed walk was measured to need, including the
@@ -5664,10 +5701,12 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // fade every weight toward its target; one-shots restart the moment they are wanted
   for (const k in a) {
     const t = want[k] || 0, prev = r.w[k] || 0;
-    if ((k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll' || k === 'pickUp' || k === actN) && t > .5 && prev <= .5) {
+    if ((k === 'jumpStart' || k === 'jumpLand' || k === 'rifleShoot' || k === 'roll' || k === 'pickUp' || k === 'throwUpper' || k === actN) && t > .5 && prev <= .5) {
       a[k].reset().play();
       // Past the clip's held lead-in, so the travel and the tumble start on the same frame.
       if (k === 'roll' && c.rollSkip) a[k].time = c.rollSkip;
+      // And a one-shot that is picking up where a held pose left off starts at that frame.
+      if (k === actN && c.actFrom) a[k].time = c.actFrom;
     }
 
     const nw = lerp(prev, t, Math.min(1, dt / .1));
@@ -13588,19 +13627,18 @@ const RIG = {
   pickUp: 'pick_up_object', hold: 'holding_item',
   // and where the stand-in comes from while `hold` is missing from the export
   holdFrom: 'rifle_idle_01', holdAt: 0,
-  // THE NEW SET, and what went with it. The re-export added eleven clips and REMOVED five:
-  // holding_item, pick_up_object, roll, rifle_strafe_left and rifle_strafe_right are all gone
-  // from the file. Everything that reads them is guarded, so nothing throws -- it just stops
-  // happening: the carried-animal and held-turnip poses, the dodge, and the armed strafes.
-  // `roll` still resolves, because pickClip matches on 'roll|dodge|dive' and landing_to_roll
-  // is the only candidate left -- so the dodge is currently the landing roll, which is the
-  // right shape and the wrong entry.
+  // THE FULL SET IS BACK. The export that added the melee and slide work had dropped
+  // holding_item, pick_up_object, roll, rifle_strafe_left and rifle_strafe_right; they are all
+  // in the file again, alongside the two throws. `roll` and `landing_to_roll` now both exist
+  // and are different moves: pickClip takes the exact name first, so the dodge is the dodge
+  // and the fall is the fall. What this export does NOT have is disarm_weapon -- see clips.
   landRoll: 'landing_to_roll',
+  throwGo: 'throw_object', throwBack: 'throw_state_back',
   slide: 'slide',
   equip: 'equip_weapon', disarm: 'disarm_weapon',
   // Flick, flick, flick: each one takes the next in the list and wraps. Bare hands get three;
   // with something in them, four.
-  melee: ['melee_punch', 'melee_slash', 'melee_round_kick'],
+  melee: ['melee_punch_01', 'melee_slash', 'melee_round_kick'],
   wmelee: ['weapon_melee_01', 'weapon_melee_02', 'weapon_melee_03', 'weapon_melee_04'],
   // The crouch before a jump only reads if the body is still on the ground while it plays.
   // This holds the physical launch for that long after the button, so the initiate clip
@@ -14031,7 +14069,11 @@ const MELEE = {
   // is exactly what "he just slides in place" looks like. `lunge` floors the start at a little
   // over whatever he was already doing, so it can only ever be a gain.
   slideAt: 4.2, slideSpeed: 22, slideT: .70,
-  rate: 1.25,        // the clips play a little hot; a swing wants to be over
+  // THE CLIPS PLAY HOT, and the bare-handed three play hotter than the armed four. A punch
+  // is a jab: 0.92 s of authored swing is a man deciding to hit something. At 1.7 it is 0.54,
+  // which is a punch. The armed set stays nearer its authored pace -- an axe has weight and
+  // a fast one reads as a wand.
+  rate: 1.3, bareRate: 1.7,
   // WHERE THE NEXT BLOW MAY INTERRUPT THIS ONE, as a fraction of the clip. Without it the
   // second flick was refused for the whole length of the first swing -- and since the armed
   // clips run 1.3 to 1.9 s against a 1.15 s combo window, the window shut before the clip
@@ -14066,10 +14108,12 @@ function meleeFlick(x, y) {
   // Running, and this is the first of the combo: he goes in low.
   const slide = p.melN === 0 && r.acts.slide && Math.hypot(p.vx, p.vz) > MELEE.slideAt;
   const key = slide ? 'slide' : list[p.melN % list.length];
+  const armed = p.armWant && p.armed > .4;
+  const rate = slide ? MELEE.rate * .9 : (armed ? MELEE.rate : MELEE.bareRate);
   // The tackle is a FOURTH move in front of the three, not the first of them: it does not
   // spend a place in the list, so the flick that follows it is still swing one.
   if (!slide) p.melN++;
-  playAct(key, slide ? MELEE.rate * .9 : MELEE.rate);
+  playAct(key, rate);
   // The combo stays open for the length of what is playing plus the window, so a long clip
   // cannot outlive the chain that is meant to follow it.
   p.melT = MELEE.chain + p.actMax;
@@ -14104,17 +14148,35 @@ function meleeHit(slide) {
 }
 // Start a named one-shot. `actT` is how long it owns the body, and stepPlayer walks actK in
 // and out of it so the blend is a ramp rather than a switch.
-function playAct(key, rate) {
+function playAct(key, rate, from) {
   const p = player, r = p.rigH, a = r && r.acts[key];
   if (!a) return false;
   // Only an arm move owns the weapon's hand-off. Without this a melee flick with the blaster
   // out would run its own clip through the same actT the hand-off reads, and the gun would
   // blink out halfway through the swing.
   if (key !== ARMA.clip) p.armAct = null;
+  p.actFire = null;                      // a new move cancels whatever the last one was waiting to do
   p.actN = key; p.actRate = rate || 1;
-  p.actT = p.actMax = a.getClip().duration / (rate || 1);
+  p.actFrom = from || 0;
+  p.actT = p.actMax = Math.max(.05, a.getClip().duration - p.actFrom) / (rate || 1);
   a.timeScale = rate || 1;
   return true;
+}
+// THE THROW, IN TWO PIECES, AND WHICH FRAME JOINS THEM. `throw_state_back` is one frame of
+// the arm cocked; `throw_object` is the whole gesture. They were authored separately, so the
+// join was measured rather than eyeballed: comparing the pose against every key of the throw,
+// bone by bone as a quaternion angle, the error sits around 20 degrees across the whole clip
+// and drops to 7.3 at t = 0.417 -- a single sharp well, which is the frame the artist held.
+// So a wind-up holds the pose and then plays the throw FROM 0.417, and a flick plays the
+// whole thing from zero. Either way the object leaves his hand at 0.417, not on the input:
+// `at` is where the arm comes forward, and the launch is held until the clip gets there.
+const THROWA = { clip: 'throwGo', at: .417, rate: 1.7, windIn: 9 };
+function throwPlay(quick, fn) {
+  const p = player, r = p.rigH;
+  if (!r || !r.acts.throwGo) { fn(); return; }
+  const from = quick ? 0 : THROWA.at;
+  playAct('throwGo', THROWA.rate, from);
+  p.actFire = { t: Math.max(0, (THROWA.at - from) / THROWA.rate), fn };
 }
 // A move that carries him. Speed at the front, spent by the end, steering off for its length
 // -- the same shape the dodge already had, factored out because the melee, the slide and the
@@ -14127,6 +14189,13 @@ function lunge(sp, t) {
 }
 function stepAct(dt) {
   const p = player;
+  // The arm comes back over a beat, not on the frame the thumb crossed the threshold.
+  p.windK = lerp(p.windK || 0, (p.throwAim || p.tossAim) ? 1 : 0, Math.min(1, dt * THROWA.windIn));
+  // ...and the thing leaves his hand when the clip says so.
+  if (p.actFire) {
+    p.actFire.t -= dt;
+    if (p.actFire.t <= 0) { const f = p.actFire.fn; p.actFire = null; f(); }
+  }
   p.melT = Math.max(0, (p.melT || 0) - dt);
   p.slideT = Math.max(0, (p.slideT || 0) - dt);
   if (p.actT > 0) {
@@ -14149,36 +14218,27 @@ const FLICK = { at: .72, within: .28 };     // what counts: this much travel, re
 // knees, how fast that clip plays, and the least forward he carries through it -- a roll on
 // the spot is a man falling over.
 const LAND = { roll: 15, rollRate: 1.15, rollGo: 5.5 };
-// Measured off the clip rather than tuned by eye, and MEASURED AGAIN after the re-export,
-// because the clip behind it changed out from under these numbers. There is no `roll` in the
-// file any more; `pickClip` resolves it to `landing_to_roll`, which is 1.875 s and is a fall,
-// not a dodge. Reading its hips channel out of the GLB, in centimetres:
+// Measured off the clip, re-measured when the export dropped it, and measured a third time
+// now that the real one is back. `roll` is 1.208 s and, read out of its hips channel in
+// centimetres, it is all dodge: 67 at the top, a crouch to 51 by 0.21, the tumble from 0.54
+// with the hips on the floor at 10.7 by 0.79, and up to 70 by the end. No airborne lead-in
+// and no standing tail -- unlike `landing_to_roll`, which is 1.875 s and spends a fifth of a
+// second falling before it starts and a third of a second stood still after it finishes. That
+// clip is what `skip .42 / end 1.60` was trimming; against this one it would cut the crouch
+// off the front and the recovery off the back.
 //
-//   0.00 - 0.29   65 -> 73 -> 50   still in the air, coming down
-//   0.29 - 0.55   50 -> 45         the plant, absorbing it
-//   0.55 - 0.88   45 -> 11         the tumble proper -- hips on the floor
-//   0.88 - 1.50   11 -> 69         getting back up
-//   1.50 - 1.875  69 -> 72         standing, done, holding the pose
-//
-// A dodge from a standing run has no business playing either end of that. At skip .12 he was
-// keeping a fifth of a second of descent he had never made and a third of a second of stood
-// still at the end, and OWNED FOR (1.875 - .12) / 1.35 = 1.30 s -- so the travel, which is
-// spent evenly across the ownership, was carrying him 29 units, most of it while he was
-// lying on the ground or standing up. That is the "goes forward way too much, and the
-// animation is too slow for it" -- one fault, not two.
-//
-// So: start at the plant (`skip`), stop where he is upright (`end`), and run the 1.18 s
-// between them at 1.45 -- 0.81 s of ownership, the length a dodge wants to be. `go` ends the
-// travel at four fifths of that, so the last of it is him getting his feet under him on the
-// spot rather than sliding to a halt. 32 over that window is about fourteen units, five body
-// lengths, half of what it was. `time` is only the fallback for a rig with no roll at all.
+// So skip only the first two frames, run the rest at 1.35 -- 0.81 s of ownership -- and end
+// the travel at `go`, so the last tenth is him getting his feet under him rather than sliding
+// to a halt. 32 over that window is about fifteen units, five body lengths. `end` is above
+// the clip's own length and only matters if a future export lengthens it. `time` is the
+// fallback for a rig with no roll at all.
 // The two feels, so switching is one call and neither is buried in a diff.
 const MOVE_SETS = {
   weighted: { acc: 24, accFall: .93, drag: 46, turn: 52, airAcc: 11, airTurn: 9 },
   direct:   { acc: 95, accFall: .35, drag: 200, turn: 150, airAcc: 26, airTurn: 20 },
 };
 function setMove(m) { const st = MOVE_SETS[m] || MOVE_SETS.weighted; Object.assign(MOVE, st); return m in MOVE_SETS ? m : 'weighted'; }
-const ROLL = { speed: 32, skip: .42, end: 1.60, rate: 1.45, go: .8, time: .7, cool: .28, turn: 1 };
+const ROLL = { speed: 32, skip: .12, end: 1.30, rate: 1.35, go: .88, time: .7, cool: .28, turn: 1 };
 // THE RUN. `k` is how much faster than his own top speed a sprint is; `at` is how far up the
 // right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
 // most of what a game does to say "fast" and costs nothing. in/out are how quickly it comes on
@@ -15049,7 +15109,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
-  actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0,
+  actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actFrom: 0, actFire: null, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0, windK: 0, holdT: 0,
   lungeT: 0, lungeMax: 0, lungeSp: 0, lungeH: 0, armAct: null, wpnShow: 0, wpnK: 0,
   wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeGrip: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
@@ -15603,7 +15663,7 @@ function stepThrow(dt, rx, ry) {
   }
   if (p.throwAim) {                               // let go: it goes
     const g = throwLetGo();
-    if (what === 'hold') hurlHeld(g.power, g.quick); else hurlCarried(g.power, g.quick);
+    throwPlay(g.quick, what === 'hold' ? () => hurlHeld(g.power, g.quick) : () => hurlCarried(g.power, g.quick));
     return true;
   }
   // and if the beacon happens to be wound up at the same time, that ring and that mark are
@@ -15627,7 +15687,7 @@ function stepToss(dt, rx, ry) {
     p.tossAim = 0; p.aiming = 0;
     const g = throwLetGo();
     p.heading = p.aimH;
-    fireBeacon(g.power);
+    throwPlay(g.quick, () => fireBeacon(g.power));
     return true;
   }
   p.aiming = 0; p.throwK = 0; setChargeRing(0); throwMarkStep(false);
@@ -17694,7 +17754,10 @@ function updateRig(dt) {
     // the wrong body for anything you swing. A melee weapon keeps the ordinary idle, walk and
     // run until there are clips authored for holding one.
     armed: (WEAPONS[p.wpn] && WEAPONS[p.wpn].melee) ? 0 : p.armed, shoot: p.shootT > 0,
-    act: p.actN, actK: p.actK,
+    act: p.actN, actK: p.actK, actFrom: p.actFrom || 0,
+    // How far into the cocked-arm pose he is. It is a ramp, not a switch, so the arm comes
+    // back over a beat rather than snapping into place on the frame the thumb crosses THROW.at.
+    wind: p.windK || 0,
     // Holding the stick out with the blaster up is a wind-up, and he stands like it.
     aim: p.aiming ? 1 : 0,
   });
