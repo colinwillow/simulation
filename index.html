@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd67';
+const BUILD = 'd68';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12814,8 +12814,21 @@ function solveCam(dt) {
 //     tips down to hold what is beyond it; stepping off a ledge it tips the other way.
 function followCam(dt) {
   const p = player, G = GIMBAL;
+  // THE LEAD GOES ON THE LENS, NOT ON HIM, and this is the drift.
+  //
+  // It was `p.faceH`: the mount aimed up to 3.2 units along the way he was FACING. Swing the
+  // left stick round and his facing sweeps with it, so the point the boom is pointed at swept
+  // a six-unit circle -- and since the whole camera orbits that point, he appeared to slide
+  // sideways and turn about somewhere out in front of himself rather than turning on the
+  // spot. Worst at speed, because the lead is scaled by it, which is exactly when you are
+  // swinging the stick about.
+  //
+  // On the camera's own bearing it does the same job -- the frame is offset toward what you
+  // are looking at rather than centred on his head -- and his heading no longer moves it at
+  // all. The left stick moves the body; nothing about the body moves the view.
   const lead = Math.min(G.leadMax, p.speed * G.lead);
-  _camWant.set(p.pos.x + Math.sin(p.faceH) * lead, p.pos.y + 3.4, p.pos.z + Math.cos(p.faceH) * lead);
+  const lookH = cam.az + Math.PI;
+  _camWant.set(p.pos.x + Math.sin(lookH) * lead, p.pos.y + 3.4, p.pos.z + Math.cos(lookH) * lead);
   const kxz = Math.min(1, dt * G.lag.xz);
   cam.tgt.x = lerp(cam.tgt.x, _camWant.x, kxz);
   cam.tgt.z = lerp(cam.tgt.z, _camWant.z, kxz);
@@ -12998,19 +13011,18 @@ const MOVE = {
   // very nearly flat out at 2.2. At a flat 62 he was doing all of that in a quarter of a
   // second, which is why he seemed to want to run and nothing smaller than a run was
   // possible. A half-held stick still settles on its own speed inside half a second.
-  // DIRECT, ON PURPOSE, AND THIS IS THE REVERT. The weighted set above is what these were:
-  // acc 24, accFall .93, drag 46, turn 52, airAcc 11. It reads as a body with mass, and it
-  // also reads as skating -- letting go coasts, and a change of direction at speed arcs
-  // rather than turns. These numbers are the same model with the lag taken out: he reaches
-  // his speed in about a tenth, stops in about a twentieth, and turns inside a frame or two.
-  // Everything else here is untouched, so putting the five old numbers back is the whole
-  // undo if it now feels weightless.
-  max: 17, acc: 95, accFall: .35, drag: 200,     // ground
-  airAcc: 26, airDrag: 1.2,                      // in the air
+  // BACK TO THE WEIGHTED SET. These were replaced with a near-instant set in d65 on the
+  // theory that the sliding was the locomotion; it was the camera's lead aiming at his
+  // heading (see followCam). Changing the movement to fix a camera bug is how a game ends up
+  // with two problems, so the tuned numbers are back and the direct ones are kept as a named
+  // alternative rather than as the default: isle.move('direct') to try them, isle.move() to
+  // come back.
+  max: 17, acc: 24, accFall: .93, drag: 46,      // ground
+  airAcc: 11, airDrag: 1.2,                      // in the air
   swimMax: 9, swimAcc: 20, swimDrag: 13,
   // How fast the velocity can be turned sideways, which is a separate question from how
   // fast it can be lengthened. A right angle at full speed takes about a third of a second.
-  turn: 150, airTurn: 20, swimTurn: 16,
+  turn: 52, airTurn: 9, swimTurn: 16,
   // Uphill is work: the fraction of top speed left, against the gradient he is walking into.
   // The cost of a hill was LINEAR and floored early, so a gentle rise and a wall cost nearly
   // the same and neither cost much: 22 degrees took a fifth off him, 37 took less than half,
@@ -13258,7 +13270,7 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // for the solo switch did not shadow it -- the LATER one in an object literal wins silently,
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
-window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -13616,6 +13628,12 @@ const LAND = { roll: 15, rollRate: 1.15, rollGo: 5.5 };
 // about half of it times `time`. At 21 over .7 that was seven units, which on a body 2.8 tall
 // is two and a half of him -- a shuffle. 34 puts it near twelve, which is a dodge you can
 // use to get out of the way of something.
+// The two feels, so switching is one call and neither is buried in a diff.
+const MOVE_SETS = {
+  weighted: { acc: 24, accFall: .93, drag: 46, turn: 52, airAcc: 11, airTurn: 9 },
+  direct:   { acc: 95, accFall: .35, drag: 200, turn: 150, airAcc: 26, airTurn: 20 },
+};
+function setMove(m) { const st = MOVE_SETS[m] || MOVE_SETS.weighted; Object.assign(MOVE, st); return m in MOVE_SETS ? m : 'weighted'; }
 const ROLL = { speed: 34, skip: .12, rate: 1.35, time: .7, cool: .28, turn: 1 };
 // THE RUN. `k` is how much faster than his own top speed a sprint is; `at` is how far up the
 // right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
