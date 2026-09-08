@@ -43,7 +43,7 @@
      status bar gets its own strip at the top instead of the art running behind it -- which is
      what an app looks like, rather than what a bug looks like. -->
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#070418">
 <style>
   /* OVERFLOW:VISIBLE ON THE ROOT, and this is the one mechanism that fits the evidence.
      Measured off his four photographs: the band is 179 device pixels in every one of them --
@@ -56,7 +56,7 @@
      which is why sizing them bigger has never once moved the band.
      Nothing here can scroll without it: fixed elements contribute no scrollable overflow, and
      every element in this file is fixed. touch-action and overscroll-behavior stay. */
-  html,body{margin:0;height:100%;overflow:visible;background:#000;font-family:Georgia,"Iowan Old Style",serif;color:#f0e7d4;
+  html,body{margin:0;height:100%;overflow:visible;background:#070418;font-family:Georgia,"Iowan Old Style",serif;color:#f0e7d4;
     touch-action:none;overscroll-behavior:none;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
     -webkit-user-select:none;user-select:none}
   /* ONE BOX, AND IT IS THE ONE YOU CAN SEE.
@@ -547,7 +547,19 @@
          fast boot dismisses it early. Left alone it dissolves itself after about four and a
          half seconds, with the loading card behind it.
      Nothing else is changed. If the mark is re-exported, take the block again. -->
-<script>window._BOOT_FLY = false;</script>
+<script>
+// WHY THE MARK HAS NEVER PLAYED, and it is arithmetic in its own timeline rather than anything
+// failing to load. With _BOOT_FLY false the curly-straw entrance turns itself on, which adds
+// 2600ms of runway; the crisp logo lands at SOLID_AT = 3250 + 620 (the mandala) + 2600 = 6470,
+// and is not fully faded in until about 7150. The world's loader dismisses the splash at 2300.
+// So it has been cut off four seconds before the letterforms assemble every single time, and
+// the only way to see it was for the world to fail and nothing to dismiss it -- which is
+// exactly the one case where he HAS seen it, stuck.
+// The path off takes 2600ms out of that: solid at about 3870, in by 4550. The dismissal floor
+// below waits for it. Nothing about the animation itself is changed.
+window._BOOT_FLY = false;
+window._MAJIA_PATH = false;
+</script>
 <!-- ══ STUDIO MAJIA — animated boot splash (plays once on top, then fades to the title) ══ -->
 <div id="majia-splash" style="position:fixed;inset:0;z-index:100200;transition:opacity .65s ease;">
   <div id="majia-bg" style="position:absolute;inset:0;background:radial-gradient(ellipse at 50% 42%,#1a1038 0%,#0d0820 62%,#070418 100%);transition:opacity .7s ease"></div>
@@ -1244,9 +1256,9 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c97';
+const BUILD = 'c98';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
-try { document.documentElement.style.background = '#000'; document.body.style.background = '#000'; } catch (e) { }
+try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
 // markup so that bumping BUILD is still the only edit a push needs.
 try { const _bt = document.getElementById('bldTag'); if (_bt) _bt.textContent = BUILD; } catch (e) { }
@@ -14859,7 +14871,7 @@ function frame(now) {
       // this fired before the splash had drawn anything and the mark was never seen at all.
       // Two and a bit seconds is the floor; a slow boot still overruns it and dismisses on
       // its own timeline.
-      if (window._majiaFinish) setTimeout(window._majiaFinish, Math.max(0, 3800 - (Date.now() - T0)));
+      if (window._majiaFinish) setTimeout(window._majiaFinish, Math.max(0, 4900 - (Date.now() - T0)));
       const b = document.getElementById('boot'); b.style.opacity = 0; setTimeout(() => b.remove(), 1300);
       if (INTRO.on) introEl.hidden = false; else document.body.classList.remove('intro');
     }
