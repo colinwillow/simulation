@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd75';
+const BUILD = 'd76';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -4822,6 +4822,7 @@ const MODEL_LIFT = {
   'models/sp_sci_fi_antenna.glb': .5,
   'models/alien_drone.glb': .5,
   'models/drone_rigged.glb': .5,
+  'models/alien_axe.glb': .5,
 };
 // One cache per URL. The GLB is fetched once, prepared once, measured once; every user
 // after that gets a clone that shares the geometry and materials. Measuring is the
@@ -13809,6 +13810,8 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
 window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB,
+  // isle.axe({roll: 1.57}) -- turn it, slide his grip up or down it, resize it. Prints the set.
+  axe: o => { if (o) Object.assign(AXEM, o); fitAxe(); console.log(JSON.stringify(AXEM)); return AXEM; },
   // who is feeling what, right now, nearest first
   states: () => world.creatures.filter(c => c.alive && c.vig !== undefined)
     .map(c => ({ what: c.constructor.name, vig: +c.vig.toFixed(2), ire: +c.ire.toFixed(2), daze: +c.daze.toFixed(1), trust: +c.trust.toFixed(0), face: c.face, doing: c.doing }))
@@ -14023,6 +14026,28 @@ const WEAPONS = {
     // mistaken for a gun at thirty pixels, which the old circle-and-crosshairs could.
     icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h24"/><path d="M4 8c0 12 5 19 12 19s12-7 12-19"/><path d="M8.5 8c0 9 3.2 15 7.5 15s7.5-6 7.5-15"/><path d="M5.4 14h21.2M7.4 20h17.2"/><circle cx="16" cy="14" r="1.5" fill="currentColor" stroke="none"/><circle cx="10.6" cy="20" r="1.3" fill="currentColor" stroke="none"/><circle cx="21.4" cy="20" r="1.3" fill="currentColor" stroke="none"/></svg>' },
 };
+// WHERE HIS HAND GOES ON THE AXE. `grip` is how far up the model's own height the joint sits
+// -- 0 is the butt, 1 is the top of the head -- `len` is its length as a multiple of the haft
+// the primitive was sized to, `roll` turns it about its own shaft so the blade can be stood up
+// or laid flat, and `drop` is a last nudge in joint units if it wants to sit further out of
+// his fist. `lift` and `tilt` are the two other turns, there so nothing here needs a code
+// change to try: isle.axe({ roll: 1.57 }) applies any of them at once and prints the set.
+const AXEM = { url: 'models/alien_axe.glb', grip: .40, len: 1.15, roll: 0, lift: 0, tilt: 0, drop: [0, 0, 0] };
+function fitAxe() {
+  const m = weap.axeM, g = weap.axe;
+  if (!m || !g) return AXEM;
+  // The model stands up its own +Y; the joint's weapon axis is +Z and its top is +Y. A
+  // quarter turn about X carries one onto the other, and the three tweaks ride on top of it.
+  m.rotation.set(Math.PI / 2 + AXEM.tilt, AXEM.lift, AXEM.roll, 'ZYX');
+  const s = (weap.axeL || 1) * AXEM.len;                 // the model is one unit tall
+  m.scale.setScalar(s);
+  // Bring the grip point to the joint. After the quarter turn the model's height runs along
+  // +Z, so the offset is along Z -- and it is applied in the group's frame, outside the
+  // model's own rotation, which is what keeps `roll` from swinging it out of his hand.
+  m.position.set(0, 0, -AXEM.grip * s);
+  g.position.set(AXEM.drop[0] + WEAPON.drop[0], AXEM.drop[1] + WEAPON.drop[1], AXEM.drop[2] + WEAPON.drop[2]);
+  return AXEM;
+}
 // ---------- melee ----------
 // FLICK THE RIGHT STICK. Not a tap, which is the interact, and not a hold, which is the aim
 // or the throw -- a flick is a fast run outward and back, and bindStick already measures the
@@ -15213,7 +15238,37 @@ function attachWeapon(r) {
       g2.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
       envUse(g2, .5); markBody(g2);
       weap.bone.add(g2); weap.axe = g2; g2.visible = false; weap.axeK0 = k;
+      weap.axeL = L;
     }
+    // AND THE REAL ONE, OVER THE TOP OF IT. It is unrigged -- one mesh, no joints, no node
+    // transform -- so all it needs is to be hung on the joint the primitive was hung on, and
+    // all that has to be decided is where his hand closes on it and which way round it goes.
+    //
+    // Read out of the file: the mesh is one unit tall standing on y=0, 0.9 wide in X and 0.39
+    // thin in Z. Slicing it in twenty bands and taking the widest vertex in each, it is broad
+    // at both ends and pinches to almost nothing at y=0.28 -- and the vertex count per band
+    // runs 40-90 through the lower half and 110-200 through 0.6-0.85, which is where the
+    // detail is and therefore where the head is. So the haft is the narrow waist, and a hand
+    // closes on the middle of it: AXEM.grip, in the model's own height.
+    //
+    // Which way the blade faces is the one thing the geometry cannot settle -- it spreads in
+    // the model's X and is thin in its Z, and whether that should end up vertical or flat in
+    // his grip depends on how the joint is rolled, which is a thing to look at rather than
+    // compute. isle.axe({ roll: 1.57 }) turns it live and prints what to keep.
+    loadModel(AXEM.url, e2 => {
+      if (!weap.bone) return;
+      const g4 = new THREE.Group();
+      const m4 = markBody(cloneModel(e2.root));
+      g4.add(m4);
+      g4.scale.setScalar(k); g4.position.fromArray(W.drop);
+      m4.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+      envUse(g4, .5);
+      weap.bone.add(g4);
+      if (weap.axe) weap.axe.visible = false;
+      weap.axe = g4; weap.axeM = m4; weap.axeK0 = k; g4.visible = false;
+      fitAxe();
+      console.info('[weapon] the axe model is on the joint; isle.axe({grip:.4, len:1.15, roll:0}) to place it.');
+    });
     // THE NET CANNON, the same way. It used to fire out of the blaster, which is a pistol
     // and reads as one. This is a launcher: a short fat barrel that flares to a bell, a drum
     // of net under it, and two rails -- sized off the same tip marker so the muzzle lands
