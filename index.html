@@ -1484,7 +1484,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd13';
+const BUILD = 'd14';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -6873,6 +6873,14 @@ class Spout {
 // platform bolted to a trunk; at 62 of 74 the leaves are over you and it reads as being IN
 // the tree, which is the whole idea.
 const MTREE = { H: 74, fort: 62, r0: 5.4, r1: 3.4, step: 5.5, turn: .62, shelf: 3.2 };
+// The bridge's rope. `h` is the substep; `g` is the world's own gravity so a plank falls the
+// way everything else does; `load` is what his weight is worth as an acceleration on the rung
+// under him, and `kick` how much of his walking speed the deck picks up -- which is why
+// running across it sets it swinging and standing still lets it settle. `wind` scales the
+// weather's wind into a lateral push, with a slow gust on top so it is never quite still.
+const BRIDGE = { h: 1 / 60, g: 26, damp: .985, iters: 6, load: 46, kick: .9, wind: 10 };
+const _brM = new THREE.Matrix4(), _brQ = new THREE.Quaternion(), _brF = new THREE.Vector3(), _brR = new THREE.Vector3(),
+  _brU = new THREE.Vector3(), _brP = new THREE.Vector3(), _brS = new THREE.Vector3(), _brY = new THREE.Vector3(0, 1, 0);
 class MotherTree {
   constructor(x, z) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z);
@@ -6931,29 +6939,46 @@ class MotherTree {
     put(mesh(G.cyl, bark2, PR, .45, PR, px, F2, pz));
     for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; put(mesh(G.cyl, bark, .13, 1.4, .13, px + Math.cos(a) * (PR - .45), F2 + .9, pz + Math.sin(a) * (PR - .45)), false); }
     deck(px, pz, PR, F2, .45, 'lookout');
-    // THE ROPE BRIDGE. Planks along a sagging line from the fort's rail to the lookout's edge,
-    // two handrails and two deck ropes as tubes, and one small air collider per plank so the
-    // deck is walkable end to end. It is a placeholder for a modelled one; the numbers -- sag,
-    // spacing, rail height -- are the ones that model will want to keep.
+    // THE ROPE BRIDGE, AND IT IS ROPE. Two strands of verlet points pinned at the fort's rail
+    // and the lookout's edge, tied across at every plank so the deck keeps its width, with
+    // gravity, wind and his weight on them. The planks and every visible rope segment are
+    // rebuilt from the strands each frame, so what you see IS the simulation -- there is no
+    // painted bridge underneath it. The planks' colliders keep their place in the hash (the
+    // sway is under a unit; a cell is fourteen) and only their `top` follows the deck, and
+    // the deck's sideways motion reaches him the other way round: whichever plank he is on
+    // carries him by exactly what it moved this frame. That is the whole feel -- the thing
+    // under your feet is not where it was.
     const A = new THREE.Vector3(Math.cos(ab) * (FR - .2), F + .3, Math.sin(ab) * (FR - .2));
     const B = new THREE.Vector3(Math.cos(ab) * (D - PR + .2), F2 + .25, Math.sin(ab) * (D - PR + .2));
     const sag = 2.4, span = A.distanceTo(B), nP = Math.max(6, Math.round(span / 1.05));
     const at = (t, lift) => new THREE.Vector3().lerpVectors(A, B, t).add(new THREE.Vector3(0, lift - sag * 4 * t * (1 - t), 0));
     const side = new THREE.Vector3(-Math.sin(ab), 0, Math.cos(ab));
+    const br = this.br = { nP, n: nP + 1, A, B, side, span, planks: [], obs: [], tops: new Float32Array(nP),
+      // a rope hanging in a 2.4 sag is longer than its chord: c + 8s^2/3c, split into nP pieces
+      seg: (span + 8 * sag * sag / (3 * span)) / nP, w: 1.8, rail: 1.1,
+      L: new Float32Array((nP + 1) * 3), R: new Float32Array((nP + 1) * 3),
+      pL: new Float32Array((nP + 1) * 3), pR: new Float32Array((nP + 1) * 3),
+      cx: new Float32Array(nP), cz: new Float32Array(nP), acc: 0, gust: rnd(6.283) };
+    for (let i = 0; i <= nP; i++) {
+      const q = at(i / nP, 0), i3 = i * 3;
+      br.L[i3] = br.pL[i3] = q.x + side.x * .9; br.L[i3 + 1] = br.pL[i3 + 1] = q.y; br.L[i3 + 2] = br.pL[i3 + 2] = q.z + side.z * .9;
+      br.R[i3] = br.pR[i3] = q.x - side.x * .9; br.R[i3 + 1] = br.pR[i3 + 1] = q.y; br.R[i3 + 2] = br.pR[i3 + 2] = q.z - side.z * .9;
+    }
     for (let i = 0; i < nP; i++) {
       const t = (i + .5) / nP, q = at(t, 0);
-      const pl = put(mesh(G.box, M.wood, 1.8, .13, .62, q.x, q.y, q.z), false);
-      pl.rotation.y = -ab - Math.PI / 2;
-      this.obs.push(obAdd(x + q.x, z + q.z, 1.05, null, y0 + q.y + .1, 'tree:bridge', y0 + q.y - .7, true));
+      const pl = put(mesh(G.box, M.wood, br.w, .13, .62, q.x, q.y, q.z), false);
+      br.planks.push(pl); br.cx[i] = q.x; br.cz[i] = q.z;
+      const o = obAdd(x + q.x, z + q.z, 1.05, null, y0 + q.y + .1, 'tree:bridge', y0 + q.y - .7, true);
+      this.obs.push(o); br.obs.push(o);
     }
-    for (const [off, lift] of [[.9, 1.1], [-.9, 1.1], [.95, -.05], [-.95, -.05]]) {
-      const pts = []; for (let i = 0; i <= 10; i++) pts.push(at(i / 10, lift).addScaledVector(side, off));
-      put(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 20, .07, 5, false), bark), false);
-    }
-    for (let i = 1; i < 10; i += 2) for (const off of [.9, -.9]) {   // the drops between rail and deck
-      const top = at(i / 10, 1.1).addScaledVector(side, off), bot = at(i / 10, -.05).addScaledVector(side, off);
-      const m = put(mesh(G.cyl, bark, .05, top.y - bot.y, .05, top.x, (top.y + bot.y) / 2, top.z), false);
-    }
+    // Every rope segment is one instance of one cylinder: two deck ropes, two handrails, and
+    // the drops between them, all in a single draw and all repositioned from the strands.
+    br.drops = []; for (let i = 2; i < nP - 1; i += 4) br.drops.push(i);
+    br.count = 4 * nP + br.drops.length * 2;
+    br.rope = new THREE.InstancedMesh(G.cyl, bark, br.count);
+    br.rope.castShadow = false; br.rope.receiveShadow = true; br.rope.frustumCulled = false;
+    this.g.add(br.rope);
+    this.stepBridge(0);                               // lay the first frame down
     // THE CANOPY, well above the fort so the fort is IN the tree rather than on top of it.
     for (let i = 0; i < 4; i++) {
       const a = i / 4 * Math.PI * 2 + rnd(-.3, .3), p0 = new THREE.Vector3(0, H - 8, 0), p1 = new THREE.Vector3(Math.cos(a) * 15, H + 4, Math.sin(a) * 15);
@@ -6972,7 +6997,102 @@ class MotherTree {
     this.top = { x: x, z: z, y: y0 + F };
     this.lookout = { x: x + px, z: z + pz, y: y0 + F2 };
   }
-  update(dt) {}
+  update(dt) { this.stepBridge(dt); }
+  // THE SIMULATION. Fixed substeps so the spring rates mean the same thing at twenty frames a
+  // second as at sixty; six constraint passes, which is enough for fifty points to read as
+  // rope; and the load is applied as acceleration on the two points under his feet, so it is
+  // the same rope whether he stands on it or runs across it.
+  stepBridge(dt) {
+    const br = this.br, B = BRIDGE, n = br.n, nP = br.nP, x0 = this.pos.x, z0 = this.pos.z, y0 = this.pos.y;
+    const pl = world.player;
+    // Which plank he is on, if any: project him onto the chord, then check he is actually
+    // over the deck and at its height rather than walking underneath it.
+    let onI = -1;
+    if (pl && !pl.aboard && !pl.free && !pl.roping) {
+      const dx = pl.pos.x - x0 - br.A.x, dz = pl.pos.z - z0 - br.A.z;
+      const ux = (br.B.x - br.A.x) / br.span, uz = (br.B.z - br.A.z) / br.span;
+      const t = (dx * ux + dz * uz) / br.span;
+      if (t > 0 && t < 1) {
+        const i = Math.min(nP - 1, Math.max(0, Math.floor(t * nP)));
+        const lat = Math.hypot(pl.pos.x - x0 - br.cx[i], pl.pos.z - z0 - br.cz[i]);
+        if (lat < 1.3 && Math.abs(pl.pos.y - (y0 + br.tops[i])) < 1.7) onI = i;
+      }
+    }
+    br.acc = Math.min(br.acc + dt, B.h * 4);
+    const L = br.L, R = br.R, pL = br.pL, pR = br.pR, h = B.h, h2 = h * h;
+    while (br.acc >= h) {
+      br.acc -= h;
+      br.gust += h * .7;
+      const wx = WX.wind.x * (WX.windK * B.wind * (1 + Math.sin(br.gust) * .6)), wz = WX.wind.y * (WX.windK * B.wind * (1 + Math.cos(br.gust * 1.3) * .6));
+      for (const [P, Q] of [[L, pL], [R, pR]]) {
+        for (let i = 1; i < nP; i++) {              // 0 and nP are pinned
+          const i3 = i * 3;
+          let ax = wx, ay = -B.g, az = wz;
+          if (onI >= 0 && (i === onI || i === onI + 1)) {
+            ay -= B.load * .5;                       // his weight, split over the rung's two ends
+            ax += pl.vx * B.kick; az += pl.vz * B.kick;   // and where he is going
+          }
+          const x = P[i3], y = P[i3 + 1], z = P[i3 + 2];
+          P[i3] = x + (x - Q[i3]) * B.damp + ax * h2;
+          P[i3 + 1] = y + (y - Q[i3 + 1]) * B.damp + ay * h2;
+          P[i3 + 2] = z + (z - Q[i3 + 2]) * B.damp + az * h2;
+          Q[i3] = x; Q[i3 + 1] = y; Q[i3 + 2] = z;
+        }
+      }
+      for (let k = 0; k < B.iters; k++) {
+        for (const P of [L, R]) for (let i = 0; i < nP; i++) {          // along each strand
+          const a = i * 3, b = a + 3;
+          let dx = P[b] - P[a], dy = P[b + 1] - P[a + 1], dz = P[b + 2] - P[a + 2];
+          const d = Math.hypot(dx, dy, dz) || 1e-6, e = (d - br.seg) / d;
+          const wa = i === 0 ? 0 : .5, wb = i === nP - 1 ? 0 : .5;   // pins do not move
+          P[a] += dx * e * wa; P[a + 1] += dy * e * wa; P[a + 2] += dz * e * wa;
+          P[b] -= dx * e * wb; P[b + 1] -= dy * e * wb; P[b + 2] -= dz * e * wb;
+        }
+        for (let i = 1; i < nP; i++) {                                    // across, at each rung
+          const a = i * 3;
+          const dx = R[a] - L[a], dy = R[a + 1] - L[a + 1], dz = R[a + 2] - L[a + 2];
+          const d = Math.hypot(dx, dy, dz) || 1e-6, e = (d - br.w) / d * .5;
+          L[a] += dx * e; L[a + 1] += dy * e; L[a + 2] += dz * e;
+          R[a] -= dx * e; R[a + 1] -= dy * e; R[a + 2] -= dz * e;
+        }
+      }
+    }
+    // THE PLANKS, from the strands: centred on the four points round them, facing along the
+    // deck, tilted with it. And their colliders' tops, and the carry.
+    const m = _brM, qv = _brQ, fw = _brF, rt = _brR, up = _brU;
+    for (let i = 0; i < nP; i++) {
+      const a = i * 3, b = a + 3;
+      const cx = (L[a] + L[b] + R[a] + R[b]) * .25, cy = (L[a + 1] + L[b + 1] + R[a + 1] + R[b + 1]) * .25, cz = (L[a + 2] + L[b + 2] + R[a + 2] + R[b + 2]) * .25;
+      fw.set((L[b] + R[b] - L[a] - R[a]) * .5, (L[b + 1] + R[b + 1] - L[a + 1] - R[a + 1]) * .5, (L[b + 2] + R[b + 2] - L[a + 2] - R[a + 2]) * .5).normalize();
+      rt.set((R[a] + R[b] - L[a] - L[b]) * .5, (R[a + 1] + R[b + 1] - L[a + 1] - L[b + 1]) * .5, (R[a + 2] + R[b + 2] - L[a + 2] - L[b + 2]) * .5).normalize();
+      up.crossVectors(fw, rt).normalize(); rt.crossVectors(up, fw).normalize();
+      m.makeBasis(rt, up, fw); qv.setFromRotationMatrix(m);
+      const pk = br.planks[i];
+      pk.position.set(cx, cy, cz); pk.quaternion.copy(qv);
+      if (onI === i && dt > 0) { pl.pos.x += cx - br.cx[i]; pl.pos.z += cz - br.cz[i]; }
+      br.cx[i] = cx; br.cz[i] = cz; br.tops[i] = cy + .065;
+      br.obs[i].top = y0 + cy + .1; br.obs[i].bot = y0 + cy - .7;
+    }
+    // THE ROPES: one instance per segment. Deck ropes on the strands, handrails a rail-height
+    // above them, drops between the two every few planks.
+    let k = 0;
+    const seg = (ax, ay, az, bx, by, bz, r) => {
+      const dx = bx - ax, dy = by - ay, dz = bz - az, len = Math.hypot(dx, dy, dz) || 1e-6;
+      fw.set(dx / len, dy / len, dz / len); qv.setFromUnitVectors(_brY, fw);
+      _brP.set((ax + bx) * .5, (ay + by) * .5, (az + bz) * .5); _brS.set(r, len, r);
+      m.compose(_brP, qv, _brS); br.rope.setMatrixAt(k++, m);
+    };
+    for (const P of [L, R]) for (let i = 0; i < nP; i++) {
+      const a = i * 3, b = a + 3;
+      seg(P[a], P[a + 1], P[a + 2], P[b], P[b + 1], P[b + 2], .07);
+      seg(P[a], P[a + 1] + br.rail, P[a + 2], P[b], P[b + 1] + br.rail, P[b + 2], .06);
+    }
+    for (const i of br.drops) for (const P of [L, R]) {
+      const a = i * 3;
+      seg(P[a], P[a + 1], P[a + 2], P[a], P[a + 1] + br.rail, P[a + 2], .045);
+    }
+    br.rope.instanceMatrix.needsUpdate = true;
+  }
   dispose() { for (const o of this.obs) obRemove(o); scene.remove(this.g); }
 }
 
