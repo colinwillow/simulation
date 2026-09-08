@@ -1484,7 +1484,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd12';
+const BUILD = 'd13';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -6452,6 +6452,26 @@ class Grazer extends Creature {
       if (d < 22) { cx += o.pos.x; cz += o.pos.z; n++; if (d < 3.6) this.flee(o.pos, 2.5 / Math.max(d, .5)); }
     }
     if (n) this.seek({ x: cx / n, z: cz / n }, .25);
+    // THE TRAIN. A grovewalker drops moss where it browses, and moss is what a mossback eats
+    // -- so a herd that keeps a walker in sight is a herd that is never far from its next
+    // meal. Each one seeks a spot a few lengths behind the walker, off its line so they fan
+    // out rather than queue, and hangs back once it is there. From across the island it is a
+    // giraffe with a wake of small things following it, which is the first relationship
+    // between two species that can be seen without being told about it. Not while it is
+    // actually hungry -- then the tuft in front of it wins -- and not at night, when the
+    // beacons take over below.
+    if (this.state !== 'hungry' && world.night <= .65) {
+      const w = nearest(world.creatures, this.pos, c => c instanceof Walker && c.alive && !c.fling && !c.stag, 48);
+      if (w) {
+        const sh = Math.sin(w.heading), ch = Math.cos(w.heading);
+        const side = ((this.phase * 7.13) % 2 - 1) * 4.5;          // its own lane, fixed for life
+        const tx = w.pos.x - sh * 8 + ch * side, tz = w.pos.z - ch * 8 - sh * side;
+        const d = Math.hypot(tx - this.pos.x, tz - this.pos.z);
+        if (d > 4) { this.seek({ x: tx, z: tz }, 1.1); this.moving = Math.min(1, .45 + d * .04); }
+        else this.moving = w.moving ? .5 : 0;
+        return;
+      }
+    }
     if (world.night > .65) {
       const b = nearest(world.structures, this.pos, s => s instanceof Cairn && s.beacon, 90);
       if (b) { const d = this.dist(b.pos); if (d < 8) { this.moving = d < 5 ? 0 : .3; this.seek(b.pos, .2); } else this.seek(b.pos, 1.2); return; }
