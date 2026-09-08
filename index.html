@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd50';
+const BUILD = 'd51';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -11252,6 +11252,10 @@ function eraName() {
 // built to be. The model is 1.0 x 0.34 x 0.22 in its own units, so it is scaled by WIDTH --
 // a wordmark is a width, and scaling it by height would size it off the tail of the P.
 const TCARD = { g: null, mats: [], mesh: null, bg: null, bgMat: null, bgA: 1 };
+// How the name moves. `pitch` is the lean toward and away from the lens and is the one that
+// is meant to read; the other two are there so it is not a pendulum. All in radians -- .14 is
+// eight degrees, which is a lean you notice without the wordmark ever looking loose.
+const MARK_ROCK = { pitch: .14, pitchR: .24, yaw: .05, yawR: .17, roll: .022, rollR: .13 };
 const _tcF = new THREE.Vector3(), _tcU = new THREE.Vector3(), _tcP = new THREE.Vector3();
 const TITLE_MARK = 'models/plutopia_title.glb';
 
@@ -11307,8 +11311,17 @@ function titleMarkFrame(k, cam3) {
   const w = Math.min(fw * .88, fh * 1.25);
   if (TCARD.mesh) {
     TCARD.mesh.scale.setScalar(w);
-    // a little life: it breathes and tips, rather than hanging there like a decal
-    TCARD.mesh.rotation.set(Math.sin(DIO.t * .31) * .05, Math.sin(DIO.t * .23) * .10, Math.sin(DIO.t * .19) * .02);
+    // A LEAN, not a jitter. There was life in it already, but the pitch -- the axis that
+    // actually reads as the name tipping toward you and away again -- was the smallest of the
+    // three at .05, under the yaw's .10, so what came through was a sideways waggle. The
+    // pitch leads now and runs slower than the rest, because a lean is a slow thing; the yaw
+    // drops back to a fraction of it and the roll stays where it was, so the two of them
+    // stop the tip from being a metronome without competing with it.
+    const R = MARK_ROCK, t = DIO.t;
+    TCARD.mesh.rotation.set(
+      Math.sin(t * R.pitchR) * R.pitch + Math.sin(t * R.pitchR * 2.3 + 1.1) * R.pitch * .22,
+      Math.sin(t * R.yawR) * R.yaw,
+      Math.sin(t * R.rollR) * R.roll);
   }
   c3.getWorldDirection(_tcF);
   _tcU.set(0, 1, 0).applyQuaternion(c3.quaternion);
@@ -11588,7 +11601,15 @@ const DIO_BODIES = [
   //
   //                                        measured from                     was
   { sx:  1.02, sy:  .29, d: 235, rf: .70,  model: 'models/saturn.glb', tilt: [.16, .0, .12] },   // (960, 590) r260
-  { sx:  -.98, sy:  .34, d: 285, rf: .28,  model: 'models/earth_planet.glb' },                   // ( 25, 545) r170
+  // TURNED ROUND, AND PINNED. Only the bodies that carry a `tilt` are placed deliberately;
+  // everything else got m.rotation.set(rnd(3), rnd(3), rnd(3)) -- a fresh random tumble on
+  // every single load. So the blue planet was never "facing away", it was facing a different
+  // way every time the page opened, and half of those were its back. A ringed planet was
+  // given a tilt because a ring has to sit at the angle the picture wants; a planet with a
+  // FACE on it has exactly the same problem and was not. Pinned at a half turn, which is the
+  // 180 that was asked for -- and being one number rather than a dice roll, it is a one-number
+  // fix if this is still the wrong hemisphere.
+  { sx:  -.98, sy:  .34, d: 285, rf: .28,  model: 'models/earth_planet.glb', tilt: [.10, Math.PI, .04] },   // ( 25, 545) r170
   { sx:   .49, sy:  .55, d: 320, rf: .08,  model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },  // (700, 375) r38
   { sx:  -.82, sy: -.81, d:  64, rf: .58,  model: 'models/cratered_asteroid.glb', tint: '#b09678' },  // ( 95,1500) r205
   { sx:   .91, sy: -.84, d:  76, rf: .52,  model: 'models/purple_moon.glb' },                    // (890,1530) r175
