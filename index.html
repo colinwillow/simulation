@@ -1487,7 +1487,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd20';
+const BUILD = 'd21';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12277,7 +12277,8 @@ const _hutV = new THREE.Vector3();   // declared above the class that reads it
 // ground is a part in here, and a hut raised anywhere is a hut spent out of here. Everything
 // he described -- hack a plant apart, carry the pieces off in the ship, put a building up
 // somewhere else -- is a producer or a consumer of these numbers.
-const INV = { part: 0 };
+const INV = { part: 0, wood: 0 };
+const HACK = { reach: 3.6, T: 2.4 };   // how close, and how long a hold fells a tree
 const RAISE = { min: 8, clear: 4.6, near: 14 };   // parts to raise a hut; ground it needs; distance from another (BUILDING is taken)
 const HUT = {
   r: 3.3, cols: 16, courses: 3, ch: .95, thick: .55, door: 3,
@@ -12298,11 +12299,11 @@ class Hut {
     // building is simply not there yet -- its slots exist and repair fills them from the pile
     // later. The ones he does have fly in from where he is standing, one after another, so the
     // building assembles out of his hands rather than appearing.
-    if (opts.present !== undefined) {
+    if (opts.pay) {
       const from = opts.from || this.pos;
-      for (let i = 0; i < this.parts.length; i++) {
-        const p = this.parts[i];
-        if (i < opts.present) this.launch(p, from, i * .07);
+      let k = 0;
+      for (const p of this.parts) {
+        if (INV[p.kind] > 0) { INV[p.kind]--; this.launch(p, from, k++ * .07); }
         else this.vanish(p);
       }
     }
@@ -12320,10 +12321,10 @@ class Hut {
   gone() { let n = 0; for (const p of this.parts) if (p.state === 4) n++; return n; }
   // Every part is registered the same way, whatever shape it is: put it in the group, then
   // record where it was put. Nothing else in here needs to know how the hut was laid out.
-  add(m, wall) {
+  add(m, wall, kind = 'part') {
     m.castShadow = m.receiveShadow = true;
     this.g.add(m);
-    const p = { m, wall: !!wall, home: { p: m.position.clone(), q: m.quaternion.clone() },
+    const p = { m, wall: !!wall, kind, home: { p: m.position.clone(), q: m.quaternion.clone() },
       state: 0, v: new THREE.Vector3(), ax: new THREE.Vector3(0, 1, 0), spin: 0, t: 0, ob: null };
     this.parts.push(p);
     if (wall) this.obOn(p);
@@ -12365,13 +12366,13 @@ class Hut {
     const da = (HUT.door - .5) / HUT.cols * Math.PI * 2;
     for (const sg of [-.5, HUT.door - .5]) {
       const a = sg / HUT.cols * Math.PI * 2;
-      this.add(mesh(G.cyl, M.hullDark, .26, HUT.ch * HUT.courses, .26, Math.cos(a) * R, .1 + HUT.ch * HUT.courses * .5, Math.sin(a) * R), true);
+      this.add(mesh(G.cyl, M.hullDark, .26, HUT.ch * HUT.courses, .26, Math.cos(a) * R, .1 + HUT.ch * HUT.courses * .5, Math.sin(a) * R), true, 'wood');
     }
     {
       const a = da * .5;
       const m = mesh(G.box, M.hullDark, W * HUT.door * 1.05, .34, T * .9,
         Math.cos(a) * R, .1 + HUT.ch * HUT.courses + .1, Math.sin(a) * R);
-      m.rotation.y = -a; this.add(m, false);
+      m.rotation.y = -a; this.add(m, false, 'wood');
     }
     // THE ROOF: panels leaning in off the wall head, and a cap over the hole they leave.
     const ry = .1 + HUT.ch * HUT.courses;
@@ -12380,12 +12381,12 @@ class Hut {
       const m = mesh(G.box, i % 2 ? M.hullPale : M.hullMid, W * 1.04, .26, R * .92,
         Math.cos(a) * R * .58, ry + .62, Math.sin(a) * R * .58);
       m.rotation.set(0, -a, 0); m.rotateX(-.62);
-      this.add(m, false);
+      this.add(m, false, 'wood');           // the roof is timber; the walls are the moon-base blocks
     }
-    this.add(mesh(G.sph, M.hullDark, 1.05, .7, 1.05, 0, ry + 1.22, 0), false);
+    this.add(mesh(G.sph, M.hullDark, 1.05, .7, 1.05, 0, ry + 1.22, 0), false, 'wood');
     // and a lamp over the door, because a building you are meant to find at night needs one
     const la = da * .5;
-    this.add(mesh(G.sph, M.lantern, .22, .28, .22, Math.cos(la) * (R - .5), ry - .35, Math.sin(la) * (R - .5)), false);
+    this.add(mesh(G.sph, M.lantern, .22, .28, .22, Math.cos(la) * (R - .5), ry - .35, Math.sin(la) * (R - .5)), false, 'wood');
   }
   // A bolt went off at (x,y,z). Free the parts nearest it, throw them away from it, and let
   // the rest of the building stand.
@@ -12475,8 +12476,9 @@ class Hut {
       // Nothing on the ground to put back. If slots are empty and he has parts on him, the
       // next one comes out of the pile -- and out of his hands.
       const empty = this.parts.find(q => q.state === 4);
-      if (empty && INV.part > 0) { INV.part--; this.launch(empty, player.pos, 0); return; }
-      if (empty) logMsg('The rest of it is missing. He has nothing to build it from.');
+      const buy = this.parts.find(q => q.state === 4 && INV[q.kind] > 0);
+      if (buy) { INV[buy.kind]--; this.launch(buy, player.pos, 0); return; }
+      if (empty) logMsg('The rest of it is missing. He has no ' + (empty.kind === 'wood' ? 'timber' : 'blocks') + ' to build it from.');
       else logMsg('It is whole again.');
       return;
     }
@@ -12523,7 +12525,37 @@ function holdOffer() {
     if (d < bd) { bd = d; best = t; }
   }
   // An animal in reach keeps its PICK UP unless he is standing right on the turnip.
-  if (best && (!ACT.now || bd < 1.9)) offerAct({ icon: 'lift', label: 'PULL', run: () => pullTurnip(best) });
+  if (best && (!ACT.now || bd < 1.9)) { offerAct({ icon: 'lift', label: 'PULL', run: () => pullTurnip(best) }); return; }
+  if (ACT.now) return;
+  // TIMBER. A log on the ground is a log to pick up. A standing tree is a tree to bring down:
+  // a hold beside the trunk, and after a couple of seconds it goes over the way a browsed one
+  // does, and breaks into the same logs. No new tool yet -- the hold IS the pickaxe until he
+  // models one -- and not the elder, which is the island's and not his.
+  {
+    let lg = null, ld = 2.8;
+    for (const st of world.structures) {
+      if (!(st instanceof Log) || !st.alive) continue;
+      const d = Math.hypot(st.pos.x - p.pos.x, st.pos.z - p.pos.z);
+      if (d < ld) { ld = d; lg = st; }
+    }
+    if (lg) { offerAct({ icon: 'lift', label: 'GATHER', run: () => { lg.alive = false; lg.dispose(); INV.wood++; world.effects.push(new Burst(lg.pos.x, lg.pos.y + .6, lg.pos.z, '#d8c9a8', 5, .4)); } }); return; }
+  }
+  {
+    let tr = null, td = HACK.reach;
+    for (const t of world.plants) {
+      if (!(t instanceof LanternTree) || !t.alive || t.falling >= 0 || t.elder || t.growth < .9) continue;
+      const d = Math.hypot(t.pos.x - p.pos.x, t.pos.z - p.pos.z);
+      if (d < td) { td = d; tr = t; }
+    }
+    if (tr) { FIX.hack = tr; offerAct({ icon: 'fix', label: 'HOLD TO HACK', hold: dt => hackTree(tr, dt) }); }
+  }
+}
+function hackTree(t, dt) {
+  if (!t.alive || t.falling >= 0) return;
+  t.hackT = (t.hackT || 0) + dt; t.hackAt = world.clock;
+  if (((t.hackT * 4) | 0) !== (((t.hackT - dt) * 4) | 0))          // chips fly four times a second
+    world.effects.push(new Burst(t.pos.x + rnd(-.5, .5), t.pos.y + 1.1, t.pos.z + rnd(-.5, .5), '#d8c9a8', 3, .35));
+  if (t.hackT >= HACK.T) { t.fall(); logMsg('It leans, and goes over.'); }
 }
 function pullTurnip(t) {
   const p = player;
@@ -12567,7 +12599,7 @@ function feedCreature(c) {
     logMsg('The ' + nm + ' sniffs it, spits it back at him, and thinks a little less of him.');
   }
 }
-const FIX = { hut: null, el: null, bar: null };
+const FIX = { hut: null, hack: null, el: null, bar: null };
 function repairOffer() {
   const p = player;
   FIX.hut = null;
@@ -12585,11 +12617,10 @@ function repairOffer() {
       const nearHut = world.structures.some(st => st.alive && st instanceof Hut && Math.hypot(st.pos.x - fx, st.pos.z - fz) < RAISE.near);
       if (!nearHut && isLand(fx, fz) && height(fx, fz) > SEA + 1.5 && obClear(fx, fz, RAISE.clear)) {
         offerAct({ icon: 'fix', label: 'BUILD', run: () => {
-          const n = Math.min(INV.part, 999);
-          const h = new Hut(fx, fz, Math.atan2(p.pos.x - fx, p.pos.z - fz), { present: n, from: p.pos });
-          INV.part -= Math.min(n, h.parts.length);
+          const h = new Hut(fx, fz, Math.atan2(p.pos.x - fx, p.pos.z - fz), { pay: true, from: p.pos });
           world.structures.push(h);
-          logMsg(n >= h.parts.length ? 'He raises a hut out of the pile.' : 'He raises what he can of a hut. The rest needs more parts.');
+          const g = h.gone();
+          logMsg(!g ? 'He raises a hut out of the pile.' : 'He raises what he can of a hut. It is missing ' + g + (g === 1 ? ' piece.' : ' pieces.'));
         } });
       }
     }
@@ -12607,7 +12638,7 @@ function repairOffer() {
     if (pc) {
       FIX.hut = best;
       offerAct({ icon: 'lift', label: 'GATHER', run: () => {
-        best.vanish(pc); INV.part++;
+        best.vanish(pc); INV[pc.kind]++;
         world.effects.push(new Burst(p.pos.x, p.pos.y + 1, p.pos.z, '#d8d2c0', 5, .4));
       } });
       return;
@@ -12637,7 +12668,16 @@ function fixBar() {
     FIX.bar = document.createElement('i'); FIX.el.appendChild(FIX.bar);
     document.body.appendChild(FIX.el);
   }
-  const h = FIX.hut;
+  const h = FIX.hut, hk = FIX.hack;
+  FIX.hack = null;                                   // re-offered each frame, like the hut
+  if (!h && hk && hk.alive && hk.falling < 0) {
+    // the hack's progress, and it eases back off if he stops before it is through
+    if (world.clock - (hk.hackAt || 0) > .25 && hk.hackT > 0) hk.hackT = Math.max(0, hk.hackT - .02);
+    if (FIX.el.hidden) FIX.el.hidden = false;
+    FIX.bar.style.width = (Math.min(1, (hk.hackT || 0) / HACK.T) * 100).toFixed(1) + '%';
+    FIX.el.classList.toggle('on', world.clock - (hk.hackAt || 0) < .25);
+    return;
+  }
   if (!h) { if (!FIX.el.hidden) FIX.el.hidden = true; return; }
   if (FIX.el.hidden) FIX.el.hidden = false;
   const k = 1 - h.down() / Math.max(1, h.parts.length);   // empty slots count as missing
@@ -15796,9 +15836,10 @@ function updateHUD() {
   {   // the pile
     const el = _pileEl || (_pileEl = document.getElementById('pile'));
     if (el) {
-      const on = INV.part > 0;
+      const on = INV.part > 0 || INV.wood > 0;
       if (el.hidden === on) el.hidden = !on;
-      const txt = '\u25c6 ' + INV.part + (INV.part === 1 ? ' part' : ' parts');
+      const txt = (INV.part ? '\u25c6 ' + INV.part + ' block' + (INV.part === 1 ? '' : 's') : '')
+        + (INV.part && INV.wood ? '  \u00b7  ' : '') + (INV.wood ? '\u25ae ' + INV.wood + ' timber' : '');
       if (on && el.textContent !== txt) el.textContent = txt;
     }
   }
