@@ -1529,7 +1529,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd35';
+const BUILD = 'd36';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -10407,7 +10407,12 @@ const CHASE = {
   // The band runs 54% to 76% of the screen and the wordmark sits at about 43%, so anything in
   // here is under it by construction. `quarry` and `chaser` are heights in lens units against
   // a band 3.2 units tall -- about a twentieth of the SCREEN each.
-  L: { fov: 30, dist: 6, feet: -.9, quarry: .44, chaser: .66, span: 3.7, enter: 1.2, T: 2.6, tail: .5 },
+  // SIZES ARE IN SCREEN, NOT IN STRIP, and getting that wrong is what made them tiny. d33 drew
+  // them full-screen at fov 26 from 13 out -- a frame 6.00 units tall -- with heights of .40
+  // and .60, which is 6.7% and 10.0% OF THE SCREEN. This band is 22% of the screen and 3.215
+  // units tall, so the same on-screen sizes are .303 and .454 of the band: .97 and 1.46.
+  // `feet` likewise: d33 put them at 67% of the screen, which is 61% down this band, at -.37.
+  L: { fov: 30, dist: 6, feet: -.37, quarry: .97, chaser: 1.46, span: 3.7, enter: 1.2, T: 2.6, tail: .5 },
 };
 CHASE.dress = function (holder, url, height, clipName, speed) {
   loadModel(url, e => {
