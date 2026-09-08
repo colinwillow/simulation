@@ -103,10 +103,27 @@
      screen, over the clock, since the day this rule got `fixed` in it, instead of sitting in
      #ui with the buttons where it is written to. The renderer's canvas is the only direct
      child of body, so the child combinator says exactly what was meant all along. */
-  /* inset:0 and nothing else. The overscan was wrong: it made the drawing buffer taller than
-     the element it is shown in (462x1074 against 462x933 on his phone), which stretches the
-     picture and puts the camera on the wrong aspect. */
-  body > canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;touch-action:none}
+  /* THE RECTANGLE ALONG THE BOTTOM, from his own readout and nothing else.
+       win 462x932   vis 462x932   doc 462x932   100vh probe 1002   cv 462x933
+     Three ways of asking for the layout viewport all say 932, and the glass is 1002. So
+     `inset:0` -- which resolves against the LAYOUT viewport -- makes the lens 932 tall on a
+     1002-tall screen, and the seventy at the bottom is html showing through: #070a13, which
+     is the black band, and the picture ending seventy pixels early is "the screen moved up".
+     Every pass at this has been measuring the gap and then sizing the lens to a box that by
+     definition cannot cover it.
+     100vh on iOS is the LARGE viewport -- the page with the browser's bars out of the way --
+     and that is the glass. So the lens is 100vh tall and runs behind the chrome at the bottom
+     rather than stopping short of it. lvh where it exists, which is the same number said
+     properly. What is NOT changed is --uib: a fixed panel is laid out against the 932 box, so
+     it is already inside the part you can see, and adding an inset to it is what moved the
+     interface up a second time in c72. The lens covers the screen; the panels sit in the
+     layout viewport. Two boxes, two rules, and they are allowed to differ.
+     c72 did half of this and stretched the picture, because it grew the BUFFER while the CSS
+     still held the element at 100%. syncSize measures the element itself now, so the two
+     cannot disagree again whatever either of them is. */
+  :root{--lvh:100vh}
+  @supports (height:100lvh){:root{--lvh:100lvh}}
+  body > canvas{position:fixed;left:0;top:0;width:100%;height:var(--lvh,100vh);display:block;z-index:0;touch-action:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
   [hidden]{display:none!important}
@@ -343,7 +360,11 @@
      what was just shipped -- and it was living in #perf, inside a panel that starts folded
      behind a tap on the title. So there was no way to tell a fixed build from a stale one,
      which is worse than useless when a bug report and a fix are crossing in the air. */
+  /* text-align:right and a real max-width: the latched error is the one line here that can be
+     long, and it was arriving on his screen clipped in the middle -- "offset and l... of
+     bounds" -- which is exactly the half of a message that says which one it is. */
   #bld{font-size:11px;opacity:.72;letter-spacing:.04em;margin-top:2px;line-height:1.45;
+    max-width:min(74vw,420px);text-align:right;word-break:break-word;white-space:normal;
     font-family:ui-monospace,Menlo,Consolas,monospace;text-shadow:0 1px 4px rgba(0,0,0,.9)}
   #stale{position:fixed;left:50%;transform:translateX(-50%);z-index:9;pointer-events:auto;
     top:calc(12px + env(safe-area-inset-top) + var(--uit,0px));font-size:12px;letter-spacing:.06em;
@@ -1115,7 +1136,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c79';
+const BUILD = 'c80';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -13758,20 +13779,26 @@ function syncSize() {
   // on a phone the two part company every time the URL bar slides. Reading the wrong one gives
   // a camera whose aspect does not match the box its picture is shown in.
   const vv = window.visualViewport;
-  // The canvas is `fixed; inset:0`, so it is exactly the layout viewport -- and the buffer has
-  // to be exactly that too or the picture stretches. His readout caught mine doing 462x1074
-  // into a 462x933 element.
+  // ASK THE ELEMENT. Every version of this bug has come from computing the buffer out of some
+  // window metric while CSS sized the element out of a different one -- 462x1074 into a
+  // 462x933 box, and the picture stretched with the camera on the wrong aspect. The canvas is
+  // laid out by the rule above and it knows exactly how big it ended up, whatever the browser
+  // thinks its viewports are, so the buffer is measured off the canvas and the two are the
+  // same number by construction.
   const de = document.documentElement;
-  let w = de.clientWidth || innerWidth, h = de.clientHeight || innerHeight;
+  const cvEl = renderer.domElement;
+  let w = cvEl.clientWidth || de.clientWidth || innerWidth;
+  let h = cvEl.clientHeight || de.clientHeight || innerHeight;
   w |= 0; h |= 0;
   // The page's own box first, and every frame rather than only when the size changes: the
   // offset moves on its own while the bar slides, without the height ever differing. Body is
   // the containing block for every fixed panel here (see the CSS), so these four properties
   // are the whole of what keeps the interface over the part of the screen you can see.
   const ds = document.documentElement.style;
+  const lay = de.clientHeight || innerHeight;          // what a fixed PANEL is laid out against
   const vTop = vv ? vv.offsetTop : 0, vH = vv ? vv.height : innerHeight;
   ds.setProperty('--uit', Math.max(0, Math.round(vTop)) + 'px');
-  ds.setProperty('--uib', Math.max(0, Math.round(h - vTop - vH)) + 'px');
+  ds.setProperty('--uib', Math.max(0, Math.round(lay - vTop - vH)) + 'px');
   if (w === _vw && h === _vh) return;
   _vw = w; _vh = h;
   camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -14041,6 +14068,21 @@ function _uiInset(k) {
   try { return getComputedStyle(document.documentElement).getPropertyValue(k).trim() || '0px'; }
   catch (e) { return '?'; }
 }
+// The LARGE viewport in pixels -- the glass with the browser's bars out of the way. There is
+// no property that reports it, so it is measured the only way it can be: a zero-width box a
+// hundred units of it tall. This is the number the lens is now sized to; on his readout it
+// was 1002 against a 932 layout viewport, and that seventy is the black band.
+let _lvhEl = null;
+function _lvh() {
+  try {
+    if (!_lvhEl || !_lvhEl.isConnected) {
+      _lvhEl = document.createElement('div');
+      _lvhEl.style.cssText = 'position:fixed;top:0;left:0;width:0;height:var(--lvh,100vh);visibility:hidden;pointer-events:none';
+      (document.body || document.documentElement).appendChild(_lvhEl);
+    }
+    return _lvhEl.getBoundingClientRect().height | 0;
+  } catch (e) { return '?'; }
+}
 const _lkR = new THREE.Raycaster();
 // OFF BY DEFAULT, AND THAT WAS A BAD MISS. A ray against scene.children with `true` walks the
 // terrain (88,000 triangles), the ocean, forty-six grass chunks and every merged zone mesh,
@@ -14234,7 +14276,9 @@ function updateHUD() {
       + `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}`
       + ` doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}<br>`
       + `scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'}`
-      + ` cv ${cv.clientWidth}x${cv.clientHeight} buf ${_vw}x${_vh} chrome ${_uiInset('--uit')}/${_uiInset('--uib')}`;
+      + ` lvh ${_lvh()}<br>`
+      + `cv ${cv.clientWidth}x${cv.clientHeight} buf ${_vw}x${_vh} chrome ${_uiInset('--uit')}/${_uiInset('--uib')}`
+      + ` far ${camera.far | 0} sky ${(900 * skyRig.scale.x) | 0}`;
   }
 }
 setInterval(updateHUD, 600); updateHUD();
@@ -14343,8 +14387,28 @@ function frame(now) {
   // The dome is nine hundred units and the planet is two-forty, so from the ground the sky
   // encloses everything. Climb, and the far limb of the world reaches past it -- so the rig
   // grows to stay outside whatever is behind you.
+  //
+  // THE BLACK SHAPE IN THE SKY, and it is arithmetic, not a model. The rig grows; the far
+  // plane did not. At the title boom the lens sits about 1300 from the planet's centre, so
+  // the scale is (1300+480)/800 = 2.23 and the dome is 2003 units out -- against a far plane
+  // fixed at 1600. And a far plane is a PLANE: what it compares is view-space depth, not
+  // distance, so a sphere centred on the lens is cut where it is deepest, which is the middle
+  // of the frame. Straight ahead the dome is 2003 deep and gone; forty-odd degrees off axis
+  // it is 2003*cos = 1390 and still there. That is the shape exactly -- a huge hard-edged
+  // black mass filling the centre of the sky with the background surviving round the corners,
+  // occluding nothing because it IS the background, and thinning out as you descend and the
+  // scale comes back down. Same cause as "the background is all black when the game starts":
+  // the dive begins at the title boom, where the whole dome is past the plane.
+  // So the plane is derived from the dome now instead of being a constant it can outgrow. It
+  // also buys depth precision back at ground level, where 1600 was always far more range than
+  // a 990-unit dome needed.
   skyRig.position.copy(camera.position); skyRig.quaternion.copy(_camQ);
-  skyRig.scale.setScalar(Math.max(1, (camera.position.length() + PLANET.R + 80) / 800));
+  const skyS = Math.max(1, (camera.position.length() + PLANET.R + 80) / 800);
+  skyRig.scale.setScalar(skyS);
+  {
+    const f = 900 * skyS * 1.12 + 60;
+    if (Math.abs(f - camera.far) > camera.far * .03) { camera.far = f; camera.updateProjectionMatrix(); }
+  }
   {   // the see-through hole follows the wanderer's chest on screen
     camera.updateMatrixWorld(); camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
     const p = planetPos(player.pos.x, player.pos.y + RIG.height * .5, player.pos.z, _holeP);
