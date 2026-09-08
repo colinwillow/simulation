@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd73';
+const BUILD = 'd74';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -3937,7 +3937,7 @@ function clearGrass(x, z, r) {
 // Mid-morning, sun well up. It started at .28 -- eleven degrees above the horizon -- which
 // meant the title screen and the first minutes of play were both spent in long raking shadow
 // with most of the frame in the dark half of the value range. .35 puts it at thirty-seven.
-const world = { t: DAY * .35, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], pits: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '' };
+const world = { t: DAY * .35, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], pits: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '', asSpecies: null };   // asSpecies: whose skin he is wearing, once the DNA lab can put him in one
 const logEl = document.getElementById('log');
 function logMsg(s) { const d = document.createElement('div'); d.textContent = s; logEl.appendChild(d); while (logEl.children.length > 5) logEl.removeChild(logEl.firstChild); setTimeout(() => d.remove(), 11500); }
 
@@ -6224,6 +6224,188 @@ const THROW = {
 // which is a choice rather than an accident.
 const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7,
   bounce: .36, roll: .68, fric: 1.9, slope: 6.5, stop: 1.5, restY: .34 };
+// ---------- what an animal has left in it ----------
+// NOT HEALTH. Nothing on this island dies, and a bar that says "kill me" would be the wrong
+// promise -- this is FIGHT, and it is the thing that decides whether a capture holds. A full
+// animal thrashes out of a net in a couple of seconds and squirms out of his arms; one that
+// has been worn down stays put; one taken all the way down goes over on its side with stars
+// round its head and can be picked up at leisure until it comes round. So the loop is: find
+// it, wear it down, take it -- and the alternative to wearing it down is feeding it until it
+// does not mind you, which is the same loop played the other way.
+//
+// It is PER ANIMAL, which is the other half of what the species barometer could never say.
+// MOOD.m is what the mossbacks think of him; `vig` and `ire` are what THIS mossback, the one
+// he just shot, is about to do about it.
+const VIT = {
+  bolt: .34, melee: .26, thrash: .055,     // a plasma hit, a swing, and a second of fighting a net
+  regenAfter: 9, regen: .05,               // it gets its wind back if he leaves it alone
+  dazeT: [7, 11], dazeGet: .3,             // how long it is out, and what it wakes up with
+  netFull: 2.4, netWorn: 11,               // seconds a net holds a fresh animal vs a spent one
+  armFull: 2.8, armWorn: 30,               // and the same for his arms
+  ire: .6, ireEase: .085,                  // what a hit adds to an animal's own temper, per second back down
+  ireAt: .5,                               // above this it comes at him instead of running
+  bold: 2.2,                               // and anything this big answers a blow whatever its temper
+  trust: 75, trustFeed: 1,                 // seconds a fed animal will let him walk right up to it
+};
+// WHAT IT IS FEELING, WITHOUT A FOREST OF BARS OVER THE FIELD. A bubble, which is a moment
+// and goes away, and under it a bar, which only appears when it is the answer to a question
+// he is currently asking: he has just hit this one, he is aiming at it, or he is standing
+// next to it. Everything else on the island shows nothing at all.
+const CBUB = {
+  n: 14,            // how many may be on screen at once -- it is a pool, not one each
+  show: 46,         // and how far off one is worth drawing
+  near: 13,         // the bar comes up unasked inside this
+  hot: 5,           // and for this long after a blow, however far off it is
+  aim: 42,          // or at whatever he is pointing the gun at
+  rise: 1.1, size: 1.45, hold: 2.4,
+};
+const FACE_KEYS = ['calm', 'happy', 'scared', 'angry', 'daze'];
+// The glyph set. A bubble with a tail and one mark in it, drawn once each into a texture.
+const BUB_ART = {
+  alarm: ['!', '#ffd27a'], angry: ['!', '#ff7a6a'], watch: ['?', '#dfeaf0'],
+  fond: ['\u2665', '#a8f0b8'], daze: ['\u2736', '#ffe9a8'],
+};
+function bubTex(glyph, cl) {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.beginPath();
+  const x0 = 12, y0 = 8, w = 104, h = 84, r = 26;
+  g.moveTo(x0 + r, y0); g.arcTo(x0 + w, y0, x0 + w, y0 + h, r); g.arcTo(x0 + w, y0 + h, x0, y0 + h, r);
+  g.lineTo(x0 + w * .62, y0 + h); g.lineTo(x0 + w * .46, y0 + h + 26); g.lineTo(x0 + w * .44, y0 + h);
+  g.arcTo(x0, y0 + h, x0, y0, r); g.arcTo(x0, y0, x0 + w, y0, r); g.closePath();
+  g.fillStyle = 'rgba(6,12,16,.86)'; g.fill();
+  g.strokeStyle = cl; g.lineWidth = 6; g.stroke();
+  g.fillStyle = cl; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'bold 72px ui-rounded, Avenir, Helvetica, sans-serif';
+  g.fillText(glyph, x0 + w * .5, y0 + h * .5 + 2);
+  const t = new THREE.CanvasTexture(c); t.needsUpdate = true; return t;
+}
+const BUB_MAT = {};
+const _markGeo = new THREE.PlaneGeometry(1, 1);
+const MARKS = { pool: [], live: [] };
+function markMake() {
+  const g = new THREE.Group(); g.userData.flat = true; g.visible = false;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, fog: false, opacity: 1 }));
+  sp.scale.setScalar(CBUB.size); sp.position.y = .95; g.add(sp);
+  const bk = new THREE.Mesh(_markGeo, new THREE.MeshBasicMaterial({ color: col('#0a1218'), transparent: true, opacity: .72, depthWrite: false, fog: false }));
+  bk.scale.set(1.6, .17, 1); g.add(bk);
+  const fl = new THREE.Mesh(_markGeo, new THREE.MeshBasicMaterial({ color: col('#8ef0a8'), transparent: true, depthWrite: false, fog: false }));
+  fl.scale.set(1.5, .11, 1); fl.position.z = .01; g.add(fl);
+  scene.add(g);
+  return { g, sp, bk, fl };
+}
+// A one-off. `bubbleSay` is the event -- something just happened to this animal -- and the
+// state bubbles below are the standing ones, which need no call because they are read off the
+// animal every frame.
+function bubbleSay(c, key) { if (!c || c.bubT === undefined) return; c.bub = key; c.bubT = CBUB.hold; }
+function bubbleFor(c) {
+  if (c.daze > 0) return 'daze';
+  if (c.doing === 'charge') return 'angry';
+  if (c.bubT > 0) return c.bub;
+  if (c.alarm > 0) return 'alarm';
+  if (c.doing === 'watch') return 'watch';
+  if (c.trust > 0) return 'fond';
+  return null;
+}
+const _mkP = new THREE.Vector3();
+function stepMarks(dt) {
+  const pl = world.player, aiming = pl && pl.aiming;
+  const cx = cam.tgt.x, cz = cam.tgt.z;
+  const want = [];
+  for (const c of world.creatures) {
+    if (!c.alive || c.carried || c.fling) continue;
+    const d = Math.hypot(c.pos.x - cx, c.pos.z - cz);
+    if (d > CBUB.show) continue;
+    if (c.bubT > 0) c.bubT -= dt;
+    const key = bubbleFor(c);
+    const hot = world.clock - c.hurtAt < CBUB.hot;
+    const bar = c.vig < .995 && (hot || d < CBUB.near || (aiming && d < CBUB.aim));
+    if (!key && !bar) continue;
+    want.push({ c, d, key, bar });
+  }
+  want.sort((a, b) => a.d - b.d);
+  if (want.length > CBUB.n) want.length = CBUB.n;
+  while (MARKS.pool.length < want.length) MARKS.pool.push(markMake());
+  for (let i = 0; i < MARKS.pool.length; i++) {
+    const m = MARKS.pool[i], w = want[i];
+    if (!w) { m.g.visible = false; continue; }
+    const c = w.c, y = c.pos.y + (c.rad || 1) * 1.9 + CBUB.rise;
+    m.g.position.copy(planetPos(c.pos.x, y, c.pos.z, _mkP));
+    m.g.quaternion.copy(camera.quaternion);
+    m.g.visible = true;
+    if (w.key) {
+      const art = BUB_ART[w.key] || BUB_ART.alarm;
+      if (!BUB_MAT[w.key]) BUB_MAT[w.key] = bubTex(art[0], art[1]);
+      m.sp.material.map = BUB_MAT[w.key]; m.sp.visible = true;
+      const b = 1 + Math.sin(world.clock * 7 + c.phase) * (w.key === 'angry' ? .09 : .04);
+      m.sp.scale.set(CBUB.size * b, CBUB.size * b, 1);
+    } else m.sp.visible = false;
+    m.bk.visible = m.fl.visible = !!w.bar;
+    if (w.bar) {
+      const v = clamp(c.vig, 0, 1);
+      m.fl.scale.x = 1.5 * Math.max(.02, v);
+      m.fl.position.x = -(1.5 - m.fl.scale.x) * .5;
+      m.fl.material.color.set(v > .6 ? '#8ef0a8' : v > .3 ? '#ffd27a' : '#ff8a72');
+    }
+  }
+}
+// The face. Nothing here BUILDS an expression -- it drives one the model already carries, by
+// morph target name, so the day the meshes ship with `happy` / `scared` / `angry` on them
+// this starts working with no further code. Until then it is the state machine on its own,
+// which is what the bubbles are reading.
+function findFaceMorphs(root) {
+  const out = [];
+  root.traverse(o => {
+    const d = o.morphTargetDictionary;
+    if (!d || !o.morphTargetInfluences) return;
+    const idx = {};
+    for (const k of FACE_KEYS) if (d[k] !== undefined) idx[k] = d[k];
+    if (Object.keys(idx).length) out.push({ inf: o.morphTargetInfluences, idx });
+  });
+  return out.length ? out : null;
+}
+function stepFace(c, dt) {
+  const f = c.daze > 0 ? 'daze'
+    : (c.doing === 'charge' || c.ire >= VIT.ireAt) ? 'angry'
+    : c.alarm > 0 ? 'scared'
+    : (c.trust > 0 || moodOf(c) >= MOOD.fond) ? 'happy' : 'calm';
+  c.face = f;
+  if (c.faceM === undefined) c.faceM = findFaceMorphs(c.g);
+  if (c.faceM) for (const m of c.faceM) for (const k in m.idx) {
+    const i = m.idx[k], want = k === f ? 1 : 0;
+    m.inf[i] = lerp(m.inf[i] || 0, want, Math.min(1, dt * 6));
+  }
+  // OVER ON ITS SIDE. The clip for this does not exist on any of them, so the body is laid
+  // down here: a roll about its own forward axis and a drop of half its standing height,
+  // eased in and out so it goes over rather than blinking flat.
+  if (c.daze > 0 || c.dazeK > .003) {
+    c.dazeK = lerp(c.dazeK, c.daze > 0 ? 1 : 0, Math.min(1, dt * 3.2));
+    c.g.rotation.z += c.dazeK * 1.15;
+    c.g.position.y -= c.dazeK * c.pivotY() * .55;
+  }
+}
+// One blow, wherever it came from. Everything else -- the fling, the species barometer, the
+// flock alarm -- is already handled by knock/stagger; this is only the part that is about the
+// individual: what it costs it, and what it decides to do about it.
+function creatureHurt(c, k, from) {
+  if (!c || !c.alive || c.vig === undefined) return;
+  c.vig = clamp(c.vig - k, 0, 1); c.hurtAt = world.clock;
+  c.trust = 0;                                  // whatever he had built up, that was that
+  const big = (c.rad || 1) >= VIT.bold || c.massive;
+  c.ire = clamp(c.ire + VIT.ire * (big ? 1.25 : 1) * (k / VIT.bolt), 0, 1);
+  if (c.vig <= 0 && c.daze <= 0) {
+    c.daze = rnd(VIT.dazeT[0], VIT.dazeT[1]);
+    c.ire = 0; c.alarm = 0; c.fleeTo = null; c.abandon();
+    bubbleSay(c, 'daze');
+    world.effects.push(new Burst(c.pos.x, c.pos.y + (c.rad || 1) * 1.4, c.pos.z, '#ffe9a8', 12, .8));
+    const nm = (MOOD.label[c.constructor.name] || 'it').replace(/^the /, '').replace(/s$/, '');
+    logMsg('The ' + nm + ' goes down on its side, dazed. Take it now, before it comes round.');
+    return;
+  }
+  // Answer or run. A big one, or one he has already worked up, turns round; everything else
+  // has the sense to leave -- which the flee machinery below is already doing.
+  bubbleSay(c, (big || c.ire >= VIT.ireAt) ? 'angry' : 'alarm');
+}
 class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
@@ -6244,6 +6426,10 @@ class Creature {
       curious: o.curious || 0, spark: o.spark || 0, thirst: o.thirst || 0, social: o.social || 0 };
     this.alarm = 0; this.alarmFrom = null; this.met = 0; this.metWho = null; this.metCool = rnd(0, 30);
     this.chargeCool = 0;      // initialised, because `undefined <= 0` is false and the charge would never fire
+    // What it has left, what it thinks of him personally, whether it is out cold, and how
+    // long it will keep letting him near after a meal. See VIT.
+    this.vig = 1; this.hurtAt = -99; this.ire = 0; this.daze = 0; this.dazeK = 0; this.trust = 0;
+    this.face = 'calm'; this.bub = null; this.bubT = 0;
     this.curio = 0; this.curioCool = rnd(0, 40); this.drinking = 0;
     this.drinkT = o.thirst ? rnd(o.thirst * .2, o.thirst) : 1e9;
     this.g = new THREE.Group(); this.body = new THREE.Group(); this.g.add(this.body); this.build();
@@ -6693,8 +6879,24 @@ class Creature {
   // it has taken the wheel, because a creature bolting from you should not also be deciding
   // which moss to eat.
   senses(dt) {
-    const S = this.SN, pl = world.player, him = pl && !pl.free && !pl.aboard;
+    const S = this.SN, pl = world.player;
     this.doing = '';                       // which sense has the wheel, for the harness to blame
+    // Wind, temper and trust all run on the same clock, whatever else is happening.
+    if (world.clock - this.hurtAt > VIT.regenAfter && this.vig < 1 && this.daze <= 0) this.vig = Math.min(1, this.vig + VIT.regen * dt);
+    if (this.ire > 0) this.ire = Math.max(0, this.ire - VIT.ireEase * dt);
+    if (this.trust > 0) this.trust -= dt;
+    // OUT COLD. No brain at all: it lies where it went down, it does not steer, and it is
+    // there to be picked up. It comes round with a fraction of its wind back, which is what
+    // stops a second knock being free -- it is on its feet and worth something again.
+    if (this.daze > 0) {
+      this.daze -= dt; this.moving = 0; this.wp = null; this.target = null; this.alarm = 0;
+      if (this.daze <= 0) { this.vig = Math.max(this.vig, VIT.dazeGet); this.spook(pl ? pl.pos : this.pos, 0); }
+      this.doing = 'daze'; return true;
+    }
+    // A fed animal, or one wearing its own face, does not run from him. The disguise half is
+    // a single name the DNA system will set when he is walking about as one of them.
+    const known = this.trust > 0 || world.asSpecies === this.constructor.name;
+    const him = pl && !pl.free && !pl.aboard && !known;
     if (this.metCool > 0) this.metCool -= dt;
     if (this.curioCool > 0) this.curioCool -= dt;
     if (this.alarm > 0) {
@@ -6716,7 +6918,13 @@ class Creature {
     // better. Fondness works the other way in the curiosity branch below.
     const md = moodOf(this);
     if (this.chargeCool > 0) this.chargeCool -= dt;
-    if (md <= MOOD.hostile && him && !this.aquatic && !this.flying && !this.fling && !this.stag && this.chargeCool <= 0) {
+    // IT CAME AT HIM BECAUSE HE SHOT IT. The charge used to need the whole species past
+    // `hostile`, so the first thing he ever hit ran away and nothing on the island ever
+    // answered him back until he had worked a species over half a dozen times. Now this
+    // animal's own temper opens the same gate: a big one turns round on the first blow, a
+    // small one only once it has had enough of him.
+    const mad = md <= MOOD.hostile || this.ire >= VIT.ireAt;
+    if (mad && him && !this.aquatic && !this.flying && !this.fling && !this.stag && this.chargeCool <= 0) {
       const C = MOOD.charge, d = this.dist(pl.pos);
       if (d < C.see) {
         this.moving = 1; this.seek(pl.pos, C.speed);
@@ -6906,10 +7114,19 @@ class Creature {
   inNet(dt) {
     const N = this.net;
     if (!N || !N.alive) { this.net = null; return false; }
-    if (NET.hold > 0) {
+    if (N.held !== undefined) {
       N.held -= dt;
       if (player.drag === this) N.held = Math.max(N.held, NET.dragHold);   // it cannot work free while held
-      if (N.held <= 0) { N.cut(); return false; }
+      // Fighting a net costs it. A healthy one gets out; a healthy one that keeps getting
+      // netted does not stay healthy, which is the other road to a capture that holds.
+      if (this.daze <= 0) creatureHurt(this, VIT.thrash * dt, player.pos);
+      if (N.held <= 0) {
+        N.cut();
+        const nm = (MOOD.label[this.constructor.name] || 'it').replace(/^the /, '').replace(/s$/, '');
+        logMsg('The ' + nm + ' kicks its way out of the net. It had too much left in it.');
+        this.spook(player.pos, 0);
+        return false;
+      }
     }
     if (player.drag === this) {
       // A rope of a given length does nothing at all until it comes tight, and then it does
@@ -6957,6 +7174,7 @@ class Creature {
     if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); }
     else if (!this.senses(dt)) this.think(dt);
     this.locomote(dt);
+    stepFace(this, dt);
     if (this.ghost > 0) this.ghost -= dt;
     if (!this.flying) {
       const r = this.resolve(this.pos.x, this.pos.z);
@@ -13552,7 +13770,11 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // for the solo switch did not shadow it -- the LATER one in an object literal wins silently,
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
-window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB,
+  // who is feeling what, right now, nearest first
+  states: () => world.creatures.filter(c => c.alive && c.vig !== undefined)
+    .map(c => ({ what: c.constructor.name, vig: +c.vig.toFixed(2), ire: +c.ire.toFixed(2), daze: +c.daze.toFixed(1), trust: +c.trust.toFixed(0), face: c.face, doing: c.doing }))
+    .sort((a, b) => a.vig - b.vig) };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -13869,6 +14091,7 @@ function meleeHit(slide) {
     if (d > reach + (o.rad || 1) || d < 1e-3) continue;
     if ((dx * hx + dz * hz) / d < arc) continue;
     hit++;
+    creatureHurt(o, VIT.melee * (slide ? 1.35 : 1), p.pos);
     if (o.hurl) o.hurl(dx / d, dz / d, MELEE.push * (slide ? 1.3 : 1), slide ? .55 : .34);
     else if (o.knock) o.knock(p.pos, 1);
     moodShift(o, MOOD.hit);
@@ -15089,6 +15312,19 @@ function carryStep(dt) {
     }
   }
   if (p.placeT > 0 && (p.placeT -= dt) <= 0) { p.placeT = 0; finishPlace(); }
+  // AND HIS ARMS ARE NOT A CAGE EITHER. Same rule as the net: what it has left decides how
+  // long he keeps hold of it, and a spent or dazed one he can carry all the way home.
+  if (p.carry && p.placeT <= 0) {
+    const c = p.carry;
+    p.holdT = (p.holdT || 0) + dt;
+    const cap = c.daze > 0 ? 1e9 : lerp(VIT.armWorn, VIT.armFull, clamp(c.vig === undefined ? 1 : c.vig, 0, 1));
+    if (p.holdT > cap) {
+      const nm = (MOOD.label[c.constructor.name] || 'it').replace(/^the /, '').replace(/s$/, '');
+      p.placeAt = { x: p.pos.x, z: p.pos.z }; p.placeT = 0; finishPlace();
+      if (c.alive) { creatureHurt(c, 0, p.pos); c.spook(p.pos, 0); bubbleSay(c, 'alarm'); }
+      logMsg('The ' + nm + ' kicks free and is gone before he can get a hand back on it.');
+    }
+  } else p.holdT = 0;
   p.carryK = lerp(p.carryK, p.carry && p.placeT <= 0 ? 1 : 0, Math.min(1, dt * 7));
   const c = p.carry;
   if (!c) return;
@@ -15506,6 +15742,10 @@ function takeFood(c, kind, x, y, z) {
   c.met = HOLD.eatT; c.metWho = null; c.alarm = 0; c.wp = null;
   if (likes) {
     moodShift(c, MOOD.feed);
+    // AND THIS ONE, PERSONALLY, now lets him walk right up to it -- which is the difference
+    // between a species that tolerates him and the animal in front of him trusting him.
+    c.trust = VIT.trust * VIT.trustFeed; c.ire = 0; c.alarm = 0; c.vig = Math.min(1, (c.vig || 0) + .3);
+    bubbleSay(c, 'fond');
     world.effects.push(new Burst(c.pos.x, c.pos.y + c.rad * .8, c.pos.z, '#d8ffb0', 9, .8));
     logMsg('The ' + nm + ' finds it where it landed and eats it on the spot.');
   } else {
@@ -15896,8 +16136,8 @@ class Bolt {
       // no new button and reads on sight.
       if (o.net && d < BL * .6) { o.net.cut(); continue; }
       // Right where it went off, it throws. Out at the edge of the blast it only startles.
-      if (d < R + (o.rad || 1) + 1.6 && o.knock) o.knock(this, 1);
-      else if (d < BL * .45 && o.knock) o.knock(this, clamp(1 - d / (BL * .45), .25, .6));
+      if (d < R + (o.rad || 1) + 1.6 && o.knock) { creatureHurt(o, VIT.bolt, this); o.knock(this, 1); }
+      else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * f, this); o.knock(this, f); }
       else if (o.spook) o.spook(this, 10);
     }
   }
@@ -16131,7 +16371,11 @@ class NetShot {
     return false;
   }
   take(o) {
-    this.state = 'wrap'; this.prey = o; o.net = this; this.held = NET.hold;
+    // HOW LONG IT HOLDS IS NOT A PROPERTY OF THE NET. A fresh animal is out of it in a
+    // couple of seconds; one that has been worn down stays in it long enough to walk over and
+    // take hold of; one that is out cold is not going anywhere at all.
+    this.state = 'wrap'; this.prey = o; o.net = this;
+    this.held = o.daze > 0 ? VIT.netWorn * 2 : lerp(VIT.netWorn, VIT.netFull, clamp(o.vig === undefined ? 1 : o.vig, 0, 1));
     o.abandon(); o.wp = null; o.target = null; o.fling = null; o.alarm = 0; o.stall = 0;
     this.px = o.pos.x; this.py = o.pos.y; this.pz = o.pos.z;
     this.drape(o);
@@ -18521,6 +18765,7 @@ function frame(now) {
   for (const e of world.structures) if (e.alive) e.update(dt);
   moodEase(dt);
   for (const e of world.creatures) if (e.alive) e.update(dt);
+  stepMarks(dt);
   for (const e of world.effects) if (e.alive) e.update(dt);
   for (const e of world.sparks) if (e.alive) e.update(dt);
   ferry.update(dt);
