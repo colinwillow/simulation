@@ -1220,7 +1220,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c92';
+const BUILD = 'c93';
 // The build number, on every screen there is. It has to be set here rather than left in the
 // markup so that bumping BUILD is still the only edit a push needs.
 try { const _bt = document.getElementById('bldTag'); if (_bt) _bt.textContent = BUILD; } catch (e) { }
@@ -13993,7 +13993,14 @@ function lensProbe() {
     // no difference and no strip -- and then #edgeF would be fifty-four pixels of darkening
     // over a picture that already reaches the bottom, which is a bug of its own. Measured, so
     // it turns itself off wherever this ends up running.
-    _edgeGap = g ? g - (document.documentElement.clientHeight || innerHeight) : 0;
+    // AND THE SIGN OF IT MATTERS. glassH minus clientHeight is only a strip at the BOTTOM
+    // when the view is full-bleed at the top -- black-translucent, which is what makes iOS
+    // hand the app the screen minus the status bar and then place it at y=0. The tell is
+    // safe-area-inset-top: nonzero means the status bar is over the page and the deficit is
+    // below it; zero means the view is laid out under the status bar at its real height, the
+    // picture already reaches the bottom of the screen, and a fade there would be fifty-four
+    // pixels of darkening for nothing. His re-added app reads 0/34, which is the good state.
+    _edgeGap = (g && _safeTop() > 4) ? g - (document.documentElement.clientHeight || innerHeight) : 0;
     if (_edgeF) _edgeF.hidden = !(_edgeGap > 8);
   }
   const r = cvEl.getBoundingClientRect();
@@ -14367,6 +14374,17 @@ function _uiInset(k) {
 // hundred units of it tall. This is the number the lens is now sized to; on his readout it
 // was 1002 against a 932 layout viewport, and that seventy is the black band.
 let _lvhEl = null;
+// How much of the page the status bar is sitting over. Measured, because env() is a CSS value
+// with no JS reader, and it is the one number that says which way round the window is.
+function _safeTop() {
+  try {
+    _lvh();
+    _lvhEl.style.height = 'env(safe-area-inset-top)';
+    const h = _lvhEl.getBoundingClientRect().height;
+    _lvhEl.style.height = 'var(--lvh, 100vh)';
+    return h;
+  } catch (e) { return 0; }
+}
 function _lvh() {
   try {
     if (!_lvhEl || !_lvhEl.isConnected) {
