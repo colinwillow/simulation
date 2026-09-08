@@ -12,6 +12,20 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Plutopia">
+<!-- BLACK-TRANSLUCENT, HIS CALL: THE STRIP GOES WHERE THE FINGERS ARE.
+     iOS gives an installed web app the screen minus the status bar and there is no arranging
+     of the page that gets those sixty points back -- his c87 panel settled it, a canvas
+     measuring 0..1002 with its bottom seventy unpainted. So the only question is which end of
+     the screen loses them, and both answers are one word in this tag.
+     `default` lays the view out below the status bar: the picture reaches the bottom and the
+     strip is at the top, with the clock in it. `black-translucent` puts the view at y=0: the
+     art runs behind the status bar and the strip is at the bottom. He wants the bottom, where
+     his thumbs already are and where the sticks sit over it anyway.
+     IT IS READ AT INSTALL, NOT AT LAUNCH. Changing it does nothing to an icon that is already
+     on the Home Screen; the icon has to be deleted and re-added. That is what actually landed
+     the last change, not the build that carried it.
+     The rest of the old note, which argued the other way round, is below and still true about
+     the mechanism. -->
 <!-- NOT black-translucent, AND THIS IS THE BAND.
      His c87 panel: cv 0..1002, h 1002, inline h "1002px" -- the lens is exactly the height of
      the glass and the band is still 179 device pixels, unmoved since the first build that had
@@ -28,7 +42,7 @@
      is the right height, and the picture reaches the bottom of the screen. The trade is the
      status bar gets its own strip at the top instead of the art running behind it -- which is
      what an app looks like, rather than what a bug looks like. -->
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#070a13">
 <style>
   /* OVERFLOW:VISIBLE ON THE ROOT, and this is the one mechanism that fits the evidence.
@@ -1227,7 +1241,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c95';
+const BUILD = 'c96';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070a13'; document.body.style.background = '#070a13'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -9449,7 +9463,14 @@ let _tintAt = 0, _tintRow = null;
 // the phone looks like; #070a13 was right all along and the tint was solving a problem that
 // re-adding the app had already removed. Both this and #edgeF are dead here, not deleted, so
 // there is one line to flip if this ever gets installed the old way again.
-const EDGE_TINT = 0;
+// BACK ON, and safe this time because of the gate it now sits behind. What burned him was
+// this running while the view was laid out UNDER the status bar: the strip was at the top,
+// the strip takes its colour from the page background, and the status bar went bright purple.
+// _edgeGap is zero unless safe-area-inset-top is nonzero -- which is only true in the
+// black-translucent layout, where the status bar is over the art and the only thing the page
+// background paints is the strip at the bottom. In the other layout this returns immediately
+// and the background stays #070a13.
+const EDGE_TINT = 1;
 function edgeTint() {
   if (!EDGE_TINT) return;
   if (_edgeGap <= 8) return;          // no strip to colour, and readPixels stalls the pipe
