@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd48';
+const BUILD = 'd49';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -4942,7 +4942,53 @@ function markBody(root, on = true) {
   root.traverse(o => { for (const m of [].concat(o.material || [])) if (m && !!m.userData.noHole !== !!on) { m.userData.noHole = on; m.needsUpdate = true; } });
   return root;
 }
+// TRIANGLES WOUND INWARD, WHICH IS AN INVISIBLE BUILDING WITH A COLLIDER ROUND IT.
+// Every model in the pack arrives double-sided and prepModel forces them to FrontSide -- the
+// note below says why, and it is right for a sculpt whose triangles face out. Two of them do
+// not: measured out of the files, sp_mountain01's signed volume is -7.9e6 and
+// sp_sci_fi_antenna's is -9.5e4, against a positive volume on all thirty-four others. Their
+// faces point INTO the mesh, so with backface culling on they vanish -- and what you see
+// standing on one is the inside of its far wall, which is exactly "it is see-through, it is
+// rendering from the other side". A mountain and every mast on the island, invisible, each
+// with its collider live. That is the second cause of the phantom colliders; the first was
+// the merge that killed layZones outright in d38, and it hid this one.
+//
+// Flipping the winding rather than falling back to DoubleSide, because the normals are wound
+// inward with the faces: double-siding it would make it visible AND lit from inside. Reverse
+// each triangle and negate the normals and it is simply a correct single-sided mesh.
+//
+// The test is the signed volume of the closed hull -- the sum of the tetrahedra each triangle
+// makes with the origin -- against the bounding box, so an open shell (a leaf card, a plane)
+// lands near zero and is left alone. Done once per geometry at load, before any clone.
+const _wound = new WeakSet();
+function fixWinding(root, url) {
+  root.traverse(o => {
+    const g = o.isMesh && o.geometry; if (!g || _wound.has(g)) return;
+    _wound.add(g);
+    const pa = g.attributes.position, idx = g.index;
+    if (!pa || !idx || idx.count < 36) return;
+    g.computeBoundingBox();
+    const bb = g.boundingBox;
+    const bv = Math.max(1e-9, (bb.max.x - bb.min.x) * (bb.max.y - bb.min.y) * (bb.max.z - bb.min.z));
+    let vol = 0;
+    for (let i = 0; i + 2 < idx.count; i += 3) {
+      const a = idx.getX(i), b = idx.getX(i + 1), c = idx.getX(i + 2);
+      const ax = pa.getX(a), ay = pa.getY(a), az = pa.getZ(a);
+      const bx = pa.getX(b), by = pa.getY(b), bz = pa.getZ(b);
+      const cx = pa.getX(c), cy = pa.getY(c), cz = pa.getZ(c);
+      vol += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+    }
+    if (vol / 6 >= -bv * .05) return;                 // outward, or too open to tell
+    const arr = idx.array;
+    for (let i = 0; i + 2 < idx.count; i += 3) { const t = arr[i]; arr[i] = arr[i + 2]; arr[i + 2] = t; }
+    idx.needsUpdate = true;
+    const na = g.attributes.normal;
+    if (na) { for (let i = 0; i < na.count; i++) na.setXYZ(i, -na.getX(i), -na.getY(i), -na.getZ(i)); na.needsUpdate = true; }
+    console.warn('[model] ' + (url || '?') + ' is wound inward; flipped ' + (idx.count / 3 | 0) + ' triangles');
+  });
+}
 function prepModel(root, url) {
+  fixWinding(root, url);
   let saved = 0; const seen = new Set();
   const lift = (url && MODEL_LIFT[url] != null) ? MODEL_LIFT[url] : MODEL.ambientLift;
   // Which materials belong to a body. When every model in the file was a rig this was all of
