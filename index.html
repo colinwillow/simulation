@@ -1476,6 +1476,10 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
        ordinary way out; on the line it is the release. One button, because from the seat "get
        out" is one intention and the ship already knows which one it is. -->
   <button id="ejectQ" class="tog" hidden>eject</button>
+  <!-- THE ARM. Its own button, because dropping the claw and getting out of the ship are two
+       different intentions and tying them together meant you could never have one without
+       the other. -->
+  <button id="armQ" class="tog" hidden>drop arm</button>
   <!-- THE PILE. How many parts he is carrying. Hidden at zero, so it only exists once there is
        something to build with. -->
   <div id="pile" class="tog" hidden></div>
@@ -1538,7 +1542,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd38';
+const BUILD = 'd39';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -7745,6 +7749,17 @@ const SHIP = {
   // whole planet is in frame and a ship crossing it is worth having.
   sortie: true, firstAt: 7, every: [DAY * 1.4, DAY * 2.8],
   cruise: 62, speed: 30, hop: 26, liftT: 6, landT: 8, radius: W * .5,
+  // THE CLAW ARM. Its own control, not a side effect of getting out: drop it and fly around
+  // with it swinging under the belly, which is the whole point of having one -- you go over
+  // the thing you want and it is already down there. Ejecting with it out puts him in its
+  // grip instead of in the air.
+  arm: {
+    len: 11,        // how far it pays out below the belly when it is dropped
+    rate: 6.5,      // units a second, out and back
+    grip: 1.9,      // how far under the ship he hangs when he is in its fingers
+    r: .42,         // the wrist
+    finger: 1.15,   // and each of the three fingers
+  },
 };
 // Flying it yourself. Everything here is an acceleration or a rate, never a speed set
 // directly, because weight is the whole brief: the ship takes seconds to get going and
@@ -7834,6 +7849,7 @@ class Ship {
     this.qAir = new THREE.Quaternion(); this._e = new THREE.Euler(0, 0, 0, 'YXZ');
     scene.add(this.g);
     this.state = 'landed'; this.t = 0; this.air = 0; this.next = SHIP.firstAt; this.hop = SHIP.hop; this.outT = 0;
+    this.arm = { out: 0, want: 0 };          // the claw: how far it is down, and whether it should be
     this.grounded = true; this.power = 0; this.spool = 0; this.yawRate = 0; this.roll = 0; this.nose = 0; this.sag = 0; this.sagV = 0;
     this.trem = new THREE.Vector3();
     this.vel = new THREE.Vector3(); this.prevHeading = face; this.heading = face;
@@ -8009,6 +8025,31 @@ class Ship {
     this.g.position.set(this.hoverAt.x, this.hoverAt.y + Math.sin(world.clock * .9) * .35, this.hoverAt.z);
     this.heading = this.face;
   }
+  // THE ARM, dropped and raised on its own button. It does not care what state the ship is
+  // in -- that is the point of separating it from the eject: you drop it while flying and
+  // then go over things with it hanging.
+  armToggle() {
+    if (this.grounded && !this.arm.want) { logMsg('Not on the ground. It would foul the legs.'); return; }
+    this.arm.want = this.arm.want ? 0 : 1;
+    logMsg(this.arm.want ? 'The belly plate slides back and the claw arm pays out.'
+                         : 'The arm reels in and the plate shuts.');
+  }
+  // Where the claw is this frame. Two cases: hanging free under the belly at whatever length
+  // it has paid out to, or closed round him, in which case it goes where HE is and the line
+  // is however long that makes it.
+  armStep(dt) {
+    const A = SHIP.arm, p = world.player, held = p && p.roping && p.ropeGrip && p.ropeShip === this;
+    if (this.grounded && !held) this.arm.want = 0;
+    const want = held ? Math.max(this.arm.out, A.grip) : this.arm.want * A.len;
+    this.arm.out += clamp(want - this.arm.out, -A.rate * dt, A.rate * dt);
+    if (held) {
+      this.arm.out = Math.max(.2, this.pos.y - p.pos.y - RIG.height * .92);
+      armDraw(this, p.pos.x, p.pos.y + RIG.height * .92, p.pos.z, 1, p.faceH);
+      return;
+    }
+    if (this.arm.out < .06) { this.arm.out = 0; armHide(); if (rope.g && !(p && p.roping)) rope.g.visible = false; return; }
+    armDraw(this, this.pos.x, this.pos.y - 1.4 - this.arm.out, this.pos.z, 0, this.heading);
+  }
   // Somebody is going down the line: stop where you are and wait.
   ropeOut() {
     this.hoverAt = this.g.position.clone();
@@ -8032,15 +8073,17 @@ class Ship {
     // so a ship holding over the fort ring pays out onto the fort ring.
     const floor = Math.max(deckY(this.pos.x, this.pos.z, this.pos.y), standOn(this.pos.x, this.pos.z, this.pos.y), groundY(this.pos.x, this.pos.z));
     const air = this.pos.y - floor;
-    if (!drop && air > 6 && air < LINE.max && height(this.pos.x, this.pos.z) > SEA + .4) {
+    // INTO THE CLAW, IF THE ARM IS DOWN. Without it this is a hatch and a jump, which is
+    // what eject meant before the arm existed and what it still means with the arm stowed.
+    if (!drop && this.arm.want && air > 6 && air < LINE.max && height(this.pos.x, this.pos.z) > SEA + .4) {
       p.aboard = false; p.g.visible = true;
-      p.pos.set(this.pos.x, this.pos.y - 2.6, this.pos.z);
-      p.ropeX = p.ropeZ = 0; p.roping = 1; p.ropeShip = this;
+      p.pos.set(this.pos.x, this.pos.y - SHIP.arm.grip, this.pos.z);
+      p.ropeX = p.ropeZ = 0; p.roping = 1; p.ropeGrip = 1; p.ropeShip = this;
       p.vx = p.vz = 0; p.vy = 0; p.wmag = 0; p.grounded = 0; p.swim = 0; p.jump = 0; p.leadT = 0;
       p.gy = p.pos.y; p.heading = p.faceH = this.heading;
       cam.r = cam.rWalk || cam.r;
       this.outT = 3.4; this.ropeOut();
-      logMsg('The belly port opens and he goes out on the line. Tap to let go.');
+      logMsg('The claw closes round him and takes his weight. Stick down to pay out, up to reel in, tap to drop.');
       hintEl.innerHTML = hint0;
       return;
     }
@@ -8052,7 +8095,8 @@ class Ship {
     this.outT = 1.8;
     cam.r = cam.rWalk || cam.r;
     world.effects.push(new Burst(p.pos.x, p.pos.y, p.pos.z, '#bfe8ff', 9, .7));
-    logMsg('He drops out of the belly hatch.');
+    logMsg(this.arm.want ? 'Too far down for the arm. He goes out of the hatch instead.'
+                         : 'The hatch swings up and he drops out of it.');
     hintEl.innerHTML = hint0;
     // Straight into the route home rather than through summonTo, which refuses a piloted
     // ship on purpose -- and until this line runs, that is still what it is.
@@ -8232,6 +8276,7 @@ class Ship {
   update(dt) {
     const b = this.bones; if (!b) return;
     const c = this.ctl, p = world.player, t = world.clock;
+    this.armStep(dt);
     const playerNear = p && !p.free ? this.pos.distanceTo(p.pos) : 1e9;
     // ---- state ----
     if (this.state === 'landed') {
@@ -12579,13 +12624,24 @@ const WEAPON = {
 // where it settles and lies there.
 const NET = {
   cool: 1.15,          // slower than the blaster: it is a capture, not a rate of fire
-  speed: 46, life: 3.0, grace: 1.8,
+  // SLOW ENOUGH TO WATCH. At 46 a second the whole flight was two frames on a phone: it read
+  // as the net teleporting onto the animal, which is why the wrap looked like it "just sort
+  // of goes around them" -- there was never a moment where a net was visibly in the air.
+  // 26 puts about eight frames of open sheet between the muzzle and a target ten units off,
+  // and the bloom is slowed to match so the opening is part of the flight rather than over
+  // in the first metre.
+  speed: 26, life: 3.6, grace: 1.8,
   ride: 2.4, climb: 40, fall: 14,     // the same terrain-hugging flight the bolt has
   rings: 5, spokes: 16,               // 81 nodes, 176 cords -- a mesh, not a diagram
   slack: 1.06,                        // cords cut a little long, so at rest they bow instead of ruling lines
-  R0: .5, R1: 4.2,                    // furled at the muzzle, open by the time it arrives
-  bloom: .16,                         // seconds from one to the other
-  spin: 5.2,
+  R0: .5, R1: 4.9,                    // furled at the muzzle, open by the time it arrives
+  bloom: .42,                         // seconds from one to the other
+  spin: 3.0,
+  // AND IT IS NOT EDGE-ON. The disc's normal used to be the flight direction exactly, so
+  // fired away from the camera it was a line: a net you cannot see is a net that has no
+  // dynamics as far as the player is concerned. Tipped back about the axis it is spinning
+  // across, the sheet presents an ellipse to the man who threw it the whole way out.
+  face: .62,
   iters: 5, grav: 17, damp: .965, gnd: .34,
   // A cord PULLS. It does not push -- that is the whole difference between rope and a spring,
   // and pushing was why the thing sat there as a rigid hoop instead of crumpling onto
@@ -12604,7 +12660,7 @@ const NET = {
   // THE CINCH. On a catch the cords are re-cut shorter over `cinchT` seconds, down to `cinch`
   // of their flying length. That is the difference between a net lying ON an animal and a net
   // AROUND one: the cords actively shorten, the body stops them, and what is left is a bag.
-  cinch: .52, cinchT: .55,
+  cinch: .52, cinchT: .72,
   // And then it STOPS being a simulation. Once it has closed, every node is written down as
   // an offset in the animal's own frame and rebuilt from that each frame, so it rides the
   // body exactly and cannot slide off it however the animal thrashes. It still looks like a
@@ -12619,7 +12675,7 @@ const NET = {
   // equator -- and over `wrapT` it is drawn there while the cords go on jostling, so the
   // closing still reads as cloth rather than as a shape appearing. Then it binds. The physics
   // supplies the life; the target supplies the outcome.
-  wrapArc: 2.5, wrapT: .9, wrapK: 7,
+  wrapArc: 2.5, wrapT: 1.15, wrapK: 7,
   // And a leash. Nothing may sit further from the animal's middle than this much of its own
   // size, so the sheet cannot spread out flat on the ground beside it -- which is what it was
   // doing, and why it looked like it fell off rather than caught.
@@ -12704,6 +12760,47 @@ function ropeMesh() {
   scene.add(rope.g);
   return rope.g;
 }
+// THE THREE-FINGER CLAW on the end of it. Chart-space like everything else that stands on
+// the world, so it is added to the scene bare and the planet projection puts it on the
+// sphere for us. `shut` is 0 open, 1 closed; the fingers hinge at the wrist collar.
+const sarm = { g: null, fing: [], shut: 0 };
+function armMesh() {
+  if (sarm.g) return sarm.g;
+  const g = new THREE.Group();
+  const A = SHIP.arm;
+  g.add(mesh(G.cyl, M.hullDark, A.r * 1.15, .42, A.r * 1.15, 0, .21, 0));   // the collar
+  g.add(mesh(G.sph, M.hullLit, A.r * .5, A.r * .5, A.r * .5, 0, .04, 0));   // and a lamp in it
+  for (let i = 0; i < 3; i++) {
+    const a = i / 3 * Math.PI * 2;
+    const hinge = new THREE.Group();
+    hinge.position.set(Math.sin(a) * A.r, 0, Math.cos(a) * A.r);
+    hinge.rotation.y = a;
+    // one finger: an upper joint and a hooked tip, both hanging down from the hinge
+    const up = mesh(G.cyl, M.hullMid, .13, A.finger * .62, .13, 0, -A.finger * .31, 0);
+    const tip = new THREE.Group(); tip.position.set(0, -A.finger * .62, 0);
+    tip.add(mesh(G.cyl, M.hullPale, .11, A.finger * .48, .11, 0, -A.finger * .24, 0));
+    tip.rotation.x = .5;
+    hinge.add(up, tip); g.add(hinge);
+    sarm.fing.push({ hinge, tip });
+  }
+  g.visible = false;
+  scene.add(g);
+  return (sarm.g = g);
+}
+// How far down the line the claw is, and how shut. Called by the ship every frame.
+function armDraw(sh, x, y, z, shut, head) {
+  const g = armMesh();
+  g.visible = true;
+  g.position.set(x, y, z);
+  g.rotation.y = head;
+  const k = clamp(shut, 0, 1);
+  // The hinge is yawed to its place on the collar, so its own +Z is OUTWARD and a turn about
+  // its X is the one that opens and shuts it -- about Z the three fingers swirl round the
+  // wrist instead, which is the same axis mistake the landing gear note warns about.
+  for (const f of sarm.fing) { f.hinge.rotation.x = -.42 + k * .95; f.tip.rotation.x = .5 + k * .45; }
+  ropeDraw(sh.pos.x, sh.pos.y - 1.4, sh.pos.z, x, y + .3, z);
+}
+function armHide() { if (sarm.g) sarm.g.visible = false; }
 const _rpA = new THREE.Vector3(), _rpB = new THREE.Vector3(), _rpD = new THREE.Vector3(), _rpQ = new THREE.Quaternion();
 // Anchor and rider are both CHART points; the line has to be drawn on the sphere, so both ends
 // go through planetPos and the tube is aimed between them in world space.
@@ -12721,7 +12818,7 @@ function ropeDraw(ax, ay, az, bx, by, bz) {
 function ropeLetGo(msg) {
   const p = player;
   if (!p.roping) return;
-  p.roping = 0; p.ropeShip = null;
+  p.roping = 0; p.ropeGrip = 0; p.ropeShip = null;
   if (rope.g) rope.g.visible = false;
   p.grounded = 0; p.vy = Math.min(p.vy, -2);
   if (msg) logMsg(msg);
@@ -12733,12 +12830,23 @@ function stepRope(dt) {
   const p = player, sh = p.ropeShip;
   if (!sh || sh.state !== 'hover' || !world.ship) { ropeLetGo('The line goes slack and he drops.'); return; }
   const ax = sh.pos.x, ay = sh.pos.y - 1.6, az = sh.pos.z;
-  p.pos.y -= LINE.speed * dt;
-  // a little sway, from the stick, damped back to under the hatch
   const sx = clamp(stick.L.x + (keys.d ? 1 : 0) - (keys.a ? 1 : 0), -1, 1);
   const sz = clamp(stick.L.y + (keys.s ? 1 : 0) - (keys.w ? 1 : 0), -1, 1);
+  // IN THE CLAW HE OWNS THE WINCH. Stick down pays out, stick up reels back in, thumb
+  // centred and he simply hangs there -- which is what makes it a machine he is operating
+  // rather than a cutscene that ends on the ground. The old line dropped him at a fixed
+  // rate whatever he did, and there was no way back up it at all.
+  if (p.ropeGrip) {
+    const rate = Math.abs(sz) > .18 ? sz : 0;
+    p.pos.y -= rate * LINE.speed * dt;
+    const ceil = sh.pos.y - SHIP.arm.grip;
+    if (p.pos.y > ceil) p.pos.y = ceil;
+  } else p.pos.y -= LINE.speed * dt;
+  // a little sway, from the stick, damped back to under the hatch. On the claw the stick's
+  // own vertical is the winch, so only the sideways half of it swings him.
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
-  const wx = sa * sz + ca * sx, wz = ca * sz - sa * sx;
+  const swz = p.ropeGrip ? 0 : sz;
+  const wx = sa * swz + ca * sx, wz = ca * swz - sa * sx;
   p.ropeX = clamp((p.ropeX || 0) + wx * dt * 3.2, -LINE.sway, LINE.sway);
   p.ropeZ = clamp((p.ropeZ || 0) + wz * dt * 3.2, -LINE.sway, LINE.sway);
   p.pos.x = ax + p.ropeX; p.pos.z = az + p.ropeZ;
@@ -12746,9 +12854,9 @@ function stepRope(dt) {
   const floor = Math.max(deckY(p.pos.x, p.pos.z, p.pos.y), standOn(p.pos.x, p.pos.z, p.pos.y), groundY(p.pos.x, p.pos.z));
   if (p.pos.y <= floor + .05) {
     p.pos.y = floor; p.gy = floor; p.vy = 0; p.grounded = 1;
-    p.roping = 0; p.ropeShip = null; if (rope.g) rope.g.visible = false;
+    p.roping = 0; p.ropeGrip = 0; p.ropeShip = null; if (rope.g) rope.g.visible = false;
     world.effects.push(new Burst(p.pos.x, floor + .4, p.pos.z, '#cdbf9c', 7, .55));
-    logMsg('His feet find the ground and the line whips back up.');
+    logMsg('His feet find the ground; the claw lets go and the arm whips back up.');
     sh.ropeDone();
     ropeDraw(ax, ay, az, p.pos.x, p.pos.y + RIG.height * .75, p.pos.z);
     if (rope.g) rope.g.visible = false;
@@ -13101,9 +13209,6 @@ function holdOffer() {
   const p = player;
   if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5) return;
   if (p.hold) {
-    // it rides at the chest, a little in front, and it is not something to see through
-    const sx = Math.sin(p.faceH), sz = Math.cos(p.faceH);
-    p.hold.g.position.set(p.pos.x + sx * .55, p.pos.y + RIG.height * .52 + Math.sin(world.clock * 6) * .02, p.pos.z + sz * .55);
     let best = null, bd = HOLD.feed;
     for (const o of world.creatures) {
       if (!o.alive || o.carried || o.net || o.aquatic || o.flying || o.fling) continue;
@@ -13114,7 +13219,7 @@ function holdOffer() {
     else offerAct({ icon: 'put', label: 'PLANT IT', run: plantHeld });
     return;
   }
-  if (p.carry || p.liftT > 0) return;
+  if (p.carry || p.liftT > 0 || p.holdPend) return;
   let best = null, bd = HOLD.reach;
   for (const t of world.plants) {
     if (!(t instanceof Turnip) || !t.alive || !t.ripe) continue;
@@ -13154,22 +13259,53 @@ function hackTree(t, dt) {
     world.effects.push(new Burst(t.pos.x + rnd(-.5, .5), t.pos.y + 1.1, t.pos.z + rnd(-.5, .5), '#d8c9a8', 3, .35));
   if (t.hackT >= HACK.T) { t.fall(); logMsg('It leans, and goes over.'); }
 }
-function pullTurnip(t) {
-  const p = player;
-  if (!t || !t.alive || p.hold) return;
-  t.alive = false; t.dispose();
+// THE STOOP, and then the hold. It used to be neither: the turnip vanished out of the ground
+// and appeared at his chest on the same frame, with the body still playing whatever gait it
+// was on. Both animations already exist and the creature-carry already drives them -- the
+// `pick_up_object` one-shot off `liftT`, and `holding_item` additively from the spine up off
+// `carryK` -- so this is the same two channels, not new work. He bends, it comes loose, and
+// from then on he walks about holding it exactly the way he holds an animal.
+function heldTurnip() {
   const g = new THREE.Group();
   const bulb = mesh(G.sph, solid(TURNIP_MAT), .5, .56, .5, 0, 0, 0); bulb.castShadow = true; g.add(bulb);
   g.add(mesh(G.sph, solid(TURNIP_TOP), .4, .26, .4, 0, .42, 0));
   for (let i = 0; i < 4; i++) { const f = mesh(G.leaf, solid(M.moss2), 1.1, 1.5, 1, 0, .5, 0); f.rotation.set(-.4, i / 4 * 6.283, 0); g.add(f); }
   scene.add(g);
-  p.hold = { kind: 'turnip', g };
-  world.effects.push(new Burst(t.pos.x, t.pos.y + .6, t.pos.z, '#c9b48a', 8, .6));
-  logMsg('He works it loose and pulls it up, roots and all.');
+  return g;
+}
+function pullTurnip(t) {
+  const p = player;
+  if (!t || !t.alive || p.hold || p.liftT > 0 || p.carry) return;
+  t.alive = false; t.dispose();
+  // the ground says so on the first frame; the thing itself arrives when the bend is over
+  world.effects.push(new Burst(t.pos.x, t.pos.y + .3, t.pos.z, '#8a7554', 10, .55));
+  p.liftT = CARRY.lift; p.holdPend = { kind: 'turnip', at: t.pos.clone() };
+  logMsg('He gets both hands round it and works it loose.');
+}
+// Where the thing in his hands rides. The socket, the same weapon null the carried animal
+// hangs on, so the hold pose actually places it; the chest offset is the fallback for a rig
+// that never loaded. Called every frame from the step, not from the offer -- the offer is
+// not guaranteed to run, and a held object that only moves when a prompt is on screen
+// hangs in the air the moment anything else claims the button.
+const _hldA = new THREE.Vector3(), _hldB = new THREE.Vector3(), _hldU = new THREE.Vector3();
+function stepHold(dt) {
+  const p = player;
+  p.holdK = lerp(p.holdK || 0, p.hold ? 1 : 0, Math.min(1, dt * 7));
+  const h = p.hold; if (!h) return;
+  if (weap.bone) {
+    jointChart(weap.bone, _hldA);
+    if (weap.tip) { jointChart(weap.tip, _hldB); _hldU.subVectors(_hldB, _hldA); }
+    if (!weap.tip || _hldU.lengthSq() < 1e-6) _hldU.copy(_plY); else _hldU.normalize();
+    h.g.position.copy(_hldA).addScaledVector(_hldU, .18);
+  } else {
+    const sx = Math.sin(p.faceH), sz = Math.cos(p.faceH);
+    h.g.position.set(p.pos.x + sx * .55, p.pos.y + RIG.height * .52 + Math.sin(world.clock * 6) * .02, p.pos.z + sz * .55);
+  }
+  h.g.rotation.y = p.faceH;
 }
 function dropHeld() {
   const p = player; if (!p.hold) return null;
-  scene.remove(p.hold.g); const h = p.hold; p.hold = null; return h;
+  scene.remove(p.hold.g); const h = p.hold; p.hold = null; p.holdK = 0; return h;
 }
 function plantHeld() {
   const p = player; if (!p.hold) return;
@@ -13436,9 +13572,9 @@ function stepChargeFx(c, dt) {
 }
 Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0, charge: 0,
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
-  carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null,
+  carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
-  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
+  wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeGrip: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -13532,7 +13668,7 @@ function jointChart(b, out) {
 function carryOffer() {
   const p = player;
   ACT.force = null;                                 // cleared here, set again below if he is winding up
-  if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5 || p.liftT > 0 || p.placeT > 0) return;
+  if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5 || p.liftT > 0 || p.placeT > 0 || p.hold) return;
   // Arms full: a tap sets it down, and a swipe or a hold throws it. While he is actually
   // winding up, the offer stands down -- the label says THROW and the charge ring has the
   // stick, and a SET DOWN prompt over the top of that would be describing the wrong gesture.
@@ -13603,6 +13739,15 @@ function carryStep(dt) {
     }
     else if (p.carryPend) { p.carryPend.carried = 0; p.carryPend.holeOff(0); }
     p.carryPend = null;
+    // and the other thing the stoop can be for: it comes out of the ground into his hands
+    if (p.holdPend) {
+      const hp = p.holdPend; p.holdPend = null;
+      if (!p.hold) {
+        p.hold = { kind: hp.kind, g: heldTurnip() };
+        world.effects.push(new Burst(hp.at.x, hp.at.y + .6, hp.at.z, '#c9b48a', 8, .6));
+        logMsg('It comes up roots and all, and he tucks it under one arm.');
+      }
+    }
   }
   if (p.placeT > 0 && (p.placeT -= dt) <= 0) { p.placeT = 0; finishPlace(); }
   p.carryK = lerp(p.carryK, p.carry && p.placeT <= 0 ? 1 : 0, Math.min(1, dt * 7));
@@ -14336,6 +14481,8 @@ class NetShot {
     const f = _nsA.set(this.vx, 0, this.vz); f.normalize();
     const rgt = _nsB.crossVectors(f, _plY).normalize();
     const up = _nsC.crossVectors(rgt, f);
+    // tip the whole disc back about `rgt` so it is an ellipse from behind rather than a line
+    up.multiplyScalar(Math.cos(NET.face)).addScaledVector(f, -Math.sin(NET.face)).normalize();
     const cs = Math.cos(this.spin), sn = Math.sin(this.spin);
     for (let i = 0; i < this.n; i++) {
       const a = this.lay[i * 2], b = this.lay[i * 2 + 1];
@@ -14920,11 +15067,17 @@ fold('hudHead', 'hudBody', false);
 fold('ctlT', 'btns', false);
 fold('logT', 'log', true);
 const hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
-addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm(); if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.eject(); else world.ship.board(); } });
+addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm(); if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'n') doArm(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.eject(); else world.ship.board(); } });
 // EJECT. On the ground it is the ordinary way out; in the air it is the belly hatch and a
 // drop. Same button and the same B key either way, because from the pilot's seat "get out" is
 // one intention and the ship already knows which one it is.
-const ejectQ = document.getElementById('ejectQ');
+const ejectQ = document.getElementById('ejectQ'), armQ = document.getElementById('armQ');
+function doArm(e) {
+  if (e) e.stopPropagation();
+  const sh = world.ship;
+  if (sh && player.aboard) sh.armToggle(); else logMsg('He is not at the controls.');
+}
+armQ.addEventListener('click', doArm);
 let _pileEl = null, _hpEl = null;
 function doEject(e) {
   if (e) e.stopPropagation();
@@ -15606,7 +15759,7 @@ function updateRig(dt) {
     mf, mr, roll: p.rollT > 0, rollSkip: ROLL.skip, rollRate: ROLL.rate,
     // The stoop ramps in and out rather than switching, because the ramp IS the bend.
     lift: p.liftT > 0 ? smooth(0, CARRY.blend, Math.min(p.liftT, CARRY.lift - p.liftT) * 2) : 0,
-    holding: p.carryK,
+    holding: Math.max(p.carryK, p.holdK || 0),
     // The landing clip is planted, so at speed it slides. Fade it out as the ground speed
     // rises and let the run carry the landing instead. A proper roll clip would be better.
     start: p.leadT > 0, landK: p.landT > 0 ? smooth(0, .12, p.landT) * clamp(1 - p.speed / 7, 0, 1) : 0,
@@ -16463,6 +16616,12 @@ function updateHUD() {
     if (ejectQ.hidden === on) ejectQ.hidden = !on;
     const lbl = player.roping ? 'let go' : 'eject';
     if (on && ejectQ.textContent !== lbl) ejectQ.textContent = lbl;
+    // and the arm chip only from the seat, in the air
+    const sh = world.ship;
+    const aOn = !INTRO.on && !!sh && player.aboard && !sh.grounded;
+    if (armQ.hidden === aOn) armQ.hidden = !aOn;
+    const aLbl = sh && sh.arm.want ? 'raise arm' : 'drop arm';
+    if (aOn && armQ.textContent !== aLbl) armQ.textContent = aLbl;
   }
   const era = eraName(); if (era !== world.lastEra) { world.lastEra = era; eraEl.textContent = era; }
   // THE CENTRE OF THE FRAME, ON THE ALWAYS-VISIBLE LINE. It was in the folded stats panel,
@@ -16644,6 +16803,7 @@ function frame(now) {
   updateSky();
   stepSkyLife(dt);
   ACT.now = null;                          // whatever is in reach re-offers itself below
+  stepHold(dt);
   carryOffer(); netOffer(); repairOffer(); holdOffer(); ladderOffer();   // first, so the ship's own offer wins where they overlap
   // A held offer is fed every frame the thumb is down. Nothing latches: let go and it stops.
   if (ACT.now && ACT.now.hold && stick.R.down) ACT.now.hold(dt);
