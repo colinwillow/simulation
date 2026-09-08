@@ -1142,7 +1142,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c77';
+const BUILD = 'c78';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -3988,21 +3988,21 @@ const MODEL = {
 // expensive part (every vertex through boneTransform), so it must not happen per creature.
 const MODELS = {};
 // ---------- skins ----------
-// A MODEL AND ITS PAINT ARE TWO FILES NOW. Export the GLB with no image in it at all, name a
-// skin here, and the same mesh can wear any number of them -- a repaint is a 40 kB webp and a
-// reload, with no re-export and no second copy of the geometry.
+// A MODEL CAN WEAR A DIFFERENT PAINT. Name a webp here and it replaces whatever the model
+// arrived with, for every instance at once; isle.skin(model, url) does the same live.
 //
-// Why not put the webp inside the .gltf and let the loader fetch it: the glTF spec only
-// allows PNG and JPEG as image sources, so Blender writes a webp as an EXT_texture_webp
-// extension -- and three r128 predates GLTFTextureWebPExtension (that landed in r131). The
-// loader would ignore it and the model would arrive untextured with no error. Loading the
-// image ourselves goes through TextureLoader and an <img>, which has understood webp since
-// iOS 14 and does not care what the glTF spec thinks.
+// CORRECTING MYSELF, because it was said twice in commit messages and is wrong. I claimed a
+// webp packed in a GLB would not load, on the grounds that EXT_texture_webp landed in three
+// r131 and the game runs r128. The GAME runs r128; the LOADERS are vendored, and
+// vendor/three/GLTFLoader.js has GLTFTextureWebPExtension in it at line 691 -- it probes
+// support with a data URI and hands the image to TextureLoader like any other. So a GLB
+// exported straight out of Blender with a webp inside it works, and the whole question of
+// which export box to untick was moot. It cost him two rounds and I should have read the file
+// in the repo before theorising about the version on the CDN.
 //
-// So: keep exporting GLB. One request, Draco still works, nothing about the pipeline changes
-// except that the texture box is unticked.
+// Which means SKINS is what its name says and nothing more: an OVERRIDE. A model that ships
+// its own texture keeps it and needs no entry here.
 const SKINS = {
-  'models/drone_game/drone.rigged.glb': 'models/drone_game/drone_texture_512.webp',
 };
 const SKIN_TEX = {};
 // flipY false and sRGB, because those are the two things that are different about a texture
@@ -4041,12 +4041,13 @@ function applySkin(root, url) {
       // multiplying a skin by it would tint every skin the same.
       if (!m.map) m.color.setRGB(1, 1, 1);
       m.map = t;
-      // AND THIS IS WHAT UNTICKING "MATERIALS" ACTUALLY COSTS. With no material in the file
-      // three hands the mesh its glTF DEFAULT, and the spec's default is metalness 1,
-      // roughness 1 -- a mirror. A base-colour map on a fully metallic surface has no diffuse
-      // to show, so the drone renders as a dark chrome egg with the paint invisible on it,
-      // and nothing anywhere reports a problem. metalness 1 with no metalnessMap is the exact
-      // signature of that default and of nothing anybody would author on purpose.
+      // A model exported with NO material at all gets three's glTF default, and the spec's
+      // default is metalness 1, roughness 1 -- a mirror. A base-colour map on a fully metallic
+      // surface has no diffuse to show, so it renders as a dark chrome egg with the paint
+      // invisible on it and nothing anywhere reports a problem. metalness 1 with no
+      // metalnessMap is the exact signature of that default and of nothing anybody would
+      // author on purpose. Kept as a guard; the current drone exports its material properly
+      // (metal 0.00, rough 0.22, double-sided) so it never fires.
       if (m.metalness === 1 && !m.metalnessMap) { m.metalness = 0; m.roughness = .72; }
       m.needsUpdate = true;
     }
@@ -4078,7 +4079,7 @@ function loadModel(url, cb) {
   const loader = new THREE.GLTFLoader(); loader.setDRACOLoader(draco);
   loader.load(url, gltf => {
     e.root = gltf.scene; e.anims = gltf.animations;
-    if (SKINS[url]) applySkin(e.root, SKINS[url]);      // the paint, if this model ships without one
+    if (SKINS[url]) applySkin(e.root, SKINS[url]);      // an override, if one is named for this model
     prepModel(e.root);
     jointDrift(e.root, e.anims, url);
     // Measure in the idle pose, not the bind pose. Mixamo exports keep the bind pose hips
