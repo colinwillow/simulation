@@ -1492,7 +1492,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd28';
+const BUILD = 'd29';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2927,7 +2927,7 @@ function buildSkyBodies() {
 // follows the lens and scales with the dome; all of it is sprites and one torus, and all of
 // it is fog-free, hole-free and drawn behind the world.
 const SKYLIFE = { streak: [7, 18], ship: [150, 320], R: 770 };
-const _skyV = new THREE.Vector3();
+const _slV = new THREE.Vector3();   // _skyV was taken
 function skyAt(yaw, pit, d, out) {
   return (out || new THREE.Vector3()).set(Math.cos(pit) * Math.sin(yaw) * d, Math.sin(pit) * d, Math.cos(pit) * Math.cos(yaw) * d);
 }
@@ -3026,7 +3026,7 @@ function stepSkyLife(dt) {
     if (k >= 1) { sh.T = 0; sh.wait = rnd(SKYLIFE.ship[0], SKYLIFE.ship[1]); for (const l of S.sl) l.material.opacity = 0; }
     else {
       S.ship.position.lerpVectors(sh.a, sh.b, k);
-      _skyV.subVectors(sh.b, sh.a).normalize(); S.ship.lookAt(S.ship.position.x + _skyV.x, S.ship.position.y + _skyV.y, S.ship.position.z + _skyV.z);
+      _slV.subVectors(sh.b, sh.a).normalize(); S.ship.lookAt(S.ship.position.x + _slV.x, S.ship.position.y + _slV.y, S.ship.position.z + _slV.z);
       const vis = Math.sin(k * Math.PI) * (.4 + night * .6);
       S.sl[0].material.opacity = S.sl[2].material.opacity = .85 * vis;
       S.sl[1].material.opacity = (Math.sin(world.clock * 7) > .3 ? 1 : .15) * vis;
