@@ -1272,7 +1272,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd08';
+const BUILD = 'd09';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1286,8 +1286,20 @@ const T0 = Date.now();      // wall clock at boot, for the splash's minimum time
 // fires after the world is up flashes a red box for a moment and is gone. Which is exactly
 // what he saw, and it left nothing to work from. The HUD line shows it until a reload.
 let firstErr = '';
-addEventListener('error', e => { if (!firstErr) firstErr = (e.message || 'error') + ' @' + (e.lineno || '?'); });
-addEventListener('unhandledrejection', e => { if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason); });
+addEventListener('error', e => {
+  if (!firstErr) firstErr = (e.message || 'error') + ' @' + (e.lineno || '?');
+  // AND LIFT THE SPLASH, because a throw at module level kills the rest of the file and then
+  // nothing is left alive to call the loader's finish. The studio mark then sits there
+  // forever with a progress bar that will never move, which is not "still loading", it is a
+  // dead page wearing a logo -- and it is exactly why he has only ever seen the mark when the
+  // game was broken. bootFail dismisses it and puts the error on screen instead.
+  // Only while it is still booting: #boot is removed once the world is up, so a stray runtime
+  // error an hour into a session does not replace the game with a failure card.
+  if (document.getElementById('boot')) { try { bootFail(e.error || e.message || 'error'); } catch (_) { } }
+});
+addEventListener('unhandledrejection', e => {
+  if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason);
+});
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
