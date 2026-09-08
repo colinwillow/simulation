@@ -201,6 +201,13 @@
      have been argued about. What colour the band is, and which lines are above or below it,
      is the entire answer -- no numbers to read off a photograph. BAND = 0 removes all of it.*/
   .bandmark{position:fixed;left:0;right:0;height:3px;z-index:9999;pointer-events:none}
+  #gllost{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:99999;
+    background:rgba(8,12,22,.94);border:1px solid rgba(240,235,220,.22);border-radius:12px;
+    padding:20px 22px;max-width:78vw;text-align:center;display:flex;flex-direction:column;gap:11px}
+  #gllost b{font-size:16px;font-weight:normal;letter-spacing:.02em}
+  #gllost span{font-size:13px;opacity:.68;line-height:1.5}
+  #gllost button{font-family:inherit;font-size:14px;color:#f0e7d4;background:rgba(255,190,110,.24);
+    border:1px solid rgba(255,200,130,.6);border-radius:15px;padding:9px 20px}
   /* THE OTHER THINGS THAT COVER THE SCREEN. The studio splash and the start veil are both
      `position:fixed; inset:0` written inline, so they are the layout viewport -- 932 on a
      1002-tall glass -- exactly like the lens was. His splash photograph has a wider magenta
@@ -1220,7 +1227,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c94';
+const BUILD = 'c95';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070a13'; document.body.style.background = '#070a13'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1667,6 +1674,28 @@ renderer.toneMappingExposure = 1.05;
 renderer.outputEncoding = THREE.LinearEncoding; // final gamma is done in the composite pass
 renderer.info.autoReset = false;   // we render many passes per frame; total them ourselves
 document.body.appendChild(renderer.domElement);
+const GLLOST = { on: false };   // declared above its reader: a const read early kills the file
+// THE BLINK, AND EVERYTHING GOING BLACK EXCEPT THE THINGS THAT WERE ALREADY BLACK.
+// That is a lost WebGL context. iOS kills the GPU process under memory pressure, the canvas
+// keeps its size and its geometry keeps drawing, and every texture and every compiled program
+// on it is simply gone -- so the world renders as untextured silhouettes and looks like a
+// rendering bug in the game. It is not; it is the same thing that put Safari's "a problem
+// repeatedly occurred" card up, one step short of taking the tab with it.
+// r128 has no restore path of its own: three would have to rebuild every program, texture and
+// buffer, and it does not. preventDefault at least lets the browser try to give the context
+// back, and either way this says what happened rather than leaving a black world on screen.
+renderer.domElement.addEventListener('webglcontextlost', e => {
+  e.preventDefault();
+  GLLOST.on = true;
+  const d = document.createElement('div');
+  d.id = 'gllost';
+  d.innerHTML = '<b>the graphics context was lost</b>'
+    + '<span>iOS reclaimed the GPU. Nothing here can be drawn until it is rebuilt.</span>'
+    + '<button id="gllostR">reload</button>';
+  document.body.appendChild(d);
+  document.getElementById('gllostR').onclick = () => location.reload();
+}, false);
+renderer.domElement.addEventListener('webglcontextrestored', () => location.reload(), false);
 const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.5, 1600);
 const gl = renderer.getContext();
 const HALF = !!(gl.getExtension('EXT_color_buffer_half_float') || gl.getExtension('OES_texture_half_float'));
@@ -14790,6 +14819,7 @@ function frame(now) {
     }
     for (let i = n; i < 4; i++) wk[i].set(0, 0, 0, 0);
   }
+  if (GLLOST.on) return;
   renderPost();
 
   // Hold the loading card until the models are actually in. Lift it on the first frame and
