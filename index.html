@@ -604,6 +604,13 @@
   #gllost button{font-family:var(--disp);font-weight:600;letter-spacing:.12em;text-transform:uppercase;
     background:rgba(157,247,255,.16);border:1.5px solid var(--cy);color:#dbfbff;border-radius:13px}
   #fixbar{background:rgba(10,14,40,.62);box-shadow:0 0 0 1.5px var(--rim)}
+  /* HIS HEALTH. Under the title, only while it is less than whole; the same glass as the rest
+     of the interface and a warm fill, because the warm colours in this game are the ones that
+     mean the body -- the campfire, the lantern fruit, him. */
+  #hp{width:118px;height:5px;margin-top:7px;border-radius:3px;background:rgba(10,14,40,.62);box-shadow:0 0 0 1.5px var(--rim)}
+  #hp i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#ffb060,#ffe0a8);transition:width .2s}
+  #hp.low i{background:linear-gradient(90deg,#ff5a4a,#ffb060);animation:hplow .8s ease-in-out infinite}
+  @keyframes hplow{0%,100%{opacity:1}50%{opacity:.45}}
   #hitrim{position:fixed;inset:0;z-index:3;pointer-events:none;opacity:0;
     background:radial-gradient(ellipse at 50% 50%,rgba(255,150,90,0) 48%,rgba(255,140,80,calc(.55 * var(--k,1))) 100%)}
   #hitrim.go{animation:hitrim .55s ease-out both}
@@ -1386,6 +1393,7 @@ window._MAJIA_INK = '#7fd8ff';
 <div id="scrim"></div><div id="scrimB"></div>
 <div id="hud"><div id="hudHead"><h1>Plutopia</h1><div class="era" id="era">The Quiet</div></div>
   <div id="bld"></div>
+  <div id="hp" hidden><i></i></div>
   <div id="hudBody" hidden><div id="stats"></div><div id="perf"></div></div></div>
 <div id="log"></div>
 <div id="hint">left stick walks · right stick looks · scroll or pinch to zoom<br>WASD / arrows also work · tap the ground to drop a spark</div>
@@ -1496,7 +1504,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd31';
+const BUILD = 'd32';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1621,7 +1629,7 @@ function height(x, z) {
   }
   // flat-topped mesa on the sister isle
   const md = Math.hypot(x - MESA.x, z - MESA.z);
-  const mk = smooth(MESA.r, MESA.r * .74, md);           // .74, not .6: the wall is a wall now
+  const mk = smooth(MESA.r, MESA.r * .9, md);            // .9: thirty units of rise over ten across -- a cliff a ladder can lean on
   if (mk > 0) h = lerp(h, MESA.h + (fbm(x * .03 + 9, z * .03, 3) - .5) * 2.6, mk * .97);
   // a lagoon bitten out of the south shore
   const ld = Math.hypot(x - LAGOON.x, z - LAGOON.z);
@@ -5673,6 +5681,35 @@ const KLOOK = /[?&]look\b/.test(location.search);
 // by behaving -- which is the whole loop. `ease` brings it toward nothing over about seven
 // minutes of play, so being left alone is itself a slow forgiveness and sustained kindness or
 // cruelty is what actually holds a species anywhere.
+// ---------- health ----------
+// He can be hurt now, which is what makes a hostile species a threat rather than a nuisance.
+// One number, 0 to 1. A charge takes a bite; it grows back on its own after a few seconds
+// without another; at nothing he goes down where he stands and comes round at the base with
+// half of it. No death screen -- the island does not stop for him.
+const HP = { ram: .2, massRam: .38, regenAfter: 4, regen: .06, downT: 3.2 };
+function hurt(k) {
+  const p = player; if (p.down > 0 || p.free || p.aboard) return;
+  p.hp = clamp((p.hp === undefined ? 1 : p.hp) - k, 0, 1); p.hurtAt = world.clock;
+  if (p.hp <= 0) {
+    p.down = HP.downT; p.vx = p.vz = 0; p.wmag = 0;
+    logMsg('He goes down.');
+  }
+}
+function healthStep(dt) {
+  const p = player;
+  if (p.hp === undefined) p.hp = 1;
+  if (p.down > 0) {
+    p.down -= dt; p.moving = 0; p.wmag = 0;
+    if (p.down <= 0) {
+      const sp = world.spawn || { x: p.pos.x, z: p.pos.z };
+      p.pos.set(sp.x, Math.max(height(sp.x, sp.z), SEA), sp.z); p.gy = p.pos.y; p.vy = 0; p.grounded = 1;
+      p.hp = .5; p.hurtAt = world.clock;
+      logMsg('He comes round at the base, most of the way to whole.');
+    }
+    return;
+  }
+  if (p.hp < 1 && world.clock - (p.hurtAt || 0) > HP.regenAfter) p.hp = Math.min(1, p.hp + HP.regen * dt);
+}
 const MOOD = {
   m: {},                 // species name -> standing
   hit: -.30,             // a full plasma hit. Three of them takes a species from nothing to afraid
@@ -6061,6 +6098,7 @@ class Creature {
     const big = !!this.massive;
     pl.pushX += dx / d * (big ? C.massPush : C.push);
     pl.pushZ += dz / d * (big ? C.massPush : C.push);
+    hurt(big ? HP.massRam : HP.ram);
     if (pl.grounded) { pl.vy = Math.max(pl.vy, big ? C.massHop : C.hop); pl.grounded = 0; }
     this.chargeCool = rnd(C.cool[0], C.cool[1]);
     this.alarm = 1.4; this.alarmFrom = { x: pl.pos.x, z: pl.pos.z }; this.fleeTo = null;   // and away
@@ -10191,6 +10229,22 @@ function populate() {
       c0: '#ffb069', c1: '#7a2a10', s0: .5, s1: .12,
       spawn: (p, v) => { const a = rnd(Math.PI * 2), r = rnd(0, 7); p.set(cx + Math.cos(a) * r, cy + rnd(0, 3), cz + Math.sin(a) * r); v.set(rnd(-.5, .5), rnd(1.2, 3), rnd(-.5, .5)); } });
   }
+  // THE WAY UP ON FOOT. A ladder leaning on the mesa's cliff on the side that faces the
+  // mainland, from the shore at its foot to the rim. Thirty units of rungs. It is the honest
+  // route; the ship is the easy one.
+  if (world.baseMesa) {
+    const a = Math.atan2(-MESA.z, -MESA.x);       // toward the middle of the world
+    let best = null, bd = 1e9;
+    for (let i = -6; i <= 6; i++) {
+      const aa = a + i * .09;
+      const bx = MESA.x + Math.cos(aa) * MESA.r * 1.03, bz = MESA.z + Math.sin(aa) * MESA.r * 1.03;
+      const tx = MESA.x + Math.cos(aa) * MESA.r * .88, tz = MESA.z + Math.sin(aa) * MESA.r * .88;
+      if (!isLand(bx, bz) || height(tx, tz) < MESA.h - 6) continue;
+      const d = Math.abs(i);
+      if (d < bd) { bd = d; best = { bx, bz, tx, tz, ty: height(tx, tz) }; }
+    }
+    if (best) { world.structures.push(new Ladder(best.bx, best.bz, best.tx, best.tz, best.ty)); world.mesaLadder = best; }
+  }
   // He starts at the base -- between the mothership and the saucer -- when there is one on
   // the mesa, and at the camp otherwise. The camp stays on the mainland: it is somewhere to go.
   world.spawn = world.basePad ? { x: (world.basePad.x + world.berth.x) * .5, z: (world.basePad.z + world.berth.z) * .5 }
@@ -12617,6 +12671,92 @@ const _hutV = new THREE.Vector3();   // declared above the class that reads it
 // somewhere else -- is a producer or a consumer of these numbers.
 const INV = { part: 0, wood: 0 };
 const HACK = { reach: 3.6, T: 2.4 };   // how close, and how long a hold fells a tree
+// ---------- ladders ----------
+// A LADDER IS A LINE YOU CLIMB. Base and top in chart space, rails and rungs between them,
+// and while he is on it he owns his own height the way he does on the ship's line: the stick's
+// forward is up, back is down, a tap lets go, and off either end he simply steps. It is the
+// rung between the ground and every level added lately, and the first one is the honest way
+// up the mesa -- thirty units of cliff with a tower leaning on it.
+const LADDER = { speed: 3.4, reach: 2.4, rung: .55, w: 1.1 };
+class Ladder {
+  constructor(bx, bz, tx, tz, ty) {
+    this.alive = true;
+    const by = groundY(bx, bz);
+    this.a = new THREE.Vector3(bx, by, bz); this.b = new THREE.Vector3(tx, ty, tz);
+    this.pos = this.a.clone(); this.len = this.a.distanceTo(this.b);
+    const dir = this.b.clone().sub(this.a).normalize();
+    this.dir = dir;
+    // which way it faces: away from the rise, so he climbs with his back to the drop
+    const flat = Math.hypot(dir.x, dir.z) || 1e-4;
+    this.face = Math.atan2(-dir.x / flat, -dir.z / flat);
+    this.side = new THREE.Vector3(-dir.z / flat, 0, dir.x / flat);
+    // the geometry: two rails as tubes, rungs as one instanced cylinder
+    this.g = new THREE.Group(); scene.add(this.g); this.g.userData.flat = true;
+    for (const sg of [1, -1]) {
+      const pts = [this.a.clone().addScaledVector(this.side, sg * LADDER.w * .5), this.b.clone().addScaledVector(this.side, sg * LADDER.w * .5)];
+      pts[0].y += .1; pts[1].y += .1;
+      const wpts = pts.map(q => planetPos(q.x, q.y, q.z));
+      const rail = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(wpts), 4, .09, 6, false), M.elderBark2);
+      rail.castShadow = true; this.g.add(rail);
+    }
+    const n = Math.max(2, Math.round(this.len / LADDER.rung));
+    const rungs = new THREE.InstancedMesh(G.cyl, M.elderBark, n); rungs.castShadow = true; rungs.frustumCulled = false;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(.055, LADDER.w, .055);
+    for (let i = 0; i < n; i++) {
+      const t = (i + .5) / n;
+      const c = this.a.clone().lerp(this.b, t); c.y += .1;
+      const wc = planetPos(c.x, c.y, c.z);
+      // the rung runs along `side`, which in world space is that direction rotated onto the sphere
+      const ws = planetPos(c.x + this.side.x, c.y, c.z + this.side.z).sub(wc).normalize();
+      q.setFromUnitVectors(_ldY, ws); m.compose(wc, q, sc); rungs.setMatrixAt(i, m);
+    }
+    this.g.add(rungs);
+  }
+  // Where he stands on it at parameter t, in chart space, a little off the face.
+  at(t, out) { return (out || new THREE.Vector3()).lerpVectors(this.a, this.b, t).add(_ldV.set(Math.sin(this.face), 0, Math.cos(this.face)).multiplyScalar(-.55)); }
+  update() {}
+  dispose() { scene.remove(this.g); }
+}
+const _ldY = new THREE.Vector3(0, 1, 0), _ldV = new THREE.Vector3();
+function ladderOffer() {
+  const p = player;
+  if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5 || p.carry || p.hold || p.climbing) return;
+  for (const l of world.structures) {
+    if (!(l instanceof Ladder) || !l.alive) continue;
+    const db = Math.hypot(l.a.x - p.pos.x, l.a.z - p.pos.z), dt2 = Math.hypot(l.b.x - p.pos.x, l.b.z - p.pos.z);
+    const atTop = dt2 < LADDER.reach && Math.abs(p.pos.y - l.b.y) < 2.5, atBase = db < LADDER.reach && Math.abs(p.pos.y - l.a.y) < 2.5;
+    if (!atTop && !atBase) continue;
+    offerAct({ icon: 'lift', label: atTop ? 'CLIMB DOWN' : 'CLIMB', run: () => {
+      p.climbing = l; p.climbT = atTop ? .97 : .03;
+      p.vx = p.vz = p.vy = 0; p.wmag = 0; p.grounded = 0; p.jump = 0; p.heading = p.faceH = l.face;
+      logMsg(atTop ? 'He swings onto the ladder and starts down.' : 'He takes hold of the ladder. Tap to let go.');
+    } });
+    return;
+  }
+}
+function stepLadder(dt) {
+  const p = player, l = p.climbing;
+  if (!l || !l.alive) { p.climbing = null; return; }
+  // forward on the stick is up, whatever way the camera is looking
+  const up = clamp(-(stick.L.y) + (keys.w ? 1 : 0) - (keys.s ? 1 : 0), -1, 1);
+  p.climbT = clamp(p.climbT + up * LADDER.speed * dt / Math.max(1, l.len), 0, 1);
+  const q = l.at(p.climbT, _ldV);
+  p.pos.set(q.x, q.y, q.z); p.gy = q.y;
+  p.vx = p.vz = 0; p.vy = 0; p.moving = Math.abs(up) > .1 ? .5 : 0; p.wmag = 0;
+  p.heading = p.faceH = l.face;
+  // off the top: step onto whatever is there. Off the bottom: the ground.
+  if (p.climbT >= 1 && up > 0) {
+    p.pos.copy(l.b).addScaledVector(l.dir, 1.2); p.pos.y = Math.max(l.b.y, groundY(p.pos.x, p.pos.z), standOn(p.pos.x, p.pos.z, l.b.y + 1));
+    p.gy = p.pos.y; p.grounded = 1; p.climbing = null; logMsg('He hauls himself over the top.');
+  } else if (p.climbT <= 0 && up < 0) {
+    p.pos.copy(l.a); p.pos.y = groundY(p.pos.x, p.pos.z); p.gy = p.pos.y; p.grounded = 1; p.climbing = null;
+  }
+}
+function ladderLetGo() {
+  const p = player; if (!p.climbing) return;
+  p.climbing = null; p.vy = -1; p.grounded = 0;
+  logMsg('He lets go.');
+}
 const RAISE = { min: 8, clear: 4.6, near: 14 };   // parts to raise a hut; ground it needs; distance from another (BUILDING is taken)
 const HUT = {
   r: 3.3, cols: 16, courses: 3, ch: .95, thick: .55, door: 3,
@@ -14680,7 +14820,7 @@ addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm();
 // drop. Same button and the same B key either way, because from the pilot's seat "get out" is
 // one intention and the ship already knows which one it is.
 const ejectQ = document.getElementById('ejectQ');
-let _pileEl = null;
+let _pileEl = null, _hpEl = null;
 function doEject(e) {
   if (e) e.stopPropagation();
   const sh = world.ship;
@@ -14695,6 +14835,8 @@ startB.addEventListener('click', e => { e.stopPropagation(); startGame(); });
 const _prevP = new THREE.Vector3(), _shipR = new THREE.Vector3();
 function updatePlayer(dt) {
   _prevP.copy(player.pos);
+  healthStep(dt);
+  if (player.down > 0) { player.moving = 0; player.speed = 0; player.vx = player.vz = 0; player.wmag = 0; player.jump = 0; player.g.position.copy(player.pos); return; }
   if (player.aboard) {   // he is in the ship; it moves him, and nothing here applies
     const sh = world.ship; if (sh) player.pos.copy(sh.pos);
     player.moving = 0; player.speed = 0; player.vx = player.vz = 0; player.wmag = 0; player.jump = 0;
@@ -14706,6 +14848,11 @@ function updatePlayer(dt) {
   if (player.roping) {
     if (player.jump) { player.jump = 0; ropeLetGo('He lets go of the line.'); }
     else { stepRope(dt); player.speed = 0; return; }
+  }
+  // On a ladder, likewise: his own height, no gravity, the tap is the release.
+  if (player.climbing) {
+    if (player.jump) { player.jump = 0; ladderLetGo(); }
+    else { stepLadder(dt); player.speed = 0; return; }
   }
   let lx = stick.L.x, ly = stick.L.y; const rx = stick.R.x, ry = stick.R.y;
   if (keys.a || keys.arrowleft) lx -= 1; if (keys.d || keys.arrowright) lx += 1;
@@ -16188,6 +16335,14 @@ function updateHUD() {
     // both near 0 while the camera is high, the altitude terms are what is wrong.
     `plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}<br>` +
     `centre of frame: ${lookingAt()}`;
+  {   // his health, only while it is less than whole
+    const el = _hpEl || (_hpEl = document.getElementById('hp'));
+    if (el) {
+      const hp = player.hp === undefined ? 1 : player.hp, on = hp < .999 && !INTRO.on;
+      if (el.hidden === on) el.hidden = !on;
+      if (on) { el.firstChild.style.width = (hp * 100).toFixed(0) + '%'; el.classList.toggle('low', hp < .3); }
+    }
+  }
   {   // the pile
     const el = _pileEl || (_pileEl = document.getElementById('pile'));
     if (el) {
@@ -16384,7 +16539,7 @@ function frame(now) {
   updateSky();
   stepSkyLife(dt);
   ACT.now = null;                          // whatever is in reach re-offers itself below
-  carryOffer(); netOffer(); repairOffer(); holdOffer();   // first, so the ship's own offer wins where they overlap
+  carryOffer(); netOffer(); repairOffer(); holdOffer(); ladderOffer();   // first, so the ship's own offer wins where they overlap
   // A held offer is fed every frame the thumb is down. Nothing latches: let go and it stops.
   if (ACT.now && ACT.now.hold && stick.R.down) ACT.now.hold(dt);
   fixBar();
