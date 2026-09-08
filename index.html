@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd49';
+const BUILD = 'd50';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -4696,8 +4696,18 @@ const MODEL = {
 // evenly-lit read the rest of the game has.
 // Keyed by URL because it is a property of the ASSET, not of the class that flies it, and
 // prepModel runs once per file with the URL right there.
+// AND THE SAME IS TRUE OF EVERY BUILT THING, for the same reason it is true of the ship: one
+// big smooth surface with almost no self-shadowing to read the form by, usually seen against
+// the sky. A fifth is the number for foliage and creatures -- small, busy shapes standing on
+// lit ground -- and it is not the number for a dome or a mast. The island's own growing
+// things stay at .2, where they were tuned; the things somebody BUILT go to half.
 const MODEL_LIFT = {
   'models/alien_ship_orange.glb': .5,
+  'models/space_base.glb': .5,
+  'models/dome_hut.glb': .5,
+  'models/sp_sci_fi_antenna.glb': .5,
+  'models/alien_drone.glb': .5,
+  'models/drone_rigged.glb': .5,
 };
 // One cache per URL. The GLB is fetched once, prepared once, measured once; every user
 // after that gets a clone that shares the geometry and materials. Measuring is the
@@ -5039,6 +5049,14 @@ function prepModel(root, url) {
         else m.emissive.copy(m.color).multiplyScalar(lift);
         m.needsUpdate = true;
       }
+      // WRITTEN DOWN, because the value does not survive the trip. Every merged prop in the
+      // world goes through tintFor, which clones this material and hands it to worldTint --
+      // and the first thing worldTint does is zero the emissive and drop the emissive map,
+      // since the tint shader computes its own glow. So the lift set two lines up was thrown
+      // away for the zones, the rocks and the plants: the ship kept it because nothing tints
+      // the ship, and everything the island is made of quietly did not. Recorded here, read
+      // by worldTint, applied as a floor under its own glow term.
+      m.userData.lift = lift;
     }
   });
   if (saved > 1) console.info('texture downscale to ' + TEX_CAP + 'px saved ' + saved.toFixed(0) + ' MB of GPU memory');
@@ -5631,6 +5649,12 @@ function worldTint(mat, cfg) {
     uLo: { value: cfg.lo }, uHi: { value: cfg.hi }, uK: { value: cfg.k },
     uKeep: { value: cfg.keep }, uTint: { value: cfg.col.clone() },
     uLumA: { value: cfg.lum[0] }, uLumB: { value: cfg.lum[1] },
+    // The ambient lift, which the two lines above have just discarded. `_glowK` is
+    // SELECTIVE -- it lights the warm, bright parts and nothing else, which is the
+    // bioluminescence, not a floor -- so most of a prop's surface was getting no emission at
+    // all while everything not tinted got its share. This puts it back as a flat term under
+    // the glow, and it does NOT ride the dusk ramp: a lift that fades at dusk is not a lift.
+    uLift: { value: (mat.userData && mat.userData.lift) || 0 },
   };
   mat.userData.shaderTag = 'tint' + (cfg.key === 'cool' ? 'C' : '');
   mat.onBeforeCompile = sh => {
@@ -5644,7 +5668,7 @@ function worldTint(mat, cfg) {
     const KEY = cfg.key === 'cool'
       ? 'min(diffuseColor.b - diffuseColor.r, diffuseColor.g - diffuseColor.r)'
       : 'min(diffuseColor.r - diffuseColor.b, diffuseColor.g - diffuseColor.b)';
-    sh.fragmentShader = 'uniform float uLo, uHi, uK, uKeep, uLumA, uLumB;\nuniform vec3 uTint;\nfloat _glowK;\n'
+    sh.fragmentShader = 'uniform float uLo, uHi, uK, uKeep, uLumA, uLumB, uLift;\nuniform vec3 uTint;\nfloat _glowK;\n'
       + sh.fragmentShader
         .replace('#include <color_fragment>', `#include <color_fragment>
       {
@@ -5656,7 +5680,7 @@ function worldTint(mat, cfg) {
         diffuseColor.rgb = mix(body, diffuseColor.rgb, _glowK);
       }`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      totalEmissiveRadiance += diffuseColor.rgb * _glowK * uK;`);
+      totalEmissiveRadiance += diffuseColor.rgb * (uLift + _glowK * uK);`);
   };
   mat.needsUpdate = true;
   // The entry, not just the uniforms: `k` is this material's share of the island-wide dusk
