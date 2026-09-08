@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd61';
+const BUILD = 'd62';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2345,6 +2345,17 @@ const M = {
   // black in any shade, and the hull is lit from underneath by its own machine at night -- an
   // unlit rib beside a lit port read as a hole cut in the ship. A touch of metalness, because
   // this is the one thing on the island that is manufactured.
+  // The dome hut's palette, straight off the reference: a chipped cream shell, orange trim
+  // and door, dark steel fittings, cyan glass, olive crates. The shell is DOUBLE-SIDED on
+  // purpose -- there is a doorway in it and you can walk in, so the inside of the far wall
+  // has to be there when you look back at it.
+  domeShell: std(col('#efe4cf'), { roughness: .78, side: THREE.DoubleSide }),
+  domeTrim:  std(col('#ef8a24'), { roughness: .55 }),
+  domeSteel: std(col('#8b9199'), { roughness: .42, metalness: .45 }),
+  domeDark:  std(col('#565c66'), { roughness: .5, metalness: .35 }),
+  domeGlass: std(col('#3ecad8'), { roughness: .14, metalness: .2, emissive: col('#0e5e6b'), emissiveIntensity: .7 }),
+  domeWood:  std(col('#d9862e'), { roughness: .82 }),
+  domeCrate: std(col('#6e7a54'), { roughness: .8 }),
   hullPale: std(col('#a8a3ba'), { roughness: .62, metalness: .22, emissive: col('#2e2c40'), emissiveIntensity: .45 }),
   hullDark: std(col('#4c4762'), { roughness: .7, metalness: .3, emissive: col('#211f30'), emissiveIntensity: .5 }),
   hullMid: std(col('#7b7594'), { roughness: .66, metalness: .26, emissive: col('#2a2840'), emissiveIntensity: .45 }),
@@ -9745,6 +9756,128 @@ class Lander {
   }
 }
 
+// ---------- the dome hut, built rather than loaded ----------
+// The same building as models/dome_hut.glb, made out of primitives, to answer a straight
+// question: is a modelling package worth the trip for a thing this shape? Two answers, and
+// they are both in this function. What code gives you that a mesh does not is that the parts
+// are still PARTS at run time -- the wall is twenty-eight panels in three courses with two of
+// them left out, so there is a real doorway you walk through and a collider ring with a real
+// gap in it, and every piece of it could be shot off or repaired by the same machine the
+// other hut uses. What it costs you is the shape itself: a smooth shell with a hole in it is
+// one operation in Blender and a stack of courses here, so the lower wall is faceted where
+// the reference is round, and the paint chips and the little Saturn decal are simply not
+// available without a texture.
+//
+// It merges to one draw per material -- seven -- and it is a site, so `isle.export('dome')`
+// hands the whole thing back as a .glb to open beside the modelled one.
+const DOME = {
+  R: 5.2,          // the wall's radius, and the cap's
+  wallH: 3.55,     // the straight part, which is where the door has to fit
+  capH: 3.6,       // the dome on top of it
+  cols: 28,        // panels round the wall
+  courses: 3,
+  doorCols: 2,     // panels left out for the doorway
+  door: { w: 2.3, h: 3.2 },
+};
+function buildDomeHut(x, z, yaw) {
+  const S = siteAt(x, z, yaw); S.kind = 'dome';
+  const D = DOME, R = D.R, step = Math.PI * 2 / D.cols, half = step * .5;
+  const chord = 2 * R * Math.sin(half) * 1.04;
+  clearGrass(x, z, R + 5);
+  // ---- the wall: panels in courses, with a gap where the door goes ----
+  const ch = D.wallH / D.courses;
+  for (let c = 0; c < D.courses; c++) {
+    const y = ch * (c + .5);
+    for (let i = 0; i < D.cols; i++) {
+      const a = i * step;
+      // the door is at local +Z, so the panels either side of bearing 0 are the ones missing
+      const off = Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
+      if (off < half * D.doorCols) continue;
+      S.put(G.box, M.domeShell, chord, ch * 1.02, .34, Math.sin(a) * R, y, Math.cos(a) * R, 0, a, 0);
+    }
+  }
+  // the lintel over the door, so the opening is a hole and not a slot to the roof
+  for (let i = -1; i <= 1; i++) {
+    const a = i * step;
+    S.put(G.box, M.domeShell, chord, D.wallH - D.door.h, .34,
+      Math.sin(a) * R, (D.wallH + D.door.h) * .5, Math.cos(a) * R, 0, a, 0);
+  }
+  // ---- the cap: one squashed sphere, its lower half hidden inside the wall ----
+  S.put(G.sph, M.domeShell, R, D.capH, R, 0, D.wallH, 0);
+  // ---- the seams, which is what makes a stack of courses read as panelling ----
+  for (const [sy, k] of [[ch, 1], [ch * 2, 1], [D.wallH, 1.005], [D.wallH + D.capH * .42, .906], [D.wallH + D.capH * .72, .694]]) {
+    const rr = R * k;
+    S.put(G.ring, M.domeSteel, rr, rr, rr, 0, sy, 0, Math.PI / 2, 0, 0);
+  }
+  // ---- the collar, mast and finial on top ----
+  const top = D.wallH + D.capH;
+  S.put(G.cyl, M.domeDark, 1.55, .34, 1.55, 0, top - .1, 0);
+  S.put(G.cyl, M.domeTrim, 1.62, .2, 1.62, 0, top + .12, 0);
+  S.put(G.cyl, M.domeDark, 1.24, .3, 1.24, 0, top + .34, 0);
+  S.put(G.cylT, M.domeSteel, .17, 1.5, .17, 0, top + 1.24, 0);
+  S.put(G.cyl, M.domeDark, .3, .16, .3, 0, top + 1.62, 0);
+  S.put(G.cyl, M.domeSteel, .13, .5, .13, 0, top + 1.92, 0);
+  S.put(G.sph, M.domeTrim, .72, .72, .72, 0, top + 2.6, 0);
+  // ---- the door: an arched frame, and orange planks inside it ----
+  const dw = D.door.w * .5, dh = D.door.h, dz = R + .12;
+  for (const sgn of [-1, 1]) S.put(G.box, M.domeSteel, .34, dh, .5, sgn * (dw + .17), dh * .5, dz);
+  for (let i = 0; i <= 8; i++) {
+    const a = Math.PI * i / 8, px = -Math.cos(a) * (dw + .17), py = dh - .1 + Math.sin(a) * .95;
+    S.put(G.box, M.domeSteel, .42, .42, .5, px, py, dz, 0, 0, a - Math.PI / 2);
+  }
+  S.put(G.box, M.domeSteel, D.door.w + 1.0, .22, .6, 0, .11, dz);
+  for (let i = 0; i < 7; i++) {
+    const px = (i / 6 - .5) * (D.door.w - .18);
+    const ph = dh * .92 - Math.abs(i - 3) * .07;
+    S.put(G.box, M.domeWood, (D.door.w - .18) / 7 * .94, ph, .22, px, ph * .5 + .12, dz - .04);
+  }
+  S.put(G.cyl, M.domeSteel, .09, .5, .09, dw - .55, dh * .46, dz + .16, Math.PI / 2, 0, 0);
+  S.put(G.cyl, M.domeDark, .16, .12, .16, dw - .55, dh * .46, dz + .1, Math.PI / 2, 0, 0);
+  // ---- the portholes, aimed down the shell's own normal so nothing has to be eyeballed ----
+  // A porthole is three discs down the shell's own normal -- an orange bezel, a dark rim and
+  // the glass -- and `strut` aims them, so nothing here has to be turned by hand.
+  const hole = (px, py, pz, nx, ny, nz, rad) => {
+    const k = .3, ax = nx * k, ay = ny * k, az = nz * k;
+    S.strut(G.cyl, M.domeDark,  rad,       px - ax * 1.4, py - ay * 1.4, pz - az * 1.4, px + ax * 1.15, py + ay * 1.15, pz + az * 1.15);
+    S.strut(G.cyl, M.domeTrim,  rad * .93, px - ax * .2,  py - ay * .2,  pz - az * .2,  px + ax * 1.35, py + ay * 1.35, pz + az * 1.35);
+    S.strut(G.cyl, M.domeGlass, rad * .68, px + ax * .55, py + ay * .55, pz + az * .55, px + ax * 1.55, py + ay * 1.55, pz + az * 1.55);
+  };
+  const wallPort = (y, lon, rad) => {
+    const nx = Math.sin(lon), nz = Math.cos(lon);
+    hole(nx * R, y, nz * R, nx, 0, nz, rad);
+  };
+  const capPort = (lat, lon, rad) => {
+    const cl = Math.cos(lat), nx = Math.sin(lon) * cl, ny = Math.sin(lat), nz = Math.cos(lon) * cl;
+    hole(nx * R, D.wallH + ny * D.capH, nz * R, nx, ny * (R / D.capH), nz, rad);
+  };
+  wallPort(2.1, 2.05, 1.45); wallPort(2.1, -2.05, 1.45); wallPort(2.05, Math.PI, 1.2);
+  wallPort(2.4, 1.15, .48); wallPort(2.4, -1.15, .48); wallPort(1.5, -.68, .32);
+  capPort(.30, .95, .62); capPort(.34, -1.55, .52); capPort(.62, 2.5, .44); capPort(.5, -2.9, .34);
+  // ---- the skirt, the crates and the pipework at its foot ----
+  S.put(G.cyl, M.domeCrate, R + .22, .5, R + .22, 0, .25, 0);
+  S.put(G.cyl, M.domeSteel, R + .30, .16, R + .30, 0, .08, 0);
+  for (const [sgn, lon] of [[-1, .95], [1, 1.55]]) {
+    const cx = Math.sin(lon * sgn) * (R - .3), cz = Math.cos(lon * sgn) * (R - .3);
+    S.put(G.box, M.domeCrate, 1.5, 1.2, 1.15, cx, .6, cz, 0, lon * sgn, 0);
+    S.put(G.box, M.domeTrim, .8, .55, .1, cx + Math.sin(lon * sgn) * .6, .6, cz + Math.cos(lon * sgn) * .6, 0, lon * sgn, 0);
+    S.put(G.box, M.domeSteel, 1.56, .16, 1.2, cx, 1.24, cz, 0, lon * sgn, 0);
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = 2.5 + i * .26;
+    S.strut(G.cyl, M.domeSteel, .22, Math.sin(a) * (R - .1), .3, Math.cos(a) * (R - .1),
+      Math.sin(a + .26) * (R - .1), .3, Math.cos(a + .26) * (R - .1));
+  }
+  // ---- and it is SOLID, with a way in ----
+  // One collider per panel column rather than one circle round the lot, because a circle
+  // cannot have a doorway in it and the doorway is the whole point of building it this way.
+  for (let i = 0; i < D.cols; i += 2) {
+    const a = i * step;
+    if (Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) < half * (D.doorCols + 1)) continue;
+    S.block(Math.sin(a) * R, Math.cos(a) * R, chord * 1.05, D.wallH + D.capH * .9);
+  }
+  S.done();
+  return { x, z };
+}
 function buildSites() {
   const out = [];
   const farm = siteSpot('steading', ['pasture'], 2.6, 10, .2, [15, 12, 9, 7, 5], out);
@@ -9753,6 +9886,12 @@ function buildSites() {
   if (ring) out.push(buildStones(ring.x, ring.z));
   const huddle = siteSpot('huddle', ['scrub', 'pasture'], 2.6, 12, .2, [16, 13, 10, 8, 6], out);
   if (huddle) out.push(buildHuddle(huddle.x, huddle.z, rnd(Math.PI * 2)));
+  // Near the berth on purpose: it is a thing to go and look at rather than a thing to find.
+  {
+    const dm = siteSpot('dome', ['pasture', 'scrub', 'coast'], 2.6, 12, .16, [14, 11, 9, 7], out);
+    if (dm) { out.push(buildDomeHut(dm.x, dm.z, rnd(Math.PI * 2)));
+      console.info('[site] the dome hut stands at ' + dm.x.toFixed(0) + ', ' + dm.z.toFixed(0)); }
+  }
   // The lander wants more room and flatter ground than anything else here -- forty-two units
   // across on six legs -- and it is the one place you come back to, so unlike every other
   // site it is not allowed to come down on the sister isle across the water. It gets first
