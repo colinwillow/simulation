@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd46';
+const BUILD = 'd47';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -9777,11 +9777,11 @@ const ZONES = [
   // the one thing here that is somewhere rather than something, so it chooses first and the
   // groves, beds and outcrops settle around it -- which is what "build the zones around those
   // areas" actually means in a system that has no author standing over it.
-  { fn: 'outpost', biome: 'pasture',  n: 2, maxSl: .26, base: ['space_base'], drone: 'alien_drone',
+  { fn: 'outpost', biome: 'pasture',  n: 2, maxSl: .16, base: ['space_base'], drone: 'alien_drone',
     hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone01', 'sp_stone02'] },
-  { fn: 'outpost', biome: 'scrub',    n: 1, maxSl: .26, base: ['space_base'], drone: 'alien_drone',
+  { fn: 'outpost', biome: 'scrub',    n: 1, maxSl: .16, base: ['space_base'], drone: 'alien_drone',
     hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone01'] },
-  { fn: 'outpost', biome: 'highland', n: 1, maxSl: .34, base: ['space_base'], drone: 'alien_drone',
+  { fn: 'outpost', biome: 'highland', n: 1, maxSl: .20, base: ['space_base'], drone: 'alien_drone',
     hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
   // THE BIG CAPS. Their own formation rather than another entry in a bed, because they are
   // three to six units tall -- you walk under these, and a stand of them is a landmark.
@@ -9931,34 +9931,48 @@ const ZFN = {
   // A base, its huts, its mast, and a few slabs of apron between them. The slabs are what make
   // it read as inhabited rather than as three models parked in a field -- somebody laid those.
   outpost(B, M, cx, cz, z0) {
-    if (!obClear(cx, cz, 7)) return;
+    if (!obClear(cx, cz, 16)) return;
     const face = rnd(6.3);
-    zPut(B.big, M[pick(z0.base)], cx, cz, rnd(8.5, 11), face, .10, .27, { sink: .04 });
-    // huts set back and off to one side, turned to look at the base
+    // THE SPAN IS THE WHOLE COMPLEX, not one dome, and that is why this was doll's-house
+    // sized. space_base is a base, a dish, four outbuildings and their walkways in one model,
+    // so 10 units across the LOT put each dome about three wide and its door about waist
+    // height on a body 2.8 tall. A door you can walk through is a shade over three units, and
+    // a door is about an eighth of this model's width, so the complex wants about
+    // twenty-seven -- roughly three times what it had.
+    zPut(B.big, M[pick(z0.base)], cx, cz, rnd(24, 30), face, .08, .15, { sink: .04 });
+    // AND THE COLLIDER INSCRIBES THE CORE, NOT THE COMPLEX. A collider is one circle: at .27
+    // of the footprint of a thing twenty-seven units across it is a five-metre wall around
+    // the entire outpost, so the doors he is trying to reach would be inside it. At .15 it
+    // holds the central drum and the outbuildings are walk-through, which is the honest trade
+    // until the model has an interior to be inside of.
+    //
+    // Everything below is laid out in the base's own units now: a hut nine units from the
+    // middle of a twenty-seven-unit complex is a hut in the middle of the dish.
     for (let i = 0, n = 1 + (Math.random() * 2 | 0); i < n; i++) {
-      const a = face + rnd(1.9, 2.9) * (i ? -1 : 1), r = rnd(9, 14);
+      const a = face + rnd(1.9, 2.9) * (i ? -1 : 1), r = rnd(22, 32);
       const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
-      if (isLand(x, zz) && obClear(x, zz, 3.4)) zPut(B.big, M[pick(z0.hut)], x, zz, rnd(4.2, 5.8), a + Math.PI, .12, .38);
+      if (isLand(x, zz) && obClear(x, zz, 4.5)) zPut(B.big, M[pick(z0.hut)], x, zz, rnd(6.5, 8.5), a + Math.PI, .12, .34);
     }
     {
-      const a = face + rnd(-.7, .7), r = rnd(7, 11);
+      const a = face + rnd(-.7, .7), r = rnd(17, 23);
       const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
-      if (isLand(x, zz) && obClear(x, zz, 2.2)) zPut(B.big, M[z0.mast], x, zz, rnd(8, 12), rnd(6.3), .05, .3);
+      if (isLand(x, zz) && obClear(x, zz, 2.6)) zPut(B.big, M[z0.mast], x, zz, rnd(14, 19), rnd(6.3), .05, .3);
     }
     // AND A MACHINE PARKED BESIDE IT. An outpost with nothing at it but buildings reads as a
     // model kit; one vehicle sitting off the apron reads as somewhere people came back to.
     if (z0.drone && M[z0.drone]) {
-      const a = face - rnd(1.1, 1.8), r = rnd(6, 9);
+      const a = face - rnd(1.1, 1.8), r = rnd(15, 20);
       const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
-      if (isLand(x, zz) && obClear(x, zz, 2)) zPut(B.big, M[z0.drone], x, zz, rnd(2.6, 3.4), rnd(6.3), .3, .34, { sink: .06 });
+      if (isLand(x, zz) && obClear(x, zz, 2)) zPut(B.big, M[z0.drone], x, zz, rnd(3.2, 4.2), rnd(6.3), .3, .34, { sink: .06 });
     }
-    // the apron, wandering out from the door the way a worn path does
-    let x = cx, zz = cz, dir = face;
-    for (let i = 0; i < 9; i++) {
+    // the apron, wandering out from the door the way a worn path does. It starts at the rim
+    // of the complex rather than at its middle, or the first four slabs are under the base.
+    let x = cx + Math.sin(face) * 12, zz = cz + Math.cos(face) * 12, dir = face;
+    for (let i = 0; i < 11; i++) {
       dir += rnd(-.28, .28);
-      x += Math.sin(dir) * rnd(2.4, 3.6); zz += Math.cos(dir) * rnd(2.4, 3.6);
+      x += Math.sin(dir) * rnd(2.6, 3.8); zz += Math.cos(dir) * rnd(2.6, 3.8);
       if (!isLand(x, zz)) break;
-      zPut(B.small, M[pick(z0.slab)], x, zz, rnd(2.4, 3.8), rnd(6.3), .9, 0, { sink: .3 });
+      zPut(B.small, M[pick(z0.slab)], x, zz, rnd(2.6, 4), rnd(6.3), .9, 0, { sink: .3 });
     }
   },
   // A stand of the big caps, tallest in the middle, with cover under them.
@@ -10130,13 +10144,13 @@ const ZFN = {
 // way arrive stacked on each other. Anchors here are random within the region's core instead,
 // and rejected if anything already placed is inside the gap.
 const ZGAP = { grove: 40, burst: 24, ridge: 30, bed: 18, track: 26, peak: 58, mast: 16,
-  outpost: 90, caps: 26, crag: 54, spire: 52, plate: 70 };   // an outpost wants a lot of room, and gets it by going first
+  outpost: 110, caps: 26, crag: 54, spire: 52, plate: 70 };   // an outpost wants a lot of room, and gets it by going first
 // HOW FAR EACH FORMATION REACHES FROM ITS ANCHOR. zAnchor only ever knew about other zone
 // anchors, so nothing stopped a peak -- a single mountain twenty-six units across -- being
 // laid straight over the ship's berth. The berth is deterministic and has not moved; a
 // mountain grew under it. Same for the great tree, the spire and the cave mouth: every one of
 // them is a thing the island is navigated BY, and every one of them was fair ground.
-const ZSPAN = { peak: 28, crag: 21, outpost: 17, grove: 18, ridge: 20, burst: 11, caps: 12,
+const ZSPAN = { peak: 28, crag: 21, outpost: 36, grove: 18, ridge: 20, burst: 11, caps: 12,
   bed: 10, track: 20, mast: 5, spire: 14, plate: 30 };
 function zKeepOut() {
   const k = [];
