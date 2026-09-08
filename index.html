@@ -1557,7 +1557,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd41';
+const BUILD = 'd42';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2982,6 +2982,10 @@ const SKY_BODIES = [
   { yaw: 1.70, pit: .62, ang: .009, model: 'models/cratered_asteroid.glb', tint: '#b8b4bc' },
   { yaw: 3.50, pit: .22, ang: .007, model: 'models/cratered_asteroid.glb', tint: '#9a938c' },
   { yaw: 5.35, pit: .38, ang: .013, model: 'models/purple_moon.glb' },
+  // The last two whole worlds in the batch. They are planets: there is nowhere on a 400-unit
+  // island to stand one, so the sky is where they go and always was.
+  { yaw: 1.05, pit: .28, ang: .019, model: 'models/sp_planet.glb' },
+  { yaw: 2.95, pit: .58, ang: .015, model: 'models/tropical_island_planet.glb' },
 ];
 const SKYB = { g: null, mats: [] };
 function buildSkyBodies() {
@@ -9732,11 +9736,11 @@ const ZONES = [
   // the one thing here that is somewhere rather than something, so it chooses first and the
   // groves, beds and outcrops settle around it -- which is what "build the zones around those
   // areas" actually means in a system that has no author standing over it.
-  { fn: 'outpost', biome: 'pasture',  n: 2, maxSl: .26, base: ['space_base'],
+  { fn: 'outpost', biome: 'pasture',  n: 2, maxSl: .26, base: ['space_base'], drone: 'alien_drone',
     hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone01', 'sp_stone02'] },
-  { fn: 'outpost', biome: 'scrub',    n: 1, maxSl: .26, base: ['space_base'],
+  { fn: 'outpost', biome: 'scrub',    n: 1, maxSl: .26, base: ['space_base'], drone: 'alien_drone',
     hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone01'] },
-  { fn: 'outpost', biome: 'highland', n: 1, maxSl: .34, base: ['space_base'],
+  { fn: 'outpost', biome: 'highland', n: 1, maxSl: .34, base: ['space_base'], drone: 'alien_drone',
     hut: ['dome_hut'], mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
   // THE BIG CAPS. Their own formation rather than another entry in a bed, because they are
   // three to six units tall -- you walk under these, and a stand of them is a landmark.
@@ -9754,8 +9758,9 @@ const ZONES = [
   // OUTCROPS: a spine along one bearing, biggest in the middle, tapering to both ends. Three
   // regions, three different rocks, so an outcrop tells you which country you are standing in.
   { fn: 'ridge', biome: 'highland', n: 6, maxSl: .8, rock: ['sp_rock01', 'sp_rock02', 'sp_rock09'], paint: '#93a8cc' },
-  { fn: 'ridge', biome: 'desert',   n: 5, maxSl: .8, rock: ['sp_rock03', 'sp_rock05'], paint: '#c8845a' },
-  { fn: 'ridge', biome: 'scrub',    n: 3, maxSl: .7, rock: ['sp_rock06'], paint: '#c9ac78' },
+  { fn: 'ridge', biome: 'desert',   n: 5, maxSl: .8, rock: ['sp_rock03', 'sp_rock05', 'sp_rock04'], paint: '#c8845a' },
+  { fn: 'ridge', biome: 'scrub',    n: 3, maxSl: .7, rock: ['sp_rock06', 'sp_rock04'], paint: '#c9ac78' },
+  { fn: 'ridge', biome: 'crystal',  n: 3, maxSl: .7, rock: ['sp_rock04', 'sp_rock07'] },
   // BEDS: one species per patch. A patch of mixed plants is scatter with extra steps; a patch
   // of ONE thing reads as something that spread from a seed and stopped where the ground did.
   { fn: 'bed',   biome: 'wetland',  n: 6, maxSl: .5, plant: ['sp_plant02', 'sp_plant03'] },
@@ -9787,6 +9792,28 @@ const ZONES = [
   // having been PUT there.
   { fn: 'mast',  biome: 'crystal',  n: 2, maxSl: .4, mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
   { fn: 'mast',  biome: 'highland', n: 2, maxSl: .4, mast: 'sp_sci_fi_antenna', slab: ['sp_stone02'] },
+  // THE SPIRES. sp_rock07 is 116 x 413 x 183 in its own units -- a shard three and a half
+  // times taller than it is wide -- and nothing else in the batch has that silhouette. One
+  // tall one with two leaners and a foot of rubble is a landmark you can steer by from the
+  // far side of a region, which is what the tall aspect is FOR.
+  { fn: 'spire', biome: 'highland', n: 3, maxSl: .7, spire: 'sp_rock07', rock: ['sp_rock04', 'sp_rock09'], paint: '#93a8cc' },
+  { fn: 'spire', biome: 'crystal',  n: 2, maxSl: .6, spire: 'sp_rock07', rock: ['sp_rock04'] },
+  { fn: 'spire', biome: 'desert',   n: 2, maxSl: .7, spire: 'sp_rock07', rock: ['sp_rock04', 'sp_rock05'], paint: '#c8845a' },
+  // THE GROUND PLATES. sp_ground01..05 are wide flat slabs -- a thousand units across and
+  // twenty-nine thick -- so they are neither props nor scenery: they are a piece of GROUND,
+  // laid into the ground on flat land and sunk most of the way in. A dry pan in the desert, a
+  // rock shelf in the highland, a tidal flat on the coast. No collider on any of them: you
+  // walk over a shelf, you do not walk into it.
+  { fn: 'plate', biome: 'desert',   n: 4, maxSl: .09, plate: ['sp_ground01', 'sp_ground03'] },
+  { fn: 'plate', biome: 'highland', n: 3, maxSl: .10, plate: ['sp_ground04', 'sp_ground05'], paint: '#93a8cc' },
+  { fn: 'plate', biome: 'coast',    n: 3, maxSl: .08, plate: ['sp_ground02', 'sp_ground05'] },
+  { fn: 'plate', biome: 'scrub',    n: 3, maxSl: .09, plate: ['sp_ground03', 'sp_ground04'] },
+  { fn: 'plate', biome: 'crystal',  n: 2, maxSl: .09, plate: ['sp_ground01', 'sp_ground02'] },
+  // AND THE BIG WET MASS gets its second face. sp_rock08 is 413 x 413 x 172 -- as wide as it
+  // is tall -- which is the crag's shape, not the boulder's, so it goes in beside
+  // waterfall_rock rather than into a scree list where it would be sized like a pebble.
+  { fn: 'crag',  biome: 'scrub',    n: 2, maxSl: .85, rock: ['sp_rock08'], scree: ['sp_rock04'], plant: ['sp_plant01'], paint: '#c9ac78' },
+  { fn: 'crag',  biome: 'crystal',  n: 2, maxSl: .85, rock: ['sp_rock08'], scree: ['sp_rock04'], plant: ['sp_plant06'] },
 ];
 
 const ZPAINT = { v: null };
@@ -9795,15 +9822,25 @@ const _zq = new THREE.Quaternion(), _zs = new THREE.Quaternion(), _zax = new THR
 const _zp = new THREE.Vector3(), _zsc = new THREE.Vector3(), _zn = new THREE.Vector3(), _zm = new THREE.Matrix4();
 
 function buildZones() {
-  // Every model any zone names, once. If one of them fails to load the count never completes
-  // and no zones are built at all -- which is the right failure: a half-laid grove is worse
-  // than none, and everything else in the world is untouched either way.
+  // Every model any zone names, once.
   const want = new Set();
-  for (const z of ZONES) for (const k of ['tall', 'broad', 'floor', 'rock', 'plant', 'slab', 'peak', 'base', 'hut', 'cap', 'scree'])
+  for (const z of ZONES) for (const k of ['tall', 'broad', 'floor', 'rock', 'plant', 'slab', 'peak', 'base', 'hut', 'cap', 'scree', 'plate'])
     if (z[k]) for (const nm of z[k]) want.add(nm);
-  for (const z of ZONES) for (const k of ['hub', 'shard', 'mast']) if (z[k]) want.add(z[k]);
+  for (const z of ZONES) for (const k of ['hub', 'shard', 'mast', 'spire', 'drone']) if (z[k]) want.add(z[k]);
   const names = [...want], M = {};
   let got = 0;
+  // ONE FAILED FILE USED TO COST EVERY ZONE. loadModel's failure path drops the waiting
+  // callbacks on the floor, so `got` could never reach the count and layZones was simply
+  // never called -- no groves, no ridges, no outposts, anywhere, because of one 404. Poll for
+  // the ones that have given up as well as the ones that arrived, and lay what we have.
+  let done = false;
+  const _fire = () => { if (done) return; done = true; layZones(M); };
+  const _tick = () => {
+    let ready = 0;
+    for (const nm of names) { const e = MODELS['models/' + nm + '.glb']; if (e && (e.ready || e.failed)) ready++; }
+    if (ready >= names.length) _fire();
+  };
+  setTimeout(() => { if (!done) { console.warn('[zones] ' + (names.length - got) + ' models never arrived; laying what there is'); _fire(); } }, 20000);
   for (const nm of names) loadModel('models/' + nm + '.glb', e => {
     const parts = [];
     e.root.updateMatrixWorld(true);
@@ -9816,8 +9853,9 @@ function buildZones() {
     // player's own test adds on top you were stopped 5.0 units out by 4.3 units of thin air.
     // The mean inscribes far closer: same 5.0 for a round boulder, 3.4 for that slab.
     M[nm] = { name: nm, parts, box: e.box, sz, big: Math.max(sz.x, sz.y, sz.z), foot: (sz.x + sz.z) * .5 };
-    if (++got === names.length) layZones(M);
+    got++; _tick();
   });
+  _tick();          // everything may already be cached, in which case no callback is pending
 }
 
 // One piece into the bin. `span` is the world size of the model's LARGEST dimension, which is
@@ -9865,6 +9903,13 @@ const ZFN = {
       const a = face + rnd(-.7, .7), r = rnd(7, 11);
       const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
       if (isLand(x, zz) && obClear(x, zz, 2.2)) zPut(B.big, M[z0.mast], x, zz, rnd(8, 12), rnd(6.3), .05, .3);
+    }
+    // AND A MACHINE PARKED BESIDE IT. An outpost with nothing at it but buildings reads as a
+    // model kit; one vehicle sitting off the apron reads as somewhere people came back to.
+    if (z0.drone && M[z0.drone]) {
+      const a = face - rnd(1.1, 1.8), r = rnd(6, 9);
+      const x = cx + Math.sin(a) * r, zz = cz + Math.cos(a) * r;
+      if (isLand(x, zz) && obClear(x, zz, 2)) zPut(B.big, M[z0.drone], x, zz, rnd(2.6, 3.4), rnd(6.3), .3, .34, { sink: .06 });
     }
     // the apron, wandering out from the door the way a worn path does
     let x = cx, zz = cz, dir = face;
@@ -9994,6 +10039,37 @@ const ZFN = {
       if (isLand(x, zz)) zPut(B.big, M[pick(z0.rock)], x, zz, rnd(2.8, 5.6), rnd(6.3), .35, .5, { sink: .2 });
     }
   },
+  // ONE TALL SHARD, two leaning off it, and rubble at the foot. The leaners tip AWAY from the
+  // big one the way a stack that split does, and they are cut down hard with distance -- a
+  // spire with three equals beside it is a cluster, not a spire.
+  spire(B, M, cx, cz, z0) {
+    if (!obClear(cx, cz, 5)) return;
+    zPut(B.big, M[z0.spire], cx, cz, rnd(22, 33), rnd(6.3), .07, .30, { sink: .1 });
+    for (let i = 0; i < 2; i++) {
+      const a = rnd(6.3), r = rnd(4.5, 9);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (!isLand(x, zz)) continue;
+      zPut(B.big, M[z0.spire], x, zz, rnd(9, 15), a, .1, .30, { lean: rnd(.12, .3), leanA: a, sink: .1 });
+    }
+    for (let i = 0, n = 4 + (Math.random() * 4 | 0); i < n; i++) {
+      const a = rnd(6.3), r = rnd(3.5, 11);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (isLand(x, zz)) zPut(B.big, M[pick(z0.rock)], x, zz, rnd(2, 4.6), rnd(6.3), .45, .5, { sink: .24 });
+    }
+  },
+  // A piece of GROUND, not a prop. It lies right down with the slope, sinks most of its own
+  // thickness in, and carries no collider at all -- obK 0, so zPut never reaches its obAdd.
+  // One plate with a couple of smaller offcuts overlapping it reads as a shelf that broke up,
+  // which is the only way a hard-edged slab sits in soft terrain without looking dropped.
+  plate(B, M, cx, cz, z0) {
+    const sp = pick(z0.plate), face = rnd(6.3);
+    zPut(B.small, M[sp], cx, cz, rnd(26, 40), face, 1, 0, { sink: .62 });
+    for (let i = 0, n = 1 + (Math.random() * 3 | 0); i < n; i++) {
+      const a = rnd(6.3), r = rnd(7, 17);
+      const x = cx + Math.cos(a) * r, zz = cz + Math.sin(a) * r;
+      if (isLand(x, zz) && slope(x, zz) < .16) zPut(B.small, M[sp], x, zz, rnd(9, 18), rnd(6.3), 1, 0, { sink: .58 });
+    }
+  },
   // The one built thing in the batch. The stones at its foot are the whole point: they are
   // what turn an object standing in a field into an object somebody stood in a field.
   mast(B, M, cx, cz, z0) {
@@ -10013,14 +10089,14 @@ const ZFN = {
 // way arrive stacked on each other. Anchors here are random within the region's core instead,
 // and rejected if anything already placed is inside the gap.
 const ZGAP = { grove: 40, burst: 24, ridge: 30, bed: 18, track: 26, peak: 58, mast: 16,
-  outpost: 90, caps: 26, crag: 54 };   // an outpost wants a lot of room, and gets it by going first
+  outpost: 90, caps: 26, crag: 54, spire: 52, plate: 70 };   // an outpost wants a lot of room, and gets it by going first
 // HOW FAR EACH FORMATION REACHES FROM ITS ANCHOR. zAnchor only ever knew about other zone
 // anchors, so nothing stopped a peak -- a single mountain twenty-six units across -- being
 // laid straight over the ship's berth. The berth is deterministic and has not moved; a
 // mountain grew under it. Same for the great tree, the spire and the cave mouth: every one of
 // them is a thing the island is navigated BY, and every one of them was fair ground.
 const ZSPAN = { peak: 28, crag: 21, outpost: 17, grove: 18, ridge: 20, burst: 11, caps: 12,
-  bed: 10, track: 20, mast: 5 };
+  bed: 10, track: 20, mast: 5, spire: 14, plate: 30 };
 function zKeepOut() {
   const k = [];
   const add = (o, r) => { if (o) k.push({ x: o.x !== undefined ? o.x : o.pos.x, z: o.z !== undefined ? o.z : o.pos.z, r }); };
@@ -13655,7 +13731,7 @@ function stepChargeFx(c, dt) {
 Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0, charge: 0,
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
-  throwAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
+  throwAim: 0, tossAim: 0, throwAz: 0, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0,
   wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeGrip: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
 function attachWeapon(r) {
@@ -13977,15 +14053,20 @@ function buildThrowMark() {
 // Walks the arc in fixed steps until it meets the ground, filling `out` with the samples it
 // passed through. Returns how many it wrote.
 const _tmArc = new Float32Array(TMARK.steps * 3);
-function throwArc(power) {
-  const p = player, c = p.carry;
-  const f = lerp(THROW.speed[0], THROW.speed[1], power) / Math.max(.7, c ? (c.rad || 1) : 1);
+// `T` is what is being thrown: leave it out for the animal in his arms, pass BTOSS for the
+// beacon. The two have different launch speeds, a different share of it going up and their
+// own gravity, so an arc drawn with the creature's numbers would be a lie about where the
+// beacon lands -- and the whole point of the mark is that it is not a lie.
+function throwArc(power, T) {
+  const p = player, c = T ? null : p.carry;
+  const sp = T ? T.speed : THROW.speed, lift = T ? T.lift : THROW.lift, gg = T ? T.g : KNOCK.g;
+  const f = lerp(sp[0], sp[1], power) / (T ? 1 : Math.max(.7, c ? (c.rad || 1) : 1));
   const hx = Math.sin(p.aimH), hz = Math.cos(p.aimH), h = TMARK.h;
-  let x = p.pos.x, z = p.pos.z, vy = f * THROW.lift;
-  let y = c ? c.pos.y : p.pos.y + RIG.height * .6;
+  let x = p.pos.x, z = p.pos.z, vy = f * lift;
+  let y = T ? p.pos.y + RIG.height * .72 : (c ? c.pos.y : p.pos.y + RIG.height * .6);
   let n = 0;
   for (let i = 0; i < TMARK.steps; i++) {
-    x += hx * f * h; z += hz * f * h; vy -= KNOCK.g * h; y += vy * h;
+    x += hx * f * h; z += hz * f * h; vy -= gg * h; y += vy * h;
     const gy = groundY(x, z);
     const done = y <= gy;
     if (done) y = gy;
@@ -13994,13 +14075,13 @@ function throwArc(power) {
   }
   return n;
 }
-function throwMarkStep(show, power) {
+function throwMarkStep(show, power, T) {
   if (!tmark) { if (!show) return; tmark = buildThrowMark(); }
   if (!show) {
     if (tmark.g.visible) { tmark.g.visible = false; for (const d of tmark.dashes) d.visible = false; }
     return;
   }
-  const n = throwArc(power);
+  const n = throwArc(power, T);
   const ex = _tmArc[(n - 1) * 3], ey = _tmArc[(n - 1) * 3 + 1], ez = _tmArc[(n - 1) * 3 + 2];
   tmark.g.visible = true;
   tmark.g.position.set(ex, ey + .07, ez);
@@ -14064,6 +14145,43 @@ function stepThrow(dt, rx, ry) {
     return true;
   }
   setChargeRing(0); throwMarkStep(false);
+  return false;
+}
+// The beacon's wind-up. Deliberately the same shape as stepThrow, down to the flick test, so
+// the two read as one gesture with two things on the end of it -- the only differences are
+// what it launches and that there is nothing in his arms to put down instead.
+function stepToss(dt, rx, ry) {
+  const p = player;
+  const mag = Math.hypot(rx, ry);
+  if (mag > THROW.at) {
+    if (!p.tossAim) { p.tossAim = 1; p.throwAz = cam.az; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0; }
+    p.throwT += dt;
+    if (mag > p.throwPeak) {
+      p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
+      p.throwPeak = mag;
+    }
+    p.throwK = clamp(p.throwT / THROW.chargeT, 0, 1);
+    const sa = Math.sin(p.throwAz), ca = Math.cos(p.throwAz);
+    p.aimH = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
+    let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
+    cam.az += cd * Math.min(1, dt * WEAPON.camEase); cam.idle = 0;
+    p.aiming = 1;                                  // he stands like a man about to throw
+    setChargeRing(Math.max(p.throwK, .06));
+    throwMarkStep(true, p.throwK, BTOSS);
+    return true;
+  }
+  if (p.tossAim) {
+    p.tossAim = 0; p.aiming = 0;
+    const quick = p.throwT < THROW.quickT && p.throwPeak > THROW.quickAt;
+    const power = quick
+      ? (p.throwRise - THROW.rise[0]) / (THROW.rise[1] - THROW.rise[0])
+      : p.throwK;
+    p.heading = p.aimH;
+    fireBeacon(clamp(power, THROW.min, quick ? THROW.quickMax : 1));
+    p.throwK = 0; setChargeRing(0); throwMarkStep(false);
+    return true;
+  }
+  p.aiming = 0; p.throwK = 0; setChargeRing(0); throwMarkStep(false);
   return false;
 }
 function hurlCarried(power, quick) {
@@ -14164,7 +14282,14 @@ function stepWeapon(dt, rx, ry) {
   if (!canHold && p.armed < .02) p.armed = 0;
   if (weap.model) weap.model.visible = p.armed > .05;
   armB.classList.toggle('on', !!p.armWant);
-  if (!(canHold && p.armed > .5)) { p.aiming = 0; p.lock = null; p.charge = 0; p.armT = 0; stepChargeFx(0, dt); return false; }
+  if (!(canHold && p.armed > .5)) { p.aiming = 0; p.lock = null; p.charge = 0; p.armT = 0; p.tossAim = 0; stepChargeFx(0, dt); return false; }
+  // THE BEACON IS A THING HE THROWS, so it gets the throw's gesture rather than the gun's.
+  // It was on the trigger: push the stick straight up inside a sixty-degree arc, hold, let go
+  // -- which is how you fire a rifle and has nothing to do with lobbing something underarm.
+  // Same handling as an animal in his arms now: any direction winds up, a flick sends it out
+  // short and fast, a hold fills the ring and sends it further, and the ring on the ground
+  // says where it is going to land the whole time.
+  if (p.wpn === 'beacon') { p.lock = null; p.charge = 0; p.armT = 0; stepChargeFx(0, dt); return stepToss(dt, rx, ry); }
   // The charge fills while he is holding the aim and drains when he is not, so a tap fires a
   // small one and a hold fires a big one. It cannot start filling until the cooldown is up,
   // or a mash would show a full ball a frame after the last shot.
@@ -15271,7 +15396,7 @@ function updatePlayer(dt) {
   // pivoting only when the shot is armed.
   else if (player.turning && player.armed > .5) player.heading = cam.az + Math.PI;
   // Winding up a throw turns him to face it too -- you throw where you are looking.
-  if (player.throwAim) player.heading = player.aimH;
+  if (player.throwAim || player.tossAim) player.heading = player.aimH;
   // Walking himself in to pick something up: he steers, not the stick.
   if (player.approach && !player.fly && !player.free) {
     const o = player.approach, dx = o.pos.x - player.pos.x, dz = o.pos.z - player.pos.z;
@@ -15415,7 +15540,7 @@ function updatePlayer(dt) {
   g.position.copy(player.pos);
   // heading is where the stick points; faceH is where the body has got round to yet
   { let d = player.heading - player.faceH; d = Math.atan2(Math.sin(d), Math.cos(d));
-    player.faceH += d * Math.min(1, dt * (player.aiming || player.shootT > 0 || player.throwAim ? 17 : 9)); }
+    player.faceH += d * Math.min(1, dt * (player.aiming || player.shootT > 0 || player.throwAim || player.tossAim ? 17 : 9)); }
   // The climb, in the body. alignTo already sits him on the ground's plane, but a figure
   // walking up a hill at the same upright angle he walks a lawn is the whole reason a slope
   // read as flat ground tilted -- the effort was in the numbers and nowhere in the picture.
