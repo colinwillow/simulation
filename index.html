@@ -646,15 +646,14 @@
 // exactly the one case where he HAS seen it, stuck.
 // The path off takes 2600ms out of that: solid at about 3870, in by 4550. The dismissal floor
 // below waits for it. Nothing about the animation itself is changed.
-// THE PARTICLES WAIT FOR THE LOAD. With _BOOT_FLY false the mark's timeline starts the instant
-// the page does -- straight into the world build, which is one long synchronous stretch that
-// starves every animation frame. That is why the assembly looks slow: it is not slow, it is
-// being run four frames a second. Left true, the block holds its whole timeline at zero until
-// something sets _BOOTFLY_ORIGIN, and _BOOTFLY_READY stops it giving up at 4.5s. The loader
-// sets the origin when the island is built, so the bar fills, THEN the particles play, at full
-// frame rate. A sixteen-second cap inside the block is the backstop if the load never finishes.
-window._BOOT_FLY = true;
-window._BOOTFLY_READY = true;
+// _BOOT_FLY STAYS FALSE, and setting it true was a bad trade dressed up as a timing fix.
+// The flag does not mean "hold the timeline". It means "there is a 3D layer BEHIND you" -- so
+// the block turns its own backdrop transparent to reveal it, and switches the particles into a
+// launch mode written for that sequence. Both showed: the off-black blue-purple went true
+// black with the boot card's spinner visible through it, and the wordmark stopped assembling
+// into letters. The particles were never the problem the flag was solving, either; they are
+// drawn over a busy load either way, and the honest fix for that is to make the load shorter.
+window._BOOT_FLY = false;
 window._MAJIA_PATH = false;
 // THE INK. The mark ships in the studio's warm red, and against this game it reads ominous --
 // the title screen is a blue-violet galaxy and a warm red logo in front of it belongs to some
@@ -671,6 +670,11 @@ window._MAJIA_INK = '#7fd8ff';
        instead: a ground for the wordmark to stand on, the light coming down onto it, and
        whatever is running across it. Re-export the mark and this survives untouched. -->
   <canvas id="majia-stage" style="position:absolute;inset:0;width:100%;height:100%;display:block;"></canvas>
+  <!-- THE RUNNERS' OWN GLASS. A band under the wordmark, transparent, drawn by a small
+       renderer of its own so the splash's backdrop underneath is never touched -- which is the
+       whole point: the background does not change once, anywhere in the sequence. It is only
+       the strip they run through, not the screen, so it costs a fifth of the pixels. -->
+  <canvas id="majia-run" hidden style="position:absolute;left:0;top:54%;width:100%;height:22%;display:block;"></canvas>
   <canvas id="majia-c" style="position:absolute;inset:0;width:100%;height:100%;display:block;"></canvas>
   <div style="position:absolute;left:50%;bottom:8%;transform:translateX(-50%);width:200px;max-width:54vw;height:2px;background:rgba(120,150,180,.12);border-radius:2px;overflow:hidden;">
     <div id="majia-bar" style="width:0%;height:100%;background:linear-gradient(90deg,#00ffc8,#4488ff);box-shadow:0 0 10px #00ffc8aa;border-radius:2px;"></div>
@@ -1519,7 +1523,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd33';
+const BUILD = 'd34';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -10381,53 +10385,23 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
     gl_FragColor = vec4(c, 1.0);
   }` });
 // ---------- the chase under the mark ----------
-// SMALL FIGURES CROSSING UNDER THE LOGO, and nothing else. The first pass put them on a lit
-// floor plane under a key light: the plane filled the frame, the light blew it out, and the
-// cyan logo drawn on the canvas above vanished into it. There is no floor here. There is no
-// scenery. There is a backdrop that is the studio splash's own gradient, two characters at a
-// tenth of the height they were, and a soft pool of light under each one -- which is the whole
-// of the "slight ground" and the only lighting cue in the shot.
-// The backdrop matters as much as the figures: it is the SAME gradient the splash div paints,
-// as a plane parented to the lens so it always fills, unlit and untone-mapped so it survives
-// the post chain looking like itself. The div crossfades to it over most of a second, which is
-// the one lighting change in the sequence instead of the four there were.
+// ITS OWN LITTLE RENDERER, ON ITS OWN LITTLE CANVAS. Every version of this that drew into the
+// GAME's canvas had the same problem: the splash div sits on top with an opaque backdrop, so
+// the only way to see the render was to make that backdrop transparent -- and every time the
+// backdrop went away the background changed, which is the thing he has objected to twice.
+// So the runners get a strip of glass of their own inside the splash, above the backdrop and
+// below the mark, with a transparent clear. The backdrop is never touched. The background does
+// not change once between the first frame and the title.
+// A second WebGL context for five seconds is the cost, and it is a small one: a band a fifth
+// of the screen tall, at most two device pixels to the CSS pixel, disposed at the hand-off.
+// No post chain either, so what these two are lit by is what you see -- sRGB out, no tone map.
 const CHASE = {
-  on: false, scene: null, cam: null, bg: null, q: null, c: null, qp: null, cp: null,
-  mixers: [], done: null, seedAt: 0, handoff: 0, T: 2.6,
-  // Framing, in units of the lens. `feet` is where they stand: the logo sits at about 43% of
-  // the height, and -1.05 of a six-unit frame puts their feet at 67% -- clear air between.
-  // `quarry` and `chaser` are their HEIGHTS, a twentieth of the frame, so they read as two
-  // small things running rather than as the subject.
-  L: { fov: 26, dist: 13, feet: -1.05, quarry: .40, chaser: .60, span: 2.9, enter: 1.5, hold: 5.6 },
-};
-CHASE.backdrop = function () {
-  const c = document.createElement('canvas'); c.width = 96; c.height = 192;
-  const g = c.getContext('2d');
-  // the splash div's own: radial-gradient(ellipse at 50% 42%, #1a1038, #0d0820 62%, #070418)
-  const gr = g.createRadialGradient(48, 81, 2, 48, 81, 152);
-  gr.addColorStop(0, '#1a1038'); gr.addColorStop(.62, '#0d0820'); gr.addColorStop(1, '#070418');
-  g.fillStyle = gr; g.fillRect(0, 0, 96, 192);
-  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({ map: t, depthWrite: false, fog: false, toneMapped: false }));
-  m.renderOrder = -10; m.position.z = -30; m.frustumCulled = false;
-  return m;
-};
-CHASE.build = function () {
-  const L = this.L, sc = this.scene = new THREE.Scene();
-  this.cam = new THREE.PerspectiveCamera(L.fov, camera.aspect, .5, 60);
-  this.cam.position.set(0, 0, L.dist); this.cam.lookAt(0, 0, 0);
-  sc.add(this.cam);                                  // the backdrop rides the lens
-  this.bg = this.backdrop(); this.cam.add(this.bg);
-  // Soft and low. Two lamps, no shadow maps, nothing bright enough to lift the backdrop:
-  // they are figures picked out of the dark, not a stage set.
-  sc.add(new THREE.HemisphereLight(0xa8c4ff, 0x241a44, .75));
-  const key = new THREE.DirectionalLight(0xffeedd, .9); key.position.set(2.5, 4, 5); sc.add(key);
-  this.q = new THREE.Group(); this.c = new THREE.Group(); sc.add(this.q, this.c);
-  // THE ONLY GROUND THERE IS. A faint pool of light under each of them, squashed flat, that
-  // travels with them -- so the eye reads a lit surface without there being a surface.
-  this.qp = glow('#9fc4ff', 1, .3); this.cp = glow('#9fc4ff', 1, .34);
-  for (const p of [this.qp, this.cp]) { p.material.fog = false; p.position.y = L.feet + .02; sc.add(p); }
+  on: false, r: null, scene: null, cam: null, q: null, c: null, qp: null, cp: null,
+  mixers: [], t0: 0, last: 0, raf: 0, done: null, dir: 1, _w: 0, _h: 0,
+  // The band runs 54% to 76% of the screen and the wordmark sits at about 43%, so anything in
+  // here is under it by construction. `quarry` and `chaser` are heights in lens units against
+  // a band 3.2 units tall -- about a twentieth of the SCREEN each.
+  L: { fov: 30, dist: 6, feet: -.9, quarry: .44, chaser: .66, span: 3.7, enter: 1.2, T: 2.6, tail: .5 },
 };
 CHASE.dress = function (holder, url, height, clipName, speed) {
   loadModel(url, e => {
@@ -10437,41 +10411,52 @@ CHASE.dress = function (holder, url, height, clipName, speed) {
     inst.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = false; o.frustumCulled = false; } });
     holder.add(inst);
     const clip = e.anims.find(a => a.name === clipName) || e.anims.find(a => /walk|run/i.test(a.name));
-    if (clip) { const mx = new THREE.AnimationMixer(inst); const act = mx.clipAction(clip); act.timeScale = speed; act.play(); this.mixers.push(mx); }
-    holder.userData.ready = true;
+    if (clip) { const mx = new THREE.AnimationMixer(inst); mx.clipAction(clip).setEffectiveTimeScale(speed).play(); this.mixers.push(mx); }
   });
 };
-// Called the moment the island is built -- the same moment the mark's own timeline is seeded --
-// so the particles and the chase share one clock and one frame rate.
 CHASE.start = function (done) {
   if (this.on) return;
-  this.done = done; this.seedAt = performance.now(); this.handoff = 0;
+  this.done = done;
   try {
-    if (!this.scene) this.build();
+    const cv = document.getElementById('majia-run');
+    if (!cv || !THREE.WebGLRenderer) throw new Error('no canvas');
     const L = this.L;
+    const r = this.r = new THREE.WebGLRenderer({ canvas: cv, alpha: true, antialias: true, powerPreference: 'low-power' });
+    r.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+    r.setClearColor(0x000000, 0);
+    r.outputEncoding = THREE.sRGBEncoding;      // straight to the glass; no composite to undo it
+    const sc = this.scene = new THREE.Scene();
+    this.cam = new THREE.PerspectiveCamera(L.fov, 2, .1, 40);
+    this.cam.position.set(0, 0, L.dist); this.cam.lookAt(0, 0, 0);
+    sc.add(new THREE.HemisphereLight(0xbcd0ff, 0x2a2050, 1.1));
+    const key = new THREE.DirectionalLight(0xfff0e0, 1.2); key.position.set(2, 4, 5); sc.add(key);
+    this.q = new THREE.Group(); this.c = new THREE.Group(); sc.add(this.q, this.c);
+    // the only ground there is: a soft pool of light travelling under each of them
+    this.qp = glow('#9fc4ff', 1, .34); this.cp = glow('#9fc4ff', 1, .38);
+    for (const p of [this.qp, this.cp]) { p.material.fog = false; p.position.y = L.feet + .02; sc.add(p); }
     this.dir = Math.random() < .5 ? 1 : -1;
     this.q.rotation.y = this.c.rotation.y = this.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
     this.q.position.y = this.c.position.y = L.feet;
-    this.q.visible = this.c.visible = false;
+    this.q.visible = this.c.visible = this.qp.visible = this.cp.visible = false;
     this.dress(this.q, 'models/purple_horny.glb', L.quarry, 'Walking', 2.2);
     this.dress(this.c, 'models/alien_orange.glb', L.chaser, 'run_fwd', 1.05);
-    this.on = true;
-    // the div's gradient hands over to the identical one in the scene, slowly enough that it
-    // reads as the light settling rather than as a cut
-    const bg = document.getElementById('majia-bg');
-    if (bg) { bg.style.transition = 'opacity .9s ease'; bg.style.opacity = '0'; }
-  } catch (e) { console.warn('chase skipped:', e); this.on = false; if (done) done(); }
+    cv.hidden = false;
+    this.on = true; this.t0 = this.last = performance.now();
+    this.tick();
+  } catch (e) { console.warn('chase skipped:', e); this.on = false; this.finish(); }
 };
-CHASE.step = function (dt) {
+CHASE.tick = function () {
   if (!this.on) return;
-  const L = this.L;
-  this.cam.aspect = camera.aspect; this.cam.updateProjectionMatrix();
-  const hh = 2 * 30 * Math.tan(this.cam.fov * Math.PI / 360);
-  this.bg.scale.set(hh * this.cam.aspect * 1.02, hh * 1.02, 1);
+  this.raf = requestAnimationFrame(() => this.tick());
+  const L = this.L, now = performance.now(), dt = Math.min(.05, (now - this.last) / 1000);
+  this.last = now;
+  const cv = this.r.domElement, w = cv.clientWidth | 0, h = cv.clientHeight | 0;
+  if (w > 0 && h > 0 && (w !== this._w || h !== this._h)) {
+    this._w = w; this._h = h; this.r.setSize(w, h, false);
+    this.cam.aspect = w / h; this.cam.updateProjectionMatrix();
+  }
   for (const mx of this.mixers) mx.update(dt);
-  const since = (performance.now() - this.seedAt) / 1000;
-  if (this.handoff) { if (since >= this.handoff) { this.on = false; const d = this.done; this.done = null; if (d) d(); } return; }
-  const k = (since - L.enter) / this.T, vis = k > -.02 && k < 1.08;
+  const t = (now - this.t0) / 1000, k = (t - L.enter) / L.T, vis = k > -.02 && k < 1.08;
   this.q.visible = this.c.visible = this.qp.visible = this.cp.visible = vis;
   if (vis) {
     const x0 = -L.span * this.dir, x1 = L.span * this.dir;
@@ -10479,15 +10464,21 @@ CHASE.step = function (dt) {
     this.c.position.x = lerp(x0, x1, clamp(k - .13, 0, 1));
     this.qp.position.x = this.q.position.x; this.cp.position.x = this.c.position.x;
     this.qp.scale.set(L.quarry * 2.4, L.quarry * .5, 1);
-    this.cp.scale.set(L.chaser * 2.2, L.chaser * .45, 1);
+    this.cp.scale.set(L.chaser * 2.1, L.chaser * .42, 1);
   }
-  // Back to the div's gradient before the hand-off, so the title arrives out of the same dark
-  // the splash started in and there is no cut from the scene to the sky.
-  if (since >= L.hold) {
-    const bg = document.getElementById('majia-bg');
-    if (bg) { bg.style.transition = 'opacity .3s ease'; bg.style.opacity = '1'; }
-    this.handoff = since + .34;
-  }
+  this.r.render(this.scene, this.cam);
+  // Gone, and the mark has had its own hold (5.2s inside the block) -- whichever is later.
+  if (t >= L.enter + L.T + L.tail && (Date.now() - T0) >= 5700) this.finish();
+};
+CHASE.finish = function () {
+  this.on = false;
+  if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
+  try {
+    const cv = this.r && this.r.domElement; if (cv) cv.hidden = true;
+    if (this.r) { this.r.dispose(); this.r.forceContextLoss && this.r.forceContextLoss(); }
+  } catch (_) { }
+  this.r = null;
+  const d = this.done; this.done = null; if (d) d();
 };
 function renderPost() {
   renderer.info.reset();
@@ -10496,8 +10487,7 @@ function renderPost() {
   // The intro is a different SCENE, not a different camera move on this one. Everything after
   // this line -- bloom, grade, dither, the black lift -- is the same chain either way, which
   // is what makes the title card look like it belongs to the game rather than to a menu.
-  if (CHASE.on) renderer.render(CHASE.scene, CHASE.cam);
-  else if (INTRO.on && DIO.scene) renderer.render(DIO.scene, DIO.cam);
+  if (INTRO.on && DIO.scene) renderer.render(DIO.scene, DIO.cam);
   else renderer.render(scene, camera);
   quad.material = brightMat; brightMat.uniforms.tD.value = rtScene.texture;
   renderer.setRenderTarget(rtA); renderer.clear(); renderer.render(quadScene, quadCam);
@@ -16621,7 +16611,6 @@ function frame(now) {
     for (let i = n; i < 4; i++) wk[i].set(0, 0, 0, 0);
   }
   if (GLLOST.on) return;
-  CHASE.step(dt);
   renderPost();
 
   // Hold the loading card until the models are actually in. Lift it on the first frame and
@@ -16635,12 +16624,10 @@ function frame(now) {
       // this fired before the splash had drawn anything and the mark was never seen at all.
       // Two and a bit seconds is the floor; a slow boot still overruns it and dismisses on
       // its own timeline.
-      // EVERYTHING IS LOADED. Fill the bar, then let the show start: seeding _BOOTFLY_ORIGIN
-      // releases the mark's timeline, which has been held at zero all through the build, and
-      // the chase starts on the same frame. Both now run with the whole machine to themselves.
+      // Loaded. Fill the bar and send the runners across the strip under the mark; the splash
+      // keeps its own backdrop and its own timeline throughout, untouched.
       const bar = document.getElementById('majia-bar'); if (bar) bar.style.width = '100%';
       const b = document.getElementById('boot'); b.style.opacity = 0; setTimeout(() => b.remove(), 600);
-      try { window._BOOTFLY_ORIGIN = { on: true, k: 1 }; } catch (_) { }
       CHASE.start(() => {
         if (window._majiaFinish) window._majiaFinish();
         if (INTRO.on) introEl.hidden = false; else document.body.classList.remove('intro');
