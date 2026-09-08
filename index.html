@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd72';
+const BUILD = 'd73';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1601,7 +1601,7 @@ addEventListener('unhandledrejection', e => {
   if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason);
 });
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { turnip: 64, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
+const MAX = { turnip: 64, loose: 20, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -5322,6 +5322,16 @@ function attachRig(parent, cfg, done) {
       pickUp: pickPose(e.anims, cfg.pickUp),
       hold: pickPose(e.anims, cfg.hold),
     };
+    // NO HOLD POSE IN THE FILE. `holding_item` went out with the re-export, and without it
+    // `carry` is zero, the leg clones are never built and he walks and idles normally with an
+    // animal in his arms -- which is what it looks like now. Rather than guess a pose bone by
+    // bone, freeze one off a clip that is already authored on this rig: `rifle_idle_01` holds
+    // both arms up and forward with the hands at the socket, which is within a few degrees of
+    // carrying something. A stand-in, and it steps aside the moment the real pose is back.
+    if (!clips.hold && cfg.holdFrom) {
+      const src = e.anims.find(a2 => a2.name === cfg.holdFrom);
+      if (src) { clips.hold = freezeFrame(src, cfg.holdAt || 0, 'hold__standIn'); console.warn('[rig] no ' + cfg.hold + ' in the file — carrying off a frozen frame of ' + cfg.holdFrom); }
+    }
     // ONE-SHOTS, BY NAME AND NOTHING ELSE. pickClip guesses from a keyword and a veto, which
     // is right for a walk and wrong for a combo: melee_slash and melee_punch would both match
     // any pattern loose enough to catch either, and the ORDER is the whole point of them.
@@ -5489,6 +5499,21 @@ function attachRig(parent, cfg, done) {
   });
 }
 
+// One frame of a clip, held. Every track keeps the key it was on at `t` and gets two times
+// so the mixer has an interval to interpolate across; the result behaves exactly like an
+// authored pose, because that is what a pose is.
+function freezeFrame(clip, t, name) {
+  const out = [];
+  for (const tr of clip.tracks) {
+    const times = tr.times; let i = 0;
+    while (i < times.length - 1 && times[i + 1] <= t) i++;
+    const n = tr.getValueSize();
+    const vals = new tr.values.constructor(n * 2);
+    for (let k = 0; k < n; k++) { const v = tr.values[i * n + k]; vals[k] = v; vals[n + k] = v; }
+    out.push(new tr.constructor(tr.name, [0, .1], vals));
+  }
+  return new THREE.AnimationClip(name, .1, out);
+}
 // A pose. Same lookup as pickClip minus the duration floor, because a one-frame pose is
 // exactly what that floor exists to reject, and given a length so an action can hold it: a
 // zero-length clip on repeat divides by its own duration.
@@ -5577,7 +5602,11 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // The roll owns the body outright while it runs -- it is a whole-body move with its own
   // travel, and blending a walk into it just makes it look like a stumble. So does the stoop.
   want.roll = c.roll ? 1 : 0;
-  want.pickUp = c.lift || 0;
+  // ONLY IF THE STOOP EXISTS. `pickUp` is not in the re-export, so this asked for a clip that
+  // is not there -- and four lines down every other weight is multiplied by (1 - pickUp). At
+  // the top of a pull that is every weight in the rig at zero, which is the mixer's bind pose:
+  // he T-posed over the turnip. A missing one-shot must cost nothing, not the whole body.
+  want.pickUp = a.pickUp ? (c.lift || 0) : 0;
   // water: tread <-> swim forward
   const sw = clamp(speed / 6, 0, 1);
   want.swimIdle = 1 - sw; want.swim = sw;
@@ -5594,7 +5623,7 @@ function stepRig(r, dt, speed, grounded, ctx) {
   for (const k of ['swimIdle', 'swim']) want[k] *= swim * (1 - jumpK) * (1 - rollK);
   want.jumpStart *= 1 - rollK; want.jumpAir *= 1 - rollK; want.jumpLand *= 1 - rollK;
   want.rifleShoot *= 1 - rollK;
-  want.roll = c.roll ? 1 : 0; want.pickUp = c.lift || 0;   // neither is suppressed by the other
+  want.roll = c.roll ? 1 : 0; want.pickUp = a.pickUp ? (c.lift || 0) : 0;   // neither is suppressed by the other
   // ONE ACTION AT A TIME, whichever it is. A swing, a slide, a landing roll, drawing or
   // stowing: they are all a named clip that owns the body for its own length and then gets
   // out of the way, so they share one channel rather than each earning a branch of their own.
@@ -6185,7 +6214,16 @@ const THROW = {
 // The turnip, and anything else that rides in his hands rather than in his arms. Lighter than
 // an animal and it does not tumble -- it flies, it lands, and what happens then depends on
 // what is standing where it came down.
-const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7 };
+// ONCE IT IS OUT OF THE GROUND IT STAYS OUT. It used to replant itself wherever it landed --
+// a thrown turnip burrowed back in and started growing again, which is not what throwing a
+// thing at something looks like. Now it hits, bounces, rolls off whatever slope it is on and
+// comes to rest lying on the surface, and it can be picked straight back up. `bounce` is how
+// much of the drop it gives back, `roll` how much horizontal it keeps through a bounce,
+// `fric` how quickly the roll dies, `slope` how hard the hill pushes it along, and `stop` the
+// speed below which it has stopped. Planting one is still there -- it is the PLANT IT offer,
+// which is a choice rather than an accident.
+const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7,
+  bounce: .36, roll: .68, fric: 1.9, slope: 6.5, stop: 1.5, restY: .34 };
 class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
@@ -13330,6 +13368,8 @@ const RIG = {
   // doing and he can walk, run, jump and roll with something in his arms off clips that
   // already exist.
   pickUp: 'pick_up_object', hold: 'holding_item',
+  // and where the stand-in comes from while `hold` is missing from the export
+  holdFrom: 'rifle_idle_01', holdAt: 0,
   // THE NEW SET, and what went with it. The re-export added eleven clips and REMOVED five:
   // holding_item, pick_up_object, roll, rifle_strafe_left and rifle_strafe_right are all gone
   // from the file. Everything that reads them is guarded, so nothing throws -- it just stops
@@ -14415,13 +14455,20 @@ function holdOffer() {
   }
   if (p.carry || p.liftT > 0 || p.holdPend) return;
   let best = null, bd = HOLD.reach;
+  // A ripe one in the ground, or one already out of it lying where it was thrown. Same stoop,
+  // different word for it -- you pull the first and you pick the second up.
   for (const t of world.plants) {
-    if (!(t instanceof Turnip) || !t.alive || !t.ripe) continue;
+    if (!t.alive) continue;
+    if (!((t instanceof Turnip && t.ripe) || t instanceof LooseFood)) continue;
     const d = Math.hypot(t.pos.x - p.pos.x, t.pos.z - p.pos.z);
     if (d < bd) { bd = d; best = t; }
   }
   // An animal in reach keeps its PICK UP unless he is standing right on the turnip.
-  if (best && (!ACT.now || bd < 1.9)) { offerAct({ icon: 'lift', label: 'PULL', run: () => pullTurnip(best) }); return; }
+  if (best && (!ACT.now || bd < 1.9)) {
+    const loose = best instanceof LooseFood;
+    offerAct({ icon: 'lift', label: loose ? 'TAKE' : 'PULL', run: () => pullTurnip(best) });
+    return;
+  }
   if (ACT.now) return;
   // TIMBER. A log on the ground is a log to pick up. A standing tree is a tree to bring down:
   // a hold beside the trunk, and after a couple of seconds it goes over the way a browsed one
@@ -14490,11 +14537,12 @@ function heldTurnip() {
 function pullTurnip(t) {
   const p = player;
   if (!t || !t.alive || p.hold || p.liftT > 0 || p.carry) return;
+  const loose = t instanceof LooseFood;
   t.alive = false; t.dispose();
   // the ground says so on the first frame; the thing itself arrives when the bend is over
-  world.effects.push(new Burst(t.pos.x, t.pos.y + .3, t.pos.z, '#8a7554', 10, .55));
-  p.liftT = CARRY.lift; p.holdPend = { kind: 'turnip', at: t.pos.clone() };
-  logMsg('He gets both hands round it and works it loose.');
+  world.effects.push(new Burst(t.pos.x, t.pos.y + .3, t.pos.z, loose ? '#c9b48a' : '#8a7554', loose ? 5 : 10, .5));
+  p.liftT = CARRY.lift; p.holdPend = { kind: t.kind || 'turnip', at: t.pos.clone() };
+  logMsg(loose ? 'He scoops it up off the ground.' : 'He gets both hands round it and works it loose.');
 }
 // Where the thing in his hands rides. The socket, the same weapon null the carried animal
 // hangs on, so the hold pose actually places it; the chest offset is the fallback for a rig
@@ -15353,6 +15401,35 @@ function stepToss(dt, rx, ry) {
 // the whole reason to throw one: an animal standing where it comes down eats it, so feeding
 // stops being a thing you can only do at arm's length from a creature that is usually running
 // away from you. Nothing there and it plants itself, exactly as PLANT IT does.
+// WHERE A THROWN ONE ENDS UP. Lying on the ground, not growing in it: it keeps whatever
+// attitude it tumbled into, sits on the surface, and is picked back up with the same stoop
+// that pulls one out of the earth. It is also still food -- anything that wanders within
+// reach of it finds it, which is what makes dropping one somewhere a thing worth doing.
+const LOOSE = { reach: 2.4, every: .6 };
+class LooseFood {
+  constructor(x, z, kind, q) {
+    this.alive = true; this.kind = kind || 'turnip';
+    this.pos = new THREE.Vector3(x, groundY(x, z) + HTOSS.restY, z);
+    this.g = heldTurnip();
+    this.g.scale.setScalar(.8);
+    this.g.position.copy(this.pos);
+    if (q) this.g.quaternion.copy(q); else { alignTo(this.g, x, z, 1); this.g.rotateX(1.35); this.g.rotateY(rnd(6.283)); }
+    this.t = rnd(LOOSE.every);
+  }
+  update(dt) {
+    if ((this.t -= dt) > 0) return;
+    this.t = LOOSE.every;
+    for (const o of world.creatures) {
+      if (!o.alive || o.carried || o.net || o.aquatic || o.flying || o.fling) continue;
+      if (Math.hypot(o.pos.x - this.pos.x, o.pos.z - this.pos.z) > LOOSE.reach) continue;
+      this.alive = false;
+      takeFood(o, this.kind, this.pos.x, this.pos.y, this.pos.z);
+      return;
+    }
+  }
+  dispose() { scene.remove(this.g); }
+}
+const _tossAx = new THREE.Vector3();
 class TossedItem {
   constructor(x, y, z, v, kind) {
     this.alive = true; this.t = 0; this.kind = kind;
@@ -15364,15 +15441,43 @@ class TossedItem {
   }
   update(dt) {
     this.t += dt;
+    const fy = Math.max(deckY(this.pos.x, this.pos.z, this.pos.y),
+      standOn(this.pos.x, this.pos.z, this.pos.y), groundY(this.pos.x, this.pos.z));
+    if (this.grounded) {
+      // On the deck and rolling. The hill pushes it along, friction takes it back, and the
+      // spin is read off the travel rather than the clock so it turns at the pace it moves.
+      const e = 1.2, x0 = this.pos.x, z0 = this.pos.z;
+      const gx = (groundY(x0 + e, z0) - groundY(x0 - e, z0)) / (2 * e);
+      const gz = (groundY(x0, z0 + e) - groundY(x0, z0 - e)) / (2 * e);
+      this.v.x -= gx * HTOSS.slope * dt; this.v.z -= gz * HTOSS.slope * dt;
+      const damp = Math.exp(-HTOSS.fric * dt);
+      this.v.x *= damp; this.v.z *= damp; this.v.y = 0;
+      this.pos.x += this.v.x * dt; this.pos.z += this.v.z * dt;
+      this.pos.y = fy + HTOSS.restY;
+      this.g.position.copy(this.pos);
+      const sp = Math.hypot(this.v.x, this.v.z);
+      if (sp > 1e-3) { _tossAx.set(this.v.z / sp, 0, -this.v.x / sp); this.g.rotateOnWorldAxis(_tossAx, sp / HTOSS.r * dt * .35); }
+      if (sp < HTOSS.stop || this.t > HTOSS.maxT) { this.alive = false; this.land(fy); }
+      return;
+    }
     this.v.y -= KNOCK.g * dt;
     this.pos.addScaledVector(this.v, dt);
     this.g.position.copy(this.pos);
     this.g.rotateOnWorldAxis(this.axis, HTOSS.spin * dt);
-    const fy = Math.max(deckY(this.pos.x, this.pos.z, this.pos.y),
-      standOn(this.pos.x, this.pos.z, this.pos.y), groundY(this.pos.x, this.pos.z));
     if (this.pos.y > fy && this.t < HTOSS.maxT) return;
-    this.alive = false;
-    this.land(Math.max(fy, this.pos.y));
+    // It has touched down. In water, or out of time, it is finished where it is.
+    if (this.t >= HTOSS.maxT || fy <= SEA + .05) { this.alive = false; this.land(Math.max(fy, this.pos.y)); return; }
+    this.pos.y = fy;
+    const drop = Math.abs(this.v.y);
+    this.bounces = (this.bounces || 0) + 1;
+    if (this.bounces <= 2 && drop > 3) {
+      this.v.y = drop * HTOSS.bounce;
+      this.v.x *= HTOSS.roll; this.v.z *= HTOSS.roll;
+      this.pos.y += .02;
+      return;
+    }
+    this.grounded = true; this.v.y = 0;
+    this.v.x *= HTOSS.roll; this.v.z *= HTOSS.roll;
   }
   land(y) {
     const x = this.pos.x, z = this.pos.z;
@@ -15385,10 +15490,11 @@ class TossedItem {
       if (d < bd) { bd = d; best = o; }
     }
     if (best) { takeFood(best, this.kind, x, y, z); return; }
-    if (isLand(x, z) && height(x, z) > SEA + .3 && count(world.plants, Turnip) < MAX.turnip) {
-      world.plants.push(new Turnip(x, z, .5));
-      world.effects.push(new Burst(x, y + .4, z, '#c9b48a', 7, .5));
-      logMsg('It lands, rolls, and settles into the ground where it fell.');
+    if (isLand(x, z) && height(x, z) > SEA + .3) {
+      while (count(world.plants, LooseFood) >= MAX.loose) { const o = world.plants.find(q => q instanceof LooseFood && q.alive); if (!o) break; o.alive = false; }
+      world.plants.push(new LooseFood(x, z, this.kind, this.g.quaternion));
+      world.effects.push(new Burst(x, y + .4, z, '#c9b48a', 5, .4));
+      logMsg('It rolls to a stop and lies there.');
     } else world.effects.push(new Burst(x, y + .4, z, '#c9b48a', 6, .5));
   }
   dispose() { scene.remove(this.g); }
