@@ -1183,7 +1183,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c85';
+const BUILD = 'c86';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -1604,7 +1604,20 @@ scene.add = function (...os) {
 const skyRig = new THREE.Group(); skyRig.userData.flat = true; scene.add(skyRig);
 const renderer = new THREE.WebGLRenderer({ antialias: !MOBILE, powerPreference: 'high-performance', stencil: false });
 renderer.setPixelRatio(Q.dpr);
-renderer.setSize(innerWidth, innerHeight);
+// THE THIRD ARGUMENT, AND IT IS THE WHOLE OF THE BLACK BAND.
+// setSize's updateStyle defaults to TRUE, so this one call -- the only one in the file that
+// omitted it -- wrote `style.width:462px; style.height:932px` INLINE on the canvas, once, at
+// startup. An inline style beats every stylesheet rule there is, so from that line onward the
+// lens was nailed to 932 and NOTHING in the CSS could move it. inset:0, 100vh, 100lvh,
+// max(), --lensH: four builds of them, and the band measured 179 device pixels in every
+// screenshot of every one, because none of them was ever being applied. His c85 panel is what
+// says it out loud -- `lensH 1002px` and `cv 0..932` on the same card, the rule and the
+// element disagreeing, which only an inline style can do.
+// Every other setSize in this file passes false because the CSS owns the box; this one now
+// does too, and the style properties are cleared in case anything else ever writes them.
+renderer.setSize(innerWidth, innerHeight, false);
+renderer.domElement.style.width = '';
+renderer.domElement.style.height = '';
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -13835,7 +13848,7 @@ let _over = 0, _gap = 0;
 // THE BAND, MADE TO NAME ITSELF. It answered: magenta, so it is uncovered page and the lens
 // really is short. Kept on for one more build as the check on the fix -- no magenta anywhere
 // means the lens now reaches the bottom. The hairlines have said what they had to say.
-const BAND = 1, BANDMARKS = 0;
+const BAND = 0, BANDMARKS = 0;
 const _marks = {};
 function bandMark(id, col, y) {
   if (!BANDMARKS) return;
