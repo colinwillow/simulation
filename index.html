@@ -236,6 +236,16 @@
   [hidden]{display:none!important}
   #scrim{position:fixed;left:0;right:0;top:0;height:300px;z-index:1;pointer-events:none;
     background:linear-gradient(rgba(4,8,16,.62),rgba(4,8,16,.28) 55%,rgba(4,8,16,0))}
+  /* HOW MUCH OF IT IS STANDING. Not a timer -- the fraction of the building that is in one
+     piece, so it falls when it is shot and climbs while he works, and two people pulling
+     against each other read on the one meter. */
+  #fixbar{position:fixed;left:50%;transform:translateX(-50%);z-index:3;pointer-events:none;
+    bottom:calc(178px + env(safe-area-inset-bottom) + var(--uib,0px));
+    width:min(210px,52vw);height:5px;border-radius:3px;background:rgba(8,14,24,.5);
+    box-shadow:0 0 0 1px rgba(240,235,220,.2)}
+  #fixbar i{display:block;height:100%;width:0;border-radius:3px;
+    background:linear-gradient(90deg,#7fd8ff,#bfe8c0);transition:width .16s linear}
+  #fixbar.on i{background:linear-gradient(90deg,#bfe8ff,#ffe0a8);box-shadow:0 0 9px rgba(190,230,255,.8)}
   #scrimB{position:fixed;left:0;right:0;bottom:0;height:190px;z-index:1;pointer-events:none;
     background:linear-gradient(rgba(4,8,16,0),rgba(4,8,16,.5))}
   #hud{position:fixed;left:calc(16px + env(safe-area-inset-left));top:calc(14px + env(safe-area-inset-top) + var(--uit,0px));pointer-events:none;z-index:2;text-shadow:0 1px 5px rgba(0,0,0,.95)}
@@ -1262,7 +1272,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd07';
+const BUILD = 'd08';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -9417,18 +9427,11 @@ function populate() {
     if (!bp || Math.hypot(q.x - bp.x, q.z - bp.z) > 30) cp = q;
   }
   if (cp) { world.camp = new Campfire(cp.x, cp.z); world.structures.push(world.camp); }
-  // THE TEST HUT, next to the camp so it is the first thing he walks past. It is here to be
-  // shot at: it is the parts-list structure standing in for whatever gets piped in later, and
-  // the only way to know whether taking a building apart and putting it back is any fun is to
-  // have one to take apart.
-  if (cp) {
-    const hp = randomLand(1.3, 6, .45, 400, 5);
-    const q = (hp && Math.hypot(hp.x - cp.x, hp.z - cp.z) < 90) ? hp : cp;
-    const hx = q.x + 13, hz = q.z + 4;
-    if (isLand(hx, hz) && height(hx, hz) > SEA + 1.5) {
-      world.structures.push(new Hut(hx, hz, Math.atan2(cp.x - hx, cp.z - hz)));
-    }
-  }
+  // The test hut goes up in placeHut(), below the class that builds it -- populate() runs at
+  // module level long before `class Hut` is evaluated, and a class is not hoisted the way a
+  // function is. `Cannot access 'Hut' before initialization', and the whole file after it
+  // dead. That is the eighth time this exact thing has been done in here and it is why
+  // check:intro exists.
   // The ship, on the berth found above. Its facing is off the terrain too -- turned to look
   // back toward the middle of the island -- so nothing about where it sits or which way it
   // points changes between one load and the next.
@@ -11818,7 +11821,7 @@ class Hut {
     this.heading = heading || 0;
     this.g = new THREE.Group(); this.g.position.copy(this.pos);
     alignTo(this.g, x, z, 1); this.g.rotateY(this.heading); scene.add(this.g);
-    this.parts = []; this.fixing = 0; this.fixT = 0;
+    this.parts = []; this.working = 0; this.fixT = 0;
     this.build();
   }
   // Every part is registered the same way, whatever shape it is: put it in the group, then
@@ -11953,16 +11956,14 @@ class Hut {
         }
       }
     }
-    if (this.fixing > 0) {
-      // Walking away is how you stop, as much as tapping again is. Holding a button down for
-      // the length of the job is the thing this is written to avoid.
-      if (Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) > HUT.reach + 2.5) {
-        this.fixing = 0; return;
-      }
-      this.fixing -= dt;
-      this.fixT -= dt;
-      if (this.fixT <= 0) { this.fixT = HUT.each; this.putOneBack(); }
-    }
+    if (this.working > 0) this.working -= dt;
+  }
+  // Called every frame the thumb is down and he is close enough. Nothing is latched: stop
+  // holding and it stops, which is the whole gesture.
+  repair(dt) {
+    this.working = .25;
+    this.fixT -= dt;
+    if (this.fixT <= 0) { this.fixT = HUT.each; this.putOneBack(); }
   }
   down() { let n = 0; for (const p of this.parts) if (p.state === 1 || p.state === 2) n++; return n; }
   // The one lying furthest from where it belongs goes first: the yard tidies itself from the
@@ -11975,7 +11976,7 @@ class Hut {
       const d = Math.hypot(c.x - p.m.position.x, c.z - p.m.position.z);
       if (d > bd) { bd = d; best = p; }
     }
-    if (!best) { this.fixing = 0; logMsg('It is whole again.'); return; }
+    if (!best) { logMsg('It is whole again.'); return; }
     best.state = 3; best.t = 0;
     best.from = best.m.position.clone();
     best.to = this.chartOf(best.home.p);
@@ -11986,8 +11987,11 @@ class Hut {
 // Standing near one with pieces on the ground is an offer to put them back. It is a tap
 // rather than a hold: a hold is a thumb pinned to the glass for as long as the job takes, and
 // the job is meant to take a while. Tap again, or walk off, and he stops.
+placeHut();      // after the class, not inside populate() -- see the note where it used to be
+const FIX = { hut: null, el: null, bar: null };
 function repairOffer() {
   const p = player;
+  FIX.hut = null;
   if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.carry || p.swim > .5) return;
   let best = null, bd = HUT.reach;
   for (const st of world.structures) {
@@ -11996,8 +12000,36 @@ function repairOffer() {
     if (d < bd) { bd = d; best = st; }
   }
   if (!best) return;
-  if (best.fixing > 0) offerAct({ icon: 'fix', label: 'STOP', run: () => { best.fixing = 0; } });
-  else offerAct({ icon: 'fix', label: 'REPAIR', run: () => { best.fixing = 1e9; best.fixT = .15; logMsg('He starts putting it back together.'); } });
+  FIX.hut = best;
+  // HELD, NOT TOGGLED, and he was right about it. A hold is what the gesture MEANS -- you are
+  // doing a thing for as long as you keep doing it, and the moment you stop it stops -- and it
+  // is the only version of this that survives somebody else knocking the wall down faster than
+  // you can put it up, which is where he is going with it.
+  offerAct({ icon: 'fix', label: 'HOLD TO FIX', hold: dt => best.repair(dt) });
+}
+// Next to the camp, so it is the first thing he walks past. It is here to be shot at: the
+// parts-list structure standing in for whatever gets piped in later, and the only way to know
+// whether taking a building apart and putting it back is any fun is to have one to take apart.
+function placeHut() {
+  const cp = world.camp; if (!cp) return;
+  const hx = cp.pos.x + 13, hz = cp.pos.z + 4;
+  if (!isLand(hx, hz) || height(hx, hz) < SEA + 1.5) return;
+  world.structures.push(new Hut(hx, hz, Math.atan2(cp.pos.x - hx, cp.pos.z - hz)));
+}
+// The bar. Not a timer: the fraction of the building that is standing, so it falls when it is
+// shot and climbs while he works, and two people pulling against each other read on one meter.
+function fixBar() {
+  if (!FIX.el) {
+    FIX.el = document.createElement('div'); FIX.el.id = 'fixbar'; FIX.el.hidden = true;
+    FIX.bar = document.createElement('i'); FIX.el.appendChild(FIX.bar);
+    document.body.appendChild(FIX.el);
+  }
+  const h = FIX.hut;
+  if (!h) { if (!FIX.el.hidden) FIX.el.hidden = true; return; }
+  if (FIX.el.hidden) FIX.el.hidden = false;
+  const k = 1 - h.down() / Math.max(1, h.parts.length);
+  FIX.bar.style.width = (k * 100).toFixed(1) + '%';
+  FIX.el.classList.toggle('on', h.working > 0);
 }
 class ShipBeacon {
   constructor(x, z) {
@@ -13408,7 +13440,7 @@ function bindStick(el, out, onTap, onFlick, rel) {
   };
   el.addEventListener('pointerdown', e => { id = e.pointerId; t0 = performance.now();
     ox = e.clientX; oy = e.clientY;
-    el.setPointerCapture(id); el.classList.add('act'); set(e.clientX, e.clientY);
+    el.setPointerCapture(id); out.down = 1; el.classList.add('act'); set(e.clientX, e.clientY);
     far = Math.hypot(out.x, out.y);     // counted from the first frame, not only from the first MOVE
     e.stopPropagation(); e.preventDefault(); });
   el.addEventListener('pointermove', e => { if (e.pointerId !== id) return; set(e.clientX, e.clientY); far = Math.max(far, Math.hypot(out.x, out.y)); e.stopPropagation(); });
@@ -13419,15 +13451,21 @@ function bindStick(el, out, onTap, onFlick, rel) {
     // A tap can be a little sloppy now, because nothing else lives down here: the trigger is
     // at .80 and needs holding, so there is a wide dead band between a tap and a shot.
     if (onTap && far < .42 && held < 260) onTap();
-    id = null; out.x = out.y = 0; knob.style.transform = 'translate(0,0)'; el.classList.remove('act'); e.stopPropagation();
+    id = null; out.down = 0; out.x = out.y = 0; knob.style.transform = 'translate(0,0)'; el.classList.remove('act'); e.stopPropagation();
   };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
+  // Whether the pad is under a thumb right now. A tap is a gesture; a HOLD is a state, and
+  // something that runs for as long as the thumb is down has to be able to ask.
 }
 bindStick(document.getElementById('stkL'), stick.L, null, flickRoll);
 // A tap is the interact button when there is something to interact with, and the jump
 // otherwise. On foot with nothing in reach it behaves exactly as it always did.
 bindStick(document.getElementById('stkR'), stick.R, () => {
-  if (ACT.now) { const a = ACT.now; ACT.now = null; showAct(); a.run(); }
+  // A hold-only offer has no run: a tap on it is simply a very short hold, and the frame
+  // loop has already done that much work. Consuming it here would clear the prompt out from
+  // under a thumb that is still down.
+  if (ACT.now && ACT.now.run) { const a = ACT.now; ACT.now = null; showAct(); a.run(); }
+  else if (ACT.now) { /* held, not tapped */ }
   else if (!player.aboard) player.jump = 1;
 }, null, 1);          // relative: a tap on it is a tap, wherever on the pad it lands
 const keys = {};
@@ -15303,6 +15341,9 @@ function frame(now) {
   updateSky();
   ACT.now = null;                          // whatever is in reach re-offers itself below
   carryOffer(); netOffer(); repairOffer();   // first, so the ship's own offer wins where they overlap
+  // A held offer is fed every frame the thumb is down. Nothing latches: let go and it stops.
+  if (ACT.now && ACT.now.hold && stick.R.down) ACT.now.hold(dt);
+  fixBar();
   for (const e of world.plants) if (e.alive) e.update(dt);
   for (const e of world.structures) if (e.alive) e.update(dt);
   moodEase(dt);
