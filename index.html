@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd56';
+const BUILD = 'd57';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -4717,6 +4717,27 @@ const MODEL = {
 // the sky. A fifth is the number for foliage and creatures -- small, busy shapes standing on
 // lit ground -- and it is not the number for a dome or a mast. The island's own growing
 // things stay at .2, where they were tuned; the things somebody BUILT go to half.
+// MODELS THAT ARRIVE UPSIDE DOWN, and it is exactly the three mountains -- not the whole
+// pack, which is worth saying because the trees, the crystals and the shard are all the right
+// way up and flipping them would break them. Measured as a radius profile from base to
+// summit, in eight slices:
+//
+//   sp_mountain01   69  70  92 118 147 134 153 217     widest at the SUMMIT
+//   sp_mountain02   31  64  82 110 119 163 210 244     eight times wider at the top
+//   sp_mountain03   35 128 108 103  92 123 105 124     standing on a 35-unit foot
+//   sp_tree01      130 115  84  61  47  38  31  28     correct: a trunk under a canopy
+//   sp_crystal02    47  40  66  47  46  36  21  12     correct: a shard tapering to a point
+//   sp_rock07       82  55  66  81  56  52  51  51     correct: base-heavy
+//
+// A cone that is widest where its peak should be is an upside-down cone, and 01 is also the
+// one whose triangles were wound inward (d49) -- both are what a mesh flipped on export looks
+// like. Turned about X here rather than at every placement, so the bounds are measured after
+// the turn and everything downstream -- the collider, the sink, the merge -- sees it upright.
+const MODEL_FLIP = {
+  'models/sp_mountain01.glb': [Math.PI, 0, 0],
+  'models/sp_mountain02.glb': [Math.PI, 0, 0],
+  'models/sp_mountain03.glb': [Math.PI, 0, 0],
+};
 const MODEL_LIFT = {
   'models/alien_ship_orange.glb': .5,
   'models/space_base.glb': .5,
@@ -5014,6 +5035,10 @@ function fixWinding(root, url) {
   });
 }
 function prepModel(root, url) {
+  {
+    const f = url && MODEL_FLIP[url];
+    if (f) { root.rotation.set(f[0], f[1], f[2]); root.updateMatrixWorld(true); }
+  }
   fixWinding(root, url);
   let saved = 0; const seen = new Set();
   const lift = (url && MODEL_LIFT[url] != null) ? MODEL_LIFT[url] : MODEL.ambientLift;
@@ -11024,6 +11049,7 @@ SKY.day  = { top: new THREE.Color(0x070a24), mid: new THREE.Color(0x142a60), low
 // it outright, and the plate goes on doing the one job it is good at: the band at and below
 // the waterline, where the HDRI is faded out and the smoothstep never reaches.
 SKY.envK = 1;
+SKY.solo = null;                  // null | 'env' | 'plate' | 'off' -- see updateSky
 SKY.space = col('#04050e');       // what the dome fades to once you are outside the air
 const tmpC = { top: new THREE.Color(), mid: new THREE.Color(), low: new THREE.Color(), fog: new THREE.Color(), hs: new THREE.Color(), hg: new THREE.Color(), sun: new THREE.Color() };
 const tmpG = new THREE.Color();
@@ -11145,12 +11171,17 @@ function updateSky() {
   // the one thing that composition cannot survive.
   const spaceK = INTRO.on ? 1 : smooth(PLANET.R * .35, PLANET.R * 1.5, camUp);
   if (spaceK > .001) for (const k of ['top', 'mid', 'low']) tmpC[k].lerp(SKY.space, spaceK);
-  skyUni.uEnvK.value = SKY.envK * LOOK.env * (1 - spaceK) * (ENV.map ? 1 : 0);
+  // SOLO, so a seam can be pinned to a layer instead of argued about. isle.sky('env') shows
+  // the panorama alone, isle.sky('plate') the plate alone, isle.sky('off') neither -- one
+  // screenshot each and whichever one carries the seam owns it. isle.sky() puts it back.
+  const soloE = SKY.solo == null ? 1 : (SKY.solo === 'env' ? 1 : 0);
+  const soloP = SKY.solo == null ? 1 : (SKY.solo === 'plate' ? 1 : 0);
+  skyUni.uEnvK.value = SKY.envK * LOOK.env * (1 - spaceK) * (ENV.map ? 1 : 0) * soloE;
   // The plate stays out at altitude the way the panorama does not: out there it IS the sky,
   // and it is what the title screen has behind the planet.
   // No boost past 1: a mix weight over one EXTRAPOLATES away from the sky underneath rather
   // than covering more of it, which is a different picture and never the one wanted.
-  skyUni.uPlateK.value = Math.min(1, LOOK.plate * PLATE.on);
+  skyUni.uPlateK.value = Math.min(1, LOOK.plate * PLATE.on) * soloP;
   skyUni.uPlateH.value = LOOK.plateH; skyUni.uSpace.value = spaceK;
   // The bodies dim at noon and never leave. Same reasoning as the stars, which keep a third
   // of themselves through the day: thin air, and it is the cheapest thing in the file that
@@ -12918,7 +12949,9 @@ function exportList() {
   if (world.lander && seen.indexOf('lander') < 0) seen.push('lander');
   return seen;
 }
-window.isle = { player, world, export: exportSite, exportList, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+// isle.sky('env' | 'plate' | 'off') to see one layer at a time; isle.sky() to put it back.
+function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ? m : null; return 'sky: ' + (SKY.solo || 'both') + ' (env map ' + (ENV.map ? 'loaded' : 'MISSING') + ')'; }
+window.isle = { player, world, export: exportSite, exportList, sky: skySolo, env: ENV, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
@@ -17255,7 +17288,11 @@ function updateHUD() {
     // how much plate is being asked for, whether the texture arrived, and the two terms that
     // open its roll-off. If plate reads 0.00 the image has not loaded; if space and high are
     // both near 0 while the camera is high, the altitude terms are what is wrong.
-    `plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}<br>` +
+    // env 0.00 with a url loaded means the PANORAMA IS NOT IN THE SKY and everything up there
+    // is the plate -- which is a portrait image tiled three times round the horizon and has
+    // three hard seams of its own. That is the first thing to read when a seam is reported.
+    `env ${skyUni.uEnvK.value.toFixed(2)} map ${ENV.map ? 1 : 0} \u00b7 plate ${skyUni.uPlateK.value.toFixed(2)} on ${PLATE.on} rep ${skyUni.uPlateRep.value}<br>` +
+    `space ${skyUni.uSpace.value.toFixed(2)} high ${skyUni.uHigh.value.toFixed(2)}<br>` +
     `centre of frame: ${lookingAt()}`;
   {   // his health, only while it is less than whole
     const el = _hpEl || (_hpEl = document.getElementById('hp'));
