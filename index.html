@@ -387,7 +387,13 @@
      the key underneath, which has capture. */
   /* The key branches: two more circles come out of it, matching it, so the three read as one
      control opening rather than a menu arriving. They spread as they appear. */
-  #wrack{display:flex;flex-direction:row;gap:14px;align-items:center;pointer-events:none}
+  /* AN ARC, NOT A ROW. A row of four 66px slots is over three hundred pixels wide and the key
+     it opens from sits 166 in from the right edge, so the far end simply left the screen. The
+     rack is a quarter turn round the key now: zero-sized, anchored on the key's own centre,
+     and each slot placed on it from JS. Every slot is then the same short slide from the
+     thumb instead of the last one being a reach across the whole phone. */
+  #wrack{position:absolute;left:31px;bottom:31px;width:0;height:0;pointer-events:none}
+  #wrack .wslot{position:absolute}
   #wrack .wslot{animation:rackin .17s cubic-bezier(.2,1.3,.4,1) both}
   #wrack .wslot:first-child{animation-name:rackinL}
   #wrack .wslot:last-child{animation-name:rackinR}
@@ -1566,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd68';
+const BUILD = 'd69';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -16122,6 +16128,22 @@ const flyB = document.getElementById('flyB'), freeB = document.getElementById('f
 const armB = document.getElementById('armB'), reticEl = document.getElementById('retic');
 const wdock = document.getElementById('wdock'), wrack = document.getElementById('wrack');
 const armIco = document.getElementById('armIco'), armLbl = document.getElementById('armLbl');
+// Where the slots sit: `r` out from the key, swept from just past straight up round toward
+// the left. Up is where the thumb is already going when it holds the key, and left is into
+// the screen rather than off the edge of it -- so the sweep opens away from the hand. At four
+// weapons the centres are 68px apart on a 66px slot, which is as many as this arc holds
+// before they touch; a fifth wants a bigger `r`.
+const WARC = { r: 124, from: 5, to: 100, slot: 66 };
+function layRack() {
+  const n = wrack.children.length; if (!n) return;
+  const span = Math.min(WARC.to - WARC.from, 34 * (n - 1));
+  for (let i = 0; i < n; i++) {
+    const a = (WARC.from + (n > 1 ? span * i / (n - 1) : 0)) * Math.PI / 180;
+    const el2 = wrack.children[i], h = WARC.slot * .5;
+    el2.style.left = (-Math.sin(a) * WARC.r - h) + 'px';
+    el2.style.top = (-Math.cos(a) * WARC.r - h) + 'px';
+  }
+}
 // The rack is built from WEAPONS, in its order, so a third weapon is one more entry there
 // and nothing here.
 for (const k in WEAPONS) {
@@ -16130,6 +16152,7 @@ for (const k in WEAPONS) {
   b.innerHTML = '<span class="wico">' + WEAPONS[k].icon + '</span><span>' + WEAPONS[k].label + '</span>';
   wrack.appendChild(b);                     // no listener: the gesture belongs to the key below
 }
+layRack();
 function paintWeapon() {
   const w = WEAPONS[player.wpn];
   armIco.innerHTML = w.icon; armLbl.textContent = w.label;
@@ -16191,16 +16214,20 @@ function toggleArm() {
   // where letting go does nothing and you cannot tell why. Nearest column, generously, so
   // there is no dead gap between the circles to lose a choice in, and no upper bound: a thumb
   // sliding off the top of a phone is still aiming at the thing it slid toward.
+  // TRUE DISTANCE, because they are on an arc now. It was the horizontal gap alone, which is
+  // the right test for a row and picks the wrong slot on a curve -- two of them can share an
+  // x. Sliding back down onto the key itself keeps whatever was already marked.
   const hit = (x, y) => {
     if (wrack.hidden) return null;
-    const r = wrack.getBoundingClientRect();
-    if (y > r.bottom + 46) return null;             // back down over the key: keep what we had
+    const kb = armB.getBoundingClientRect();
+    if (Math.hypot(x - (kb.left + kb.width / 2), y - (kb.top + kb.height / 2)) < kb.width * .62) return null;
     let best = null, bd = 1e9;
     for (const s of wrack.children) {
-      const b = s.getBoundingClientRect(), d = Math.abs(x - (b.left + b.width / 2));
+      const b = s.getBoundingClientRect();
+      const d = Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2));
       if (d < bd) { bd = d; best = s; }
     }
-    return bd < 78 ? best : null;
+    return bd < 62 ? best : null;
   };
   const mark = s => {
     if (s === over) return;
