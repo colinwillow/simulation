@@ -121,8 +121,12 @@
      c72 did half of this and stretched the picture, because it grew the BUFFER while the CSS
      still held the element at 100%. syncSize measures the element itself now, so the two
      cannot disagree again whatever either of them is. */
+  /* max(), not the newer unit. lvh is SUPPOSED to be the large viewport and so is iOS's vh,
+     and if they disagree the bigger one is the one that reaches the bottom of the glass --
+     switching to lvh on faith is how a fix gets undone by the browser agreeing to a different
+     number. Whichever is larger, plus whatever lensProbe() measures still missing. */
   :root{--lvh:100vh}
-  @supports (height:100lvh){:root{--lvh:100lvh}}
+  @supports (height:100lvh){:root{--lvh:max(100vh,100lvh)}}
   body > canvas{position:fixed;left:0;top:0;width:100%;height:var(--lvh,100vh);display:block;z-index:0;touch-action:none}
   /* An id rule with a display beats the UA sheet's [hidden], so panels that set display
      could never hide. This has now cost two of them; make it impossible for the next one. */
@@ -1136,7 +1140,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c81';
+const BUILD = 'c82';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -13774,11 +13778,35 @@ function tap(cx, cy) {
 // last one, which strands the canvas at the wrong size. So this is idempotent and the
 // frame loop calls it too: whatever the events do, the next frame puts it right.
 let _vw = 0, _vh = 0;
-function syncSize() {
+// WHERE THE LENS ACTUALLY ENDS, AND WHERE THE SCREEN ACTUALLY ENDS. Every pass at the black
+// band has picked one of the browser's viewport numbers and trusted it -- inset:0, then 100vh,
+// then lvh -- and each time the band came back, because on this phone those numbers do not
+// agree and there is no way to know from here which one is the glass. So stop choosing. The
+// canvas has a bounding rect and the visual viewport has a bottom edge; if the first is above
+// the second there is a gap, and the gap is a number, in pixels, measured on his phone. Grow
+// the canvas by exactly that and it is closed, whatever the reason for it was.
+// It only ever grows, and only on the events that can change it -- a forced layout on every
+// animation frame is not free. `over` is what the measurement bought, kept so it survives a
+// re-measure that happens to catch the bar mid-slide.
+let _over = 0, _gap = 0;
+function lensProbe() {
+  const cvEl = renderer.domElement, vv = window.visualViewport;
+  const r = cvEl.getBoundingClientRect();
+  const visB = vv ? vv.offsetTop + vv.height : innerHeight;
+  const gap = visB - r.bottom;
+  _gap = Math.round(gap);
+  if (gap > .5) {
+    _over = Math.ceil(_over + gap);
+    cvEl.style.height = 'calc(var(--lvh, 100vh) + ' + _over + 'px)';
+  }
+  return gap;
+}
+function syncSize(probe) {
   // visualViewport is what is ACTUALLY on screen; innerHeight is what the layout thinks, and
   // on a phone the two part company every time the URL bar slides. Reading the wrong one gives
   // a camera whose aspect does not match the box its picture is shown in.
   const vv = window.visualViewport;
+  if (probe) lensProbe();
   // ASK THE ELEMENT. Every version of this bug has come from computing the buffer out of some
   // window metric while CSS sized the element out of a different one -- 462x1074 into a
   // 462x933 box, and the picture stretched with the camera on the wrong aspect. The canvas is
@@ -13815,14 +13843,19 @@ function syncSize() {
 }
 addEventListener('resize', syncSize);
 addEventListener('orientationchange', syncSize);
+// The same schedule the head script runs on, for the same reason: a navigation lands with the
+// viewport mid-flight and iOS does not reliably fire a resize when it settles, so one probe at
+// load is how a wrong number gets frozen in for the life of the page.
+[0, 120, 400, 900, 1800, 3200].forEach(ms => setTimeout(() => syncSize(1), ms));
+addEventListener('pageshow', () => syncSize(1));
 if (window.visualViewport) {
   // The studio splash sizes its own canvas off cv.clientWidth/Height and re-fits on `resize`
   // and nothing else -- it is a lifted block and it predates any of this. Now that its box
   // follows the visual viewport, the one thing it still needs is to be told. syncSize's own
   // early-out makes the second pass free, and dispatching a window event cannot come back
   // round as a visualViewport one, so there is no loop here.
-  visualViewport.addEventListener('resize', () => { syncSize(); dispatchEvent(new Event('resize')); });
-  visualViewport.addEventListener('scroll', syncSize);
+  visualViewport.addEventListener('resize', () => { syncSize(1); dispatchEvent(new Event('resize')); });
+  visualViewport.addEventListener('scroll', syncSize);   // the Event argument is the probe flag
 }
 
 // ---------- HUD ----------
@@ -14276,7 +14309,7 @@ function updateHUD() {
       + `win ${innerWidth}x${innerHeight} vis ${window.visualViewport ? Math.round(visualViewport.width) + 'x' + Math.round(visualViewport.height) : '-'}`
       + ` doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}<br>`
       + `scr ${typeof screen !== 'undefined' ? screen.width + 'x' + screen.height : '-'}`
-      + ` lvh ${_lvh()}<br>`
+      + ` lvh ${_lvh()}+${_over} gap ${_gap}<br>`
       + `cv ${cv.clientWidth}x${cv.clientHeight} buf ${_vw}x${_vh} chrome ${_uiInset('--uit')}/${_uiInset('--uib')}`
       + ` far ${camera.far | 0} sky ${(900 * skyRig.scale.x) | 0}`;
   }
