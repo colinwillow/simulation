@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd55';
+const BUILD = 'd56';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -9216,13 +9216,17 @@ const M_WORN = new THREE.MeshStandardMaterial({ color: col('#8a6c4c'), roughness
   transparent: true, opacity: .82, alphaMap: wornTex, depthWrite: false,
   polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
 const _gq1 = new THREE.Quaternion(), _gq2 = new THREE.Quaternion(), _gx = new THREE.Vector3(1, 0, 0);
+// EVERY SITE THAT GETS BUILT, kept so it can be handed back out. `bin` is the site's parts in
+// CHART space -- flat, before warpGeo bends them round the planet -- which is the only version
+// of them anybody would want in a modelling package.
+const SITES = [];
 function siteAt(x, z, yaw) {
   const bin = [], base = groundY(x, z), cy = Math.cos(yaw), sy = Math.sin(yaw);
   const q = new THREE.Quaternion().setFromUnitVectors(_plY, normalAt(x, z).lerp(_plY, .5).normalize())
     .multiply(new THREE.Quaternion().setFromAxisAngle(_plY, yaw));
   const root = new THREE.Matrix4().compose(new THREE.Vector3(x, base, z), q, new THREE.Vector3(1, 1, 1));
   const site = {
-    x, z, base, bin,
+    x, z, base, bin, root,
     put(geo, mat, sx, sy2, sz, px, py, pz, rx = 0, ry = 0, rz = 0) {
       const m = mesh(geo, mat, sx, sy2, sz, px, py, pz);
       m.rotation.set(rx, ry, rz); m.updateMatrix();
@@ -9261,6 +9265,7 @@ function siteAt(x, z, yaw) {
       return m;
     },
     done() {
+      SITES.push(site);
       const g = new THREE.Group(); g.userData.flat = true;
       for (const m of mergeBin(bin)) { warpGeo(m.geometry); g.add(m); }
       scene.add(g); return g;
@@ -9272,7 +9277,7 @@ function siteAt(x, z, yaw) {
 // drying rack. It goes in pasture, because pasture is the only ground on the island flat
 // and open enough that somebody would have bothered.
 function buildFarm(x, z, yaw) {
-  const S = siteAt(x, z, yaw), rows = 5, rowLen = 17, gap = 2.7;
+  const S = siteAt(x, z, yaw), rows = 5, rowLen = 17, gap = 2.7; S.kind = 'farm';
   clearGrass(x, z, 15);                   // it is tilled ground; nothing is growing in it
   for (let i = 0; i < 70; i++) {          // and the bare earth between the ridges
     const a = rnd(Math.PI * 2), r = Math.sqrt(Math.random()) * 13, s = rnd(2, 4.5);
@@ -9331,7 +9336,7 @@ function buildFarm(x, z, yaw) {
 // A ring of raised stones on high open ground, one of them long since over. Nobody on the
 // island claims them and nothing explains them, which is the point.
 function buildStones(x, z) {
-  const S = siteAt(x, z, rnd(Math.PI * 2)), n = 9, R = 10.5;
+  const S = siteAt(x, z, rnd(Math.PI * 2)), n = 9, R = 10.5; S.kind = 'stones';
   for (let i = 0; i < n; i++) {
     const a = i / n * Math.PI * 2, px = Math.cos(a) * R, pz = Math.sin(a) * R, hh = rnd(4.4, 7.2);
     if (i === 3) {
@@ -9354,7 +9359,7 @@ function buildStones(x, z) {
 // A ruin in the jungle: three walls of what was four, coursed stone gone ragged along the
 // top, and the floor of it gone back to rubble and moss.
 function buildRuin(x, z, yaw) {
-  const S = siteAt(x, z, yaw), hw = 9, hl = 7;
+  const S = siteAt(x, z, yaw), hw = 9, hl = 7; S.kind = 'ruin';
   const wall = (x0, z0, x1, z1, hMax) => {
     const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz), n = Math.max(2, Math.round(L / 1.5));
     const a = Math.atan2(dx, dz);
@@ -9384,7 +9389,7 @@ function buildRuin(x, z, yaw) {
 // ground between them walked bare. The one place on the island that reads as somewhere
 // people lived rather than somewhere one person worked.
 function buildHuddle(x, z, yaw) {
-  const S = siteAt(x, z, yaw), n = 4, R = 15.5;
+  const S = siteAt(x, z, yaw), n = 4, R = 15.5; S.kind = 'huddle';
   for (let i = 0; i < n; i++) {
     // not on a perfect circle, and not all the same way out from the middle
     const a = i / n * Math.PI * 2 + rnd(-.3, .3), d = R * rnd(.86, 1.14);
@@ -9507,6 +9512,7 @@ class Lander {
     const V = LANDER, R = V.R, B = V.belly;
     this.alive = true;
     const S = siteAt(x, z, yaw);
+    S.kind = 'lander';                    // the mothership, to everything that asks for it
     this.site = S;
     this.pos = new THREE.Vector3(x, S.base, z);
     clearGrass(x, z, V.legR + 8);
@@ -12858,7 +12864,61 @@ const RIG = {
   loadRig(g);
 })();
 world.player = player;
-window.isle = { player, world, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+// ---------- taking a piece of the world out to Blender ----------
+// Everything built in code goes through mergeBin and then warpGeo, which bakes the planet's
+// curve into the vertices -- correct on a 400-unit ball and useless as a model, since it
+// arrives in Blender bent. The site keeps its ORIGINAL bin, so the export merges that and
+// skips the warp: what comes out is the thing as it was drawn, flat, centred on the origin
+// with its feet on y=0, which is what you want to open.
+//
+// The exporter is 58 kB and is wanted about once a month, so it is fetched on demand rather
+// than shipped in the boot. r128's own, vendored from the same version the game runs.
+function withExporter(cb) {
+  if (THREE.GLTFExporter) return cb();
+  const s = document.createElement('script');
+  s.src = 'vendor/three/GLTFExporter.js';
+  s.onload = () => cb();
+  s.onerror = () => console.warn('[export] could not load vendor/three/GLTFExporter.js');
+  document.head.appendChild(s);
+}
+function exportSite(name) {
+  const key = String(name || '').toLowerCase();
+  const hit = SITES.filter(S => (S.kind || S.name || '').toLowerCase().indexOf(key) >= 0);
+  const S = hit[0] || (key === 'lander' || key === 'mothership' ? (world.lander && world.lander.site) : null);
+  if (!S || !S.bin || !S.bin.length) {
+    console.warn('[export] nothing called "' + name + '". Try one of: ' + exportList().join(', '));
+    return;
+  }
+  withExporter(() => {
+    const g = new THREE.Group(); g.name = key;
+    const parts = mergeBin(S.bin.map(it => ({ geo: it.geo, mat: it.mat, matrix: it.matrix })));
+    // Everything is in absolute island coordinates, so it would open several hundred units
+    // from the origin. Centred on its own footprint and stood on the floor instead -- baked
+    // into the geometry rather than put on a parent node, so it arrives at the origin in
+    // Blender and not inside a nested empty.
+    const bb = new THREE.Box3();
+    for (const m of parts) { m.geometry.computeBoundingBox(); bb.union(m.geometry.boundingBox); }
+    const cx = (bb.min.x + bb.max.x) * .5, cz = (bb.min.z + bb.max.z) * .5;
+    for (const m of parts) { m.geometry.translate(-cx, -bb.min.y, -cz); m.name = key + '_' + (m.material.name || 'part'); g.add(m); }
+    new THREE.GLTFExporter().parse(g, out => {
+      const blob = new Blob([out], { type: 'model/gltf-binary' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = key + '.glb';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      const sz = (bb.max.x - bb.min.x).toFixed(1) + ' x ' + (bb.max.y - bb.min.y).toFixed(1) + ' x ' + (bb.max.z - bb.min.z).toFixed(1);
+      console.info('[export] ' + key + '.glb -- ' + parts.length + ' meshes, ' + sz + ' units, ' + (blob.size / 1024 | 0) + ' kB');
+      logMsg('Exported ' + key + '.glb (' + sz + ' units).');
+    }, { binary: true, onlyVisible: false });
+  });
+}
+function exportList() {
+  const seen = [];
+  for (const S of SITES) { const n = S.kind || S.name; if (n && seen.indexOf(n) < 0) seen.push(n); }
+  if (world.lander && seen.indexOf('lander') < 0) seen.push('lander');
+  return seen;
+}
+window.isle = { player, world, export: exportSite, exportList, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
