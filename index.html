@@ -660,6 +660,12 @@ window._MAJIA_PATH = false;
 // other, grimmer thing. This is the cyan the title's own PRESS TO START is set in, so the
 // splash hands off to the title in the same key.
 window._MAJIA_INK = '#7fd8ff';
+// ...and the rest of the lockup with it. STUDIOS and its rule have their own defaults in the
+// block -- the studio's pink -- so recolouring only the wordmark left a cyan MAJIA over a pink
+// STUDIOS, which reads as two logos stacked rather than one mark. Both take the same override
+// the block already provides.
+window._MAJIA_SUB = 'rgba(168,228,248,0.92)';
+window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
 </script>
 <!-- ══ STUDIO MAJIA — animated boot splash (plays once on top, then fades to the title) ══ -->
 <div id="majia-splash" style="position:fixed;inset:0;z-index:100200;transition:opacity .65s ease;">
@@ -1523,7 +1529,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd34';
+const BUILD = 'd35';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
