@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd62';
+const BUILD = 'd63';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -9826,13 +9826,6 @@ function buildDomeHut(x, z, yaw) {
     S.put(G.box, M.domeSteel, .42, .42, .5, px, py, dz, 0, 0, a - Math.PI / 2);
   }
   S.put(G.box, M.domeSteel, D.door.w + 1.0, .22, .6, 0, .11, dz);
-  for (let i = 0; i < 7; i++) {
-    const px = (i / 6 - .5) * (D.door.w - .18);
-    const ph = dh * .92 - Math.abs(i - 3) * .07;
-    S.put(G.box, M.domeWood, (D.door.w - .18) / 7 * .94, ph, .22, px, ph * .5 + .12, dz - .04);
-  }
-  S.put(G.cyl, M.domeSteel, .09, .5, .09, dw - .55, dh * .46, dz + .16, Math.PI / 2, 0, 0);
-  S.put(G.cyl, M.domeDark, .16, .12, .16, dw - .55, dh * .46, dz + .1, Math.PI / 2, 0, 0);
   // ---- the portholes, aimed down the shell's own normal so nothing has to be eyeballed ----
   // A porthole is three discs down the shell's own normal -- an orange bezel, a dark rim and
   // the glass -- and `strut` aims them, so nothing here has to be turned by hand.
@@ -9853,6 +9846,12 @@ function buildDomeHut(x, z, yaw) {
   wallPort(2.1, 2.05, 1.45); wallPort(2.1, -2.05, 1.45); wallPort(2.05, Math.PI, 1.2);
   wallPort(2.4, 1.15, .48); wallPort(2.4, -1.15, .48); wallPort(1.5, -.68, .32);
   capPort(.30, .95, .62); capPort(.34, -1.55, .52); capPort(.62, 2.5, .44); capPort(.5, -2.9, .34);
+  // ---- and an inside, since there is now a way in ----
+  // The shell is double-sided, so the far wall is there when you look back at it; what was
+  // missing is a floor that is not open ground and a reason to be in here after dark.
+  S.put(G.cyl, M.domeDark, R - .3, .12, R - .3, 0, .06, 0);
+  S.put(G.cyl, M.domeSteel, R - 2.2, .05, R - 2.2, 0, .13, 0);
+  S.put(G.cyl, M.domeGlass, .5, .18, .5, 0, D.wallH + D.capH * .74, 0);
   // ---- the skirt, the crates and the pipework at its foot ----
   S.put(G.cyl, M.domeCrate, R + .22, .5, R + .22, 0, .25, 0);
   S.put(G.cyl, M.domeSteel, R + .30, .16, R + .30, 0, .08, 0);
@@ -9876,8 +9875,74 @@ function buildDomeHut(x, z, yaw) {
     S.block(Math.sin(a) * R, Math.cos(a) * R, chord * 1.05, D.wallH + D.capH * .9);
   }
   S.done();
+  world.structures.push(new DomeDoor(S, D, dw, dh, dz, yaw));
   return { x, z };
 }
+// THE DOOR IS THE ONE PART THAT MOVES, so it is the one part that cannot be in the merge --
+// everything else in a site is baked into two or three static meshes and warped onto the
+// planet's curve at build time, which is exactly what you want for a wall and exactly what
+// you cannot do to a hinge.
+//
+// It hangs off its own pivot in CHART space: the group's position is the hinge, its
+// quaternion is the site's own footing turned by however far the door is open, and the
+// planet projection does the rest the same way it does for every other loose object. The
+// panels behind it were already left out -- the hole has been there since it was built -- so
+// opening it is genuinely walking through a wall rather than into a decal.
+const DDOOR = { swing: 2.05, rate: 2.6, reach: 4.2 };
+class DomeDoor {
+  constructor(S, D, dw, dh, dz, yaw) {
+    this.alive = true; this.open = 0; this.want = 0;
+    // The SAME footing siteAt gave the walls -- the ground's own normal, half-leaned back
+    // toward up, turned by the site's yaw. Built rather than borrowed because a site keeps its
+    // root as a matrix and this needs the rotation on its own; getting the yaw wrong here
+    // would hang the door on the far side of the building from its hole.
+    const q = new THREE.Quaternion().setFromUnitVectors(_plY, normalAt(S.x, S.z).lerp(_plY, .5).normalize())
+      .multiply(new THREE.Quaternion().setFromAxisAngle(_plY, yaw || 0));
+    this.q0 = new THREE.Quaternion().copy(q);
+    // the hinge, in the site's own frame, then out into the chart
+    const hx = -(dw + .1), hz = dz - .08;
+    const h = new THREE.Vector3(hx, 0, hz).applyQuaternion(q);
+    this.pos = new THREE.Vector3(S.x + h.x, S.base + h.y, S.z + h.z);
+    this.mid = new THREE.Vector3(S.x, S.base, S.z);
+    const g = this.g = new THREE.Group();
+    g.position.copy(this.pos); g.quaternion.copy(q);
+    scene.add(g);
+    const w = D.door.w - .1;
+    for (let i = 0; i < 7; i++) {
+      const ph = dh * .94 - Math.abs(i - 3) * .07;
+      g.add(mesh(G.box, M.domeWood, w / 7 * .96, ph, .2, (i + .5) * (w / 7), ph * .5 + .1, 0));
+    }
+    g.add(mesh(G.box, M.domeSteel, w, .16, .24, w * .5, dh * .22, 0));
+    g.add(mesh(G.box, M.domeSteel, w, .16, .24, w * .5, dh * .78, 0));
+    g.add(mesh(G.cyl, M.domeSteel, .09, .5, .09, w - .45, dh * .46, .14).rotateX(Math.PI / 2));
+    g.add(mesh(G.cyl, M.domeDark, .17, .12, .17, w - .45, dh * .46, .1).rotateX(Math.PI / 2));
+    g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    // Shut, it is a wall. The obstacle field is built once at placement and this is the one
+    // collider in the file that comes and goes, so it is added and removed rather than moved.
+    this.shutOb = null; this.bar(true);
+  }
+  bar(on) {
+    if (on && !this.shutOb) {
+      const f = new THREE.Vector3(0, 0, 1).applyQuaternion(this.q0);
+      const cx = this.mid.x + f.x * (DOME.R + .1), cz = this.mid.z + f.z * (DOME.R + .1);
+      this.shutOb = obAdd(cx, cz, 1.5, null, this.mid.y + DOME.door.h, 'dome:door');
+    } else if (!on && this.shutOb) { obRemove(this.shutOb); this.shutOb = null; }
+  }
+  update(dt) {
+    const p = player;
+    this.open = lerp(this.open, this.want, Math.min(1, dt * DDOOR.rate));
+    this.g.quaternion.copy(this.q0).multiply(_ddQ.setFromAxisAngle(_plY, -this.open * DDOOR.swing));
+    this.bar(this.open < .3);
+    if (ACT.now || INTRO.on || p.aboard || p.free || p.carry || p.roping) return;
+    if (Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) > DDOOR.reach) return;
+    offerAct({ icon: 'ship', label: this.want > .5 ? 'CLOSE' : 'OPEN', run: () => {
+      this.want = this.want > .5 ? 0 : 1;
+      logMsg(this.want ? 'The door swings out on its hinge.' : 'He pulls it to behind him.');
+    } });
+  }
+  dispose() { this.bar(false); scene.remove(this.g); }
+}
+const _ddQ = new THREE.Quaternion();
 function buildSites() {
   const out = [];
   const farm = siteSpot('steading', ['pasture'], 2.6, 10, .2, [15, 12, 9, 7, 5], out);
