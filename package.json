@@ -15,7 +15,8 @@
     "pack": "node tools/pack.js",
     "unpack": "node tools/unpack.js",
     "check:swirl": "node tools/swirl.js index.html",
-    "icons": "node tools/icons.js"
+    "icons": "node tools/icons.js",
+    "strip": "node tools/strip.js"
   },
   "devDependencies": {
     "@gltf-transform/cli": "^4.5.0",

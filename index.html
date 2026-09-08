@@ -1142,7 +1142,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c76';
+const BUILD = 'c77';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 const WS = W / 170;              // landform coords were authored at W=170
 const MAX = { tree: MOBILE ? 115 : 180, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
@@ -4035,7 +4035,12 @@ function applySkin(root, url) {
     if (!o.geometry || !o.geometry.attributes.uv) noUV++;
     for (const m of [].concat(o.material)) {
       if (!m || m.userData.noSkin) continue;
-      m.map = t; m.color.setRGB(1, 1, 1);
+      // Base colour forced to white ONLY when the material had no map of its own. With a
+      // texture already in the file, that factor is whatever was authored beside it and is
+      // none of our business; without one it is often doing the colouring by itself, and
+      // multiplying a skin by it would tint every skin the same.
+      if (!m.map) m.color.setRGB(1, 1, 1);
+      m.map = t;
       // AND THIS IS WHAT UNTICKING "MATERIALS" ACTUALLY COSTS. With no material in the file
       // three hands the mesh its glTF DEFAULT, and the spec's default is metalness 1,
       // roughness 1 -- a mirror. A base-colour map on a fully metallic surface has no diffuse
