@@ -1566,7 +1566,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd57';
+const BUILD = 'd58';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12951,7 +12951,11 @@ function exportList() {
 }
 // isle.sky('env' | 'plate' | 'off') to see one layer at a time; isle.sky() to put it back.
 function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ? m : null; return 'sky: ' + (SKY.solo || 'both') + ' (env map ' + (ENV.map ? 'loaded' : 'MISSING') + ')'; }
-window.isle = { player, world, export: exportSite, exportList, sky: skySolo, env: ENV, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, sky: skyUni, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
+// ONE KEY, ONE MEANING. `sky` was already the dome's uniform block, so adding a second `sky`
+// for the solo switch did not shadow it -- the LATER one in an object literal wins silently,
+// so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
+// isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
+window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD };   // a handle to poke at from the console — try isle.wx.force = 'storm'
 
 function loadRig(g) {
   attachRig(g, RIG, r => {
