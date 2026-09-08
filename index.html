@@ -1487,7 +1487,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd22';
+const BUILD = 'd23';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -3216,9 +3216,23 @@ function groundPatch(sh, patch) {
       // and the band itself is darkened, which is the ink.
       // One 3D value noise and one cell hash, nine sin() a fragment. It covers half the
       // screen; this is the budget it gets.
+      // THE BIG SQUARES. Value noise lives on an integer lattice, and a threshold across it
+      // draws that lattice: every patch edge ran along a grid line, and the cell hash on top
+      // was literally a checkerboard of 1.2-unit squares, each a random shade. So: the broad
+      // pattern is domain-warped before it is thresholded -- one extra noise sample, pushed
+      // along a diagonal, and no edge is straight or axis-aligned any more -- and the cell
+      // mottle is two lattices at different angles and scales laid over each other, whose
+      // overlap is an irregular mosaic of flagstones rather than a grid. Five sin() more a
+      // fragment, which is the cost of the ground not looking like graph paper.
       if (uGPatch > 0.002) {
-        float gp = gn3(vWPos.xz * 0.055);
-        float cell = gh3(floor(vWPos.xz * 0.85));
+        vec2 P = vWPos.xz * 0.055;
+        float w = gn3(P * 2.1 + vec2(17.0, 53.0));
+        P += (w - 0.5) * vec2(0.52, 0.36);
+        float gp = gn3(vec2(P.x * 0.866 - P.y * 0.5, P.x * 0.5 + P.y * 0.866));
+        vec2 q = vWPos.xz * 0.85;
+        vec2 qa = vec2(q.x * 0.906 - q.y * 0.423, q.x * 0.423 + q.y * 0.906);
+        vec2 qb = vec2(q.x * 0.766 + q.y * 0.643, -q.x * 0.643 + q.y * 0.766) * 1.31;
+        float cell = 0.5 * (gh3(floor(qa)) + gh3(floor(qb)));
         float band = smoothstep(0.44, 0.56, gp) - 0.5;
         diffuseColor.rgb *= 1.0 + uGPatch * (band * 0.30 + (cell - 0.5) * 0.13);
         float ink = 1.0 - smoothstep(0.0, 0.055, abs(gp - 0.5));
