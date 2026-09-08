@@ -1220,7 +1220,9 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c93';
+const BUILD = 'c94';
+// Whatever an earlier build left on these, put it back. The strip takes its colour from here.
+try { document.documentElement.style.background = '#070a13'; document.body.style.background = '#070a13'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
 // markup so that bumping BUILD is still the only edit a push needs.
 try { const _bt = document.getElementById('bldTag'); if (_bt) _bt.textContent = BUILD; } catch (e) { }
@@ -9412,7 +9414,15 @@ function renderPost() {
 // theme-color as well: which of the two iOS samples for that strip is not documented anywhere,
 // it costs nothing to set both, and they can only agree.
 let _tintAt = 0, _tintRow = null;
+// OFF. The window is laid out under the status bar now (safe 0/34), so the strip is at the TOP
+// and it is the status bar's own background -- and tinting it to the colour of the picture
+// painted the status bar bright purple. A dark strip with the clock in it is what every app on
+// the phone looks like; #070a13 was right all along and the tint was solving a problem that
+// re-adding the app had already removed. Both this and #edgeF are dead here, not deleted, so
+// there is one line to flip if this ever gets installed the old way again.
+const EDGE_TINT = 0;
 function edgeTint() {
+  if (!EDGE_TINT) return;
   if (_edgeGap <= 8) return;          // no strip to colour, and readPixels stalls the pipe
   const now = performance.now();
   if (now - _tintAt < 500) return;
@@ -14000,7 +14010,7 @@ function lensProbe() {
     // below it; zero means the view is laid out under the status bar at its real height, the
     // picture already reaches the bottom of the screen, and a fade there would be fifty-four
     // pixels of darkening for nothing. His re-added app reads 0/34, which is the good state.
-    _edgeGap = (g && _safeTop() > 4) ? g - (document.documentElement.clientHeight || innerHeight) : 0;
+    _edgeGap = (EDGE_TINT && g && _safeTop() > 4) ? g - (document.documentElement.clientHeight || innerHeight) : 0;
     if (_edgeF) _edgeF.hidden = !(_edgeGap > 8);
   }
   const r = cvEl.getBoundingClientRect();
