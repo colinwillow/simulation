@@ -1220,7 +1220,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c91';
+const BUILD = 'c92';
 // The build number, on every screen there is. It has to be set here rather than left in the
 // markup so that bumping BUILD is still the only edit a push needs.
 try { const _bt = document.getElementById('bldTag'); if (_bt) _bt.textContent = BUILD; } catch (e) { }
@@ -9413,6 +9413,7 @@ function renderPost() {
 // it costs nothing to set both, and they can only agree.
 let _tintAt = 0, _tintRow = null;
 function edgeTint() {
+  if (_edgeGap <= 8) return;          // no strip to colour, and readPixels stalls the pipe
   const now = performance.now();
   if (now - _tintAt < 500) return;
   _tintAt = now;
@@ -13921,7 +13922,8 @@ let _vw = 0, _vh = 0;
 // It only ever grows, and only on the events that can change it -- a forced layout on every
 // animation frame is not free. `over` is what the measurement bought, kept so it survives a
 // re-measure that happens to catch the bar mid-slide.
-let _over = 0, _gap = 0;
+let _over = 0, _gap = 0, _edgeGap = 0;
+const _edgeF = document.getElementById('edgeF');
 // THE BAND, MADE TO NAME ITSELF. It answered: magenta, so it is uncovered page and the lens
 // really is short. Kept on for one more build as the check on the fix -- no magenta anywhere
 // means the lens now reaches the bottom. The hairlines have said what they had to say.
@@ -13985,6 +13987,14 @@ function lensProbe() {
     // builds did and it never painted a pixel of it.
     const g = glassH();
     if (g) document.documentElement.style.setProperty('--lensH', g + 'px');
+    // AND THE FADE ONLY EXISTS WHERE THE STRIP DOES. glassH is the screen and clientHeight is
+    // what the page is allowed to paint; the difference is the window's strip. In Safari, or
+    // in a native wrapper where the WKWebView is pinned to the window's own bounds, there is
+    // no difference and no strip -- and then #edgeF would be fifty-four pixels of darkening
+    // over a picture that already reaches the bottom, which is a bug of its own. Measured, so
+    // it turns itself off wherever this ends up running.
+    _edgeGap = g ? g - (document.documentElement.clientHeight || innerHeight) : 0;
+    if (_edgeF) _edgeF.hidden = !(_edgeGap > 8);
   }
   const r = cvEl.getBoundingClientRect();
   const visB = vv ? vv.offsetTop + vv.height : innerHeight;
