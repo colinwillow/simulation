@@ -15,7 +15,18 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#070a13">
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#070a13;font-family:Georgia,"Iowan Old Style",serif;color:#f0e7d4;
+  /* OVERFLOW:VISIBLE ON THE ROOT, and this is the one mechanism that fits the evidence.
+     Measured off his four photographs: the band is 179 device pixels in every one of them --
+     the studio splash and the title screen, before the fix and after it. Exactly 70 CSS px,
+     which is 1002 minus 932. Two different elements, overridden two different ways (the lens
+     by --lensH, the splash by !important), both still stopping dead at the same pixel.
+     Nothing about either element explains that. The VIEWPORT does: `overflow` on the root
+     propagates to the viewport, and the viewport's clip is the LAYOUT viewport. So every
+     fixed element in this file, however tall it is told to be, has been sliced off at 932 --
+     which is why sizing them bigger has never once moved the band.
+     Nothing here can scroll without it: fixed elements contribute no scrollable overflow, and
+     every element in this file is fixed. touch-action and overscroll-behavior stay. */
+  html,body{margin:0;height:100%;overflow:visible;background:#070a13;font-family:Georgia,"Iowan Old Style",serif;color:#f0e7d4;
     touch-action:none;overscroll-behavior:none;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
     -webkit-user-select:none;user-select:none}
   /* ONE BOX, AND IT IS THE ONE YOU CAN SEE.
@@ -43,7 +54,7 @@
      involved. What the panels needed from c39 they get from --uit / --uib instead: the height
      of the chrome at each end, added to their own offsets. The lens covers the screen; the
      interface sits inside the part of it you can see. Those were always two questions. */
-  body{overflow:hidden}
+  body{overflow:visible}
   </style>
   <script>
   // BEFORE THE FIRST PAINT, not on the first animation frame. syncSize sets these, and it
@@ -1172,7 +1183,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'c84';
+const BUILD = 'c85';
 const T0 = Date.now();      // wall clock at boot, for the splash's minimum time on screen
 // THE FIRST ERROR, KEPT, and declared UP HERE where nothing can read it before it exists --
 // updateHUD does, and a `let` further down the file is a TDZ that kills the rest of the
@@ -13892,12 +13903,51 @@ function lensProbe() {
     bandMark('vis', '#3fe0ff', visB);
     bandMark('cv', '#ff9c3f', cvEl.getBoundingClientRect().bottom);
   }
+  bandPanel();
   return gap;
 }
+// TWO COLOURS, ONE BIT. The root is magenta and BODY is lime. If the band stays magenta it is
+// the root background painted on the viewport canvas, outside body's box, and no element can
+// ever reach it. If it turns lime, body's box does reach down there and so can the lens.
 if (BAND) try {
   document.documentElement.style.background = '#ff00aa';
-  document.body.style.background = '#ff00aa';
+  document.body.style.background = '#7cff4a';
 } catch (e) { }
+// EVERY NUMBER AT ONCE, BIG ENOUGH TO PHOTOGRAPH. Three builds have been spent inferring one
+// of these from the others and the band has not moved a single pixel. The four CSS viewport
+// units are measured rather than assumed -- vh, svh, lvh, dvh are four different answers on
+// iOS and which is which is the whole question.
+function bandPanel() {
+  if (!BAND) return;
+  let d = _marks.panel;
+  if (!d) {
+    d = _marks.panel = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:8px;top:120px;z-index:99999;pointer-events:none;'
+      + 'font:13px ui-monospace,Menlo,monospace;color:#fff;background:rgba(0,0,0,.82);'
+      + 'padding:8px 10px;border-radius:6px;line-height:1.5;white-space:pre';
+    document.body.appendChild(d);
+  }
+  const de = document.documentElement, vv = window.visualViewport;
+  let probe = _marks.probe;
+  if (!probe) {
+    probe = _marks.probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;top:0;left:0;width:0;visibility:hidden;pointer-events:none';
+    document.body.appendChild(probe);
+  }
+  const unit = u => { probe.style.height = u; return probe.getBoundingClientRect().height | 0; };
+  const r = renderer.domElement.getBoundingClientRect();
+  d.textContent = [
+    'scr  ' + screen.width + 'x' + screen.height + '  dpr ' + devicePixelRatio,
+    'win  ' + innerWidth + 'x' + innerHeight,
+    'doc  ' + de.clientWidth + 'x' + de.clientHeight,
+    'vv   ' + (vv ? Math.round(vv.width) + 'x' + Math.round(vv.height) + ' @' + Math.round(vv.offsetTop) + ' s' + vv.scale.toFixed(2) : '-'),
+    'vh ' + unit('100vh') + '  svh ' + unit('100svh') + '  lvh ' + unit('100lvh') + '  dvh ' + unit('100dvh'),
+    'lensH ' + (getComputedStyle(de).getPropertyValue('--lensH').trim() || '-') + '  glass ' + glassH(),
+    'cv   ' + (r.top | 0) + '..' + (r.bottom | 0) + '  h ' + renderer.domElement.clientHeight,
+    'safe ' + unit('env(safe-area-inset-top)') + '/' + unit('env(safe-area-inset-bottom)')
+      + '  standalone ' + (navigator.standalone ? 1 : 0),
+  ].join('\n');
+}
 function syncSize(probe) {
   // visualViewport is what is ACTUALLY on screen; innerHeight is what the layout thinks, and
   // on a phone the two part company every time the URL bar slides. Reading the wrong one gives
