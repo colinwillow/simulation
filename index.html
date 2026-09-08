@@ -1201,7 +1201,16 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
     const _rawDt=Math.max(0,now-draw._pt); draw._pt=now;
     draw._acc=(draw._acc||0)+Math.min(_rawDt,(window._MAJIA_DT_CAP||64))*speed;
     const e=(window._MAJIA_DT_CLAMP===false)?((now-start)*speed):draw._acc;
-    if(bar&&!settle._d) bar.style.width=Math.min(100,(Math.max(e,eReal*0.55)/(HOLD_UNTIL-250))*100)+'%';
+    // While it is held the bar is the only thing moving, and the load behind it takes longer
+    // than the timeline it is scaled to -- so it filled, sat at 100 for twenty seconds and read
+    // as a hang. Held, it eases toward 92 and waits there for the world; released, it is the
+    // timeline again and runs out to the end.
+    if(bar&&!settle._d){ const _bfHold=(window._BOOT_FLY!==false && !draw._seeded);
+      // and it never runs backwards: released, the load IS done, so it simply completes rather
+      // than restarting from the freshly-zeroed timeline.
+      const _bw=window._BOOT_FLY!==false ? (_bfHold ? 92*(1-Math.exp(-eReal/2600)) : 100)
+                                         : Math.min(100,(Math.max(e,eReal*0.55)/(HOLD_UNTIL-250))*100);
+      bar.style.width=_bw+'%'; }
     // ── REVEAL THE FLYOVER ── #majia-bg is an opaque plate, and it used to hold until settle() at ~4.5s, which is
     //    long after the mark has formed. Crossfade it out early: the boot terrain underneath becomes the backdrop,
     //    and the swarm flies over a live world instead of a black card.
@@ -1209,7 +1218,13 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
       if(bg&&!bg._bfHeld){ const f0=(window._BF_BG_OUT_AT||220), f1=(window._BF_BG_OUT_T||800);
         const kk=Math.max(0,Math.min(1,(eReal-f0)/f1)); bg.style.opacity=String(1-kk); if(kk>=1)bg._bfHeld=1; } }catch(_){} }
     // LAUNCH WINDOW — pop each particle out of the core when its moment arrives
-    if(_MAND>0){ const EM=window._BOOTFLY_ORIGIN;
+    // NOTHING LEAVES THE CORE WHILE THE TIMELINE IS HELD. The hold freezes e at 0, but the
+    // launch test is `e >= p.born` and the first shard's born is a small random jitter, so a
+    // handful of them cleared zero on the very first frame and drifted out over an otherwise
+    // frozen screen. That is the "one particle" splash: the swarm has not started, and the
+    // stragglers that leaked read as the whole animation. Held means held.
+    const _held=(window._BOOT_FLY!==false && !draw._seeded);
+    if(_MAND>0&&!_held){ const EM=window._BOOTFLY_ORIGIN;
       for(const p of particles){ if(p.launched)continue;
       if(e>=p.born){ p.launched=true; p.vx=p.bdx*p.bspd; p.vy=p.bdy*p.bspd;
         if(EM&&EM.on&&window._BOOT_FLY!==false){                                  // seeded from INSIDE the bud — and FIRED, not released
@@ -1542,7 +1557,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd39';
+const BUILD = 'd40';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
