@@ -706,11 +706,16 @@ window._MAJIA_INK = '#7fd8ff';
     }
   }
   // The quarry: low, quick, four short legs and a long back. Whatever it is, it is small.
+  // IN THE INK, AND LIT. The first version drew these as dark silhouettes on a dark floor --
+  // rgba(6,10,22) over a ground a shade lighter than the background -- and they rendered
+  // perfectly and read as nothing at all. They are the mark's own cyan now, with a glow, so
+  // they are two lit figures crossing under a lit logo: on brand, and impossible to miss.
+  function ink(gx) { gx.strokeStyle = gx.fillStyle = INK; gx.shadowColor = INK; gx.shadowBlur = 14; }
   function drawQuarry(x, y, ph) {
-    const h = H * .052;
+    const h = H * .06;
     g.save(); g.translate(x, y);
     const bob = Math.abs(Math.sin(ph * 2)) * h * .12;
-    g.strokeStyle = g.fillStyle = 'rgba(6,10,22,.92)';
+    ink(g);
     legs(0, 0, h * .8, ph * 2, 0);
     g.beginPath(); g.ellipse(0, -h * .78 - bob, h * .78, h * .46, -.12, 0, 6.2832); g.fill();
     g.beginPath(); g.ellipse(h * .72, -h * 1.05 - bob, h * .3, h * .28, 0, 0, 6.2832); g.fill();
@@ -718,10 +723,10 @@ window._MAJIA_INK = '#7fd8ff';
   }
   // And the one after it: twice the height, arms out in front, leaning into the run.
   function drawChaser(x, y, ph) {
-    const h = H * .105;
+    const h = H * .12;
     g.save(); g.translate(x, y);
     const bob = Math.abs(Math.sin(ph * 2)) * h * .06;
-    g.strokeStyle = g.fillStyle = 'rgba(6,10,22,.92)';
+    ink(g);
     legs(0, 0, h * .52, ph * 2, .3);
     g.beginPath(); g.ellipse(0, -h * .68 - bob, h * .2, h * .26, .18, 0, 6.2832); g.fill();
     g.beginPath(); g.arc(h * .1, -h * .99 - bob, h * .16, 0, 6.2832); g.fill();
@@ -737,7 +742,7 @@ window._MAJIA_INK = '#7fd8ff';
   function shadow(x, y, w, a) {
     g.save(); g.globalAlpha = a;
     const s = g.createRadialGradient(x, y, 0, x, y, w);
-    s.addColorStop(0, 'rgba(3,6,14,.85)'); s.addColorStop(1, 'rgba(3,6,14,0)');
+    s.addColorStop(0, 'rgba(2,4,12,.95)'); s.addColorStop(1, 'rgba(2,4,12,0)');
     g.fillStyle = s;
     g.beginPath(); g.ellipse(x, y, w, w * .26, 0, 0, 6.2832); g.fill();
     g.restore();
@@ -752,11 +757,11 @@ window._MAJIA_INK = '#7fd8ff';
     // THE LIGHT, first: a cone coming down onto the floor, so the ground reads as lit rather
     // than as a band of paint. Fades up over the first second with the rest of the splash.
     const up = Math.min(1, t / 1.1);
-    g.save(); g.globalAlpha = .5 * up;
+    g.save(); g.globalAlpha = .9 * up;
     const cone = g.createLinearGradient(0, H * .1, 0, gy + H * .1);
     cone.addColorStop(0, 'rgba(140,210,255,0)');
-    cone.addColorStop(.72, 'rgba(140,210,255,.05)');
-    cone.addColorStop(1, 'rgba(160,220,255,.13)');
+    cone.addColorStop(.72, 'rgba(140,210,255,.10)');
+    cone.addColorStop(1, 'rgba(160,220,255,.26)');
     g.fillStyle = cone;
     g.beginPath(); g.moveTo(W * .34, 0); g.lineTo(W * .66, 0);
     g.lineTo(W * .94, gy + H * .1); g.lineTo(W * .06, gy + H * .1); g.closePath(); g.fill();
@@ -765,12 +770,12 @@ window._MAJIA_INK = '#7fd8ff';
     // and a floor below it that darkens toward the bottom of the frame.
     g.save(); g.globalAlpha = up;
     const fl = g.createLinearGradient(0, gy, 0, H);
-    fl.addColorStop(0, 'rgba(26,32,58,.95)'); fl.addColorStop(1, 'rgba(5,7,18,.98)');
+    fl.addColorStop(0, 'rgba(58,72,140,.85)'); fl.addColorStop(.5, 'rgba(24,30,72,.9)'); fl.addColorStop(1, 'rgba(6,8,22,.95)');
     g.fillStyle = fl; g.fillRect(0, gy, W, H - gy);
     const hz = g.createLinearGradient(0, 0, W, 0);
-    hz.addColorStop(0, 'rgba(127,216,255,0)'); hz.addColorStop(.5, 'rgba(127,216,255,.5)');
+    hz.addColorStop(0, 'rgba(127,216,255,0)'); hz.addColorStop(.5, 'rgba(160,230,255,.95)');
     hz.addColorStop(1, 'rgba(127,216,255,0)');
-    g.fillStyle = hz; g.fillRect(0, gy - 1, W, 1.6);
+    g.fillStyle = hz; g.shadowColor = INK; g.shadowBlur = 10; g.fillRect(0, gy - 1, W, 2.2); g.shadowBlur = 0;
     g.restore();
     // THE MARK'S OWN SHADOW, which is the whole point of the floor: it puts the wordmark on
     // the ground instead of in front of it. Softens and spreads as the light comes up.
@@ -1487,7 +1492,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd26';
+const BUILD = 'd27';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -16230,7 +16235,7 @@ function frame(now) {
       // this fired before the splash had drawn anything and the mark was never seen at all.
       // Two and a bit seconds is the floor; a slow boot still overruns it and dismisses on
       // its own timeline.
-      if (window._majiaFinish) setTimeout(window._majiaFinish, Math.max(0, 4900 - (Date.now() - T0)));
+      if (window._majiaFinish) setTimeout(window._majiaFinish, Math.max(0, 5700 - (Date.now() - T0)));   // past HOLD_UNTIL (5220), so the mark is never cut off mid-hold
       const b = document.getElementById('boot'); b.style.opacity = 0; setTimeout(() => b.remove(), 1300);
       if (INTRO.on) introEl.hidden = false; else document.body.classList.remove('intro');
     }
