@@ -1713,6 +1713,16 @@ const SFX = {
 // never arrived is a slightly worse noise rather than silence. The pitch shifts are how one
 // pool covers two jobs: a bamboo crack down at 0.7 is a fist landing on something soft, up at
 // 1.15 it is an axe biting wood.
+// ONE OF A KIND PER BEAT. A blast that fells four trees and dazes three animals fired seven
+// sounds on a single frame, and seven sounds on one frame is not seven events -- it is one
+// event with a pile-up on top of it. Anything that can be triggered several times by the same
+// impact goes through this: the first one plays, the rest of that beat are dropped.
+const _sndAt = {};
+function sndOnce(k, ms) {
+  const t = performance.now();
+  if (_sndAt[k] > t) return false;
+  _sndAt[k] = t + ms; return true;
+}
 const snd = {
   swing: (x, z) => SFX.play('swing', .5, rnd(.92, 1.12), x, z)
     || (SFX.noise(.13, .16, 2600, x, z), SFX.blip(520, .09, 'sine', .05, 260, x, z)),
@@ -1723,7 +1733,7 @@ const snd = {
       || (SFX.noise(.10, .24, 1500, x, z), SFX.blip(230, .12, 'square', .14, 110, x, z)),
   chop: (x, z) => SFX.play('wood', .8, rnd(1.05, 1.2), x, z)
     || (SFX.noise(.16, .30, 700, x, z), SFX.blip(190, .13, 'sawtooth', .13, 90, x, z)),
-  fell: (x, z) => SFX.play('crack', .85, rnd(.72, .85), x, z) || SFX.noise(.5, .3, 500, x, z),
+  fell: (x, z) => sndOnce('fell', 160) && (SFX.play('crack', .85, rnd(.72, .85), x, z) || SFX.noise(.5, .3, 500, x, z)),
   whiff: (x, z) => SFX.play('swing', .22, rnd(1.15, 1.3), x, z) || SFX.noise(.15, .09, 1700, x, z),
   // One voice, pitched by the charge: a tap is a quick high snap, a held shot drops and
   // lengthens. That is the difference between two guns without being two sounds.
@@ -1760,8 +1770,8 @@ const snd = {
   pick: (x, z) => SFX.play('ping', .45, rnd(.95, 1.15), x, z) || SFX.blip(760, .07, 'triangle', .09, 1080, x, z),
   gain: (x, z) => SFX.play('jewel', .5, 1, x, z) || SFX.blip(880, .1, 'triangle', .1, 1300, x, z),
   power: (x, z) => SFX.play('power', .6, 1, x, z) || SFX.blip(440, .3, 'sine', .12, 880, x, z),
-  daze: (x, z) => SFX.play('ping', .5, rnd(.5, .6), x, z)
-    || (SFX.blip(300, .22, 'sine', .10, 120, x, z), SFX.blip(450, .26, 'triangle', .06, 170, x, z)),
+  daze: (x, z) => sndOnce('daze', 220) && (SFX.play('ping', .5, rnd(.5, .6), x, z)
+    || (SFX.blip(300, .22, 'sine', .10, 120, x, z), SFX.blip(450, .26, 'triangle', .06, 170, x, z))),
 };
 // WALKING IS ONE LONG RECORDING THAT PAUSES, not a stride fired every 1.55 units.
 //
@@ -1979,7 +1989,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e18';
+const BUILD = 'e19';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -17897,7 +17907,11 @@ class Bolt {
     // A light zap on every bolt and a bang only on a charged one. Nothing in either repo is
     // named for this -- robits kept a _HIT_SFX_FILE slot and never filled it -- so it is the
     // metal ping pitched down, which is short and bright and does not sound like ordnance.
-    if (this.c > .55) { snd.boom(this.x, this.z); addTrauma(.06 + this.c * .14); } else addTrauma(.05);
+    // NO EXPLOSION AND NO PING. The gun has already spoken -- once, on the trigger -- and the
+    // only other thing worth hearing is whether it landed on somebody. Everything else the
+    // blast sets off (the boom on a charged shot, the metal ting on every impact) was a second
+    // and third voice for one event. The shake stays: that is not a sound.
+    addTrauma(this.c > .55 ? .06 + this.c * .14 : .05);
     for (const st of world.structures) {
       if (st.alive && st.shatter) st.shatter(this.x, this.y, this.z, R, BL, this.c);
     }
@@ -17930,8 +17944,9 @@ class Bolt {
       else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * f, this); o.knock(this, f); punched = punched || o; }
       else if (o.spook) o.spook(this, 10);
     }
+    // The same noise a bare-handed melee makes when it connects, and nothing at all when the
+    // bolt lands on dirt.
     if (punched) snd.hit(punched.pos.x, punched.pos.z, (punched.rad || 1) > 1.1, false);
-    else snd.zap(this.x, this.z, this.c);
   }
   dispose() {
     scene.remove(this.g);
