@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd80';
+const BUILD = 'd81';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2036,6 +2036,11 @@ scene.add = function (...os) {
 // The sky dome and the stars are hung off a rig that follows the camera and takes the local
 // frame with it, so the gradient still runs from underfoot to overhead wherever you stand.
 const skyRig = new THREE.Group(); skyRig.userData.flat = true; scene.add(skyRig);
+// `antialias` HERE DOES NOTHING, on any platform. MSAA is a property of the default
+// framebuffer, and every frame of this game is drawn into rtScene and only composited to the
+// default one through a full-screen quad -- which has no interior edges to soften. It is left
+// true off mobile because it costs nothing and would matter again if the post chain ever went
+// away. The antialiasing that actually happens is the FXAA folded into compMat.
 const renderer = new THREE.WebGLRenderer({ antialias: !MOBILE, powerPreference: 'high-performance', stencil: false });
 renderer.setPixelRatio(Q.dpr);
 // THE THIRD ARGUMENT, AND IT IS THE WHOLE OF THE BLACK BAND.
@@ -11551,12 +11556,41 @@ const blurMat = new THREE.ShaderMaterial({ uniforms: { tD: { value: null }, uDir
 const DARK = { col: [.0113, .0004, .0333], k: 1.0, knee: .028 };
 const compMat = new THREE.ShaderMaterial({ uniforms: {
     tD: { value: null }, tB: { value: null }, uStr: { value: .85 }, uVig: { value: .5 }, uNight: { value: 0 }, uT: { value: 0 }, uRush: { value: 0 },
-    uLift: { value: new THREE.Color(0, 0, 0) }, uKnee: { value: .17 }
+    uLift: { value: new THREE.Color(0, 0, 0) }, uKnee: { value: .17 },
+    uPx: { value: new THREE.Vector2(1 / 1280, 1 / 720) }, uAA: { value: 1 }
   }, vertexShader: VS, fragmentShader: `
-  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT,uKnee,uRush; uniform vec3 uLift; varying vec2 vUv;
+  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT,uKnee,uRush,uAA; uniform vec3 uLift; uniform vec2 uPx; varying vec2 vUv;
   float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
+  // FXAA, AND WHY IT LIVES HERE RATHER THAN IN A PASS OF ITS OWN. Multisampling never had a
+  // chance in this renderer: MSAA only exists on the default framebuffer, and the first thing
+  // renderPost does is bind rtScene, so \`antialias\` has been a no-op on every platform since
+  // the bloom went in. A separate FXAA pass would mean another full-screen target and another
+  // full-res draw, which on a phone is the most expensive kind of thing there is. Folded into
+  // the composite it is four extra taps on an edge and none at all on flat ground, because the
+  // contrast test bails first -- and this art is flat-shaded with almost no texture detail, so
+  // the one thing FXAA is usually criticised for costs nothing here.
+  vec3 aa(vec2 uv){
+    vec3 L = vec3(0.299,0.587,0.114);
+    vec3 m  = texture2D(tD,uv).rgb;
+    vec3 nw = texture2D(tD,uv+vec2(-1.0,-1.0)*uPx).rgb;
+    vec3 ne = texture2D(tD,uv+vec2( 1.0,-1.0)*uPx).rgb;
+    vec3 sw = texture2D(tD,uv+vec2(-1.0, 1.0)*uPx).rgb;
+    vec3 se = texture2D(tD,uv+vec2( 1.0, 1.0)*uPx).rgb;
+    float lm=dot(m,L), lnw=dot(nw,L), lne=dot(ne,L), lsw=dot(sw,L), lse=dot(se,L);
+    float lo=min(lm,min(min(lnw,lne),min(lsw,lse)));
+    float hi=max(lm,max(max(lnw,lne),max(lsw,lse)));
+    if (hi-lo < max(0.030, hi*0.125)) return m;          // flat: nothing to soften
+    vec2 dir = vec2(-((lnw+lne)-(lsw+lse)), ((lnw+lsw)-(lne+lse)));
+    float red = max((lnw+lne+lsw+lse)*0.0625, 0.0078);
+    float rd = 1.0/(min(abs(dir.x),abs(dir.y))+red);
+    dir = clamp(dir*rd, -8.0, 8.0)*uPx;
+    vec3 a = 0.5*(texture2D(tD,uv+dir*(1.0/3.0-0.5)).rgb + texture2D(tD,uv+dir*(2.0/3.0-0.5)).rgb);
+    vec3 b = a*0.5 + 0.25*(texture2D(tD,uv-dir*0.5).rgb + texture2D(tD,uv+dir*0.5).rgb);
+    float lb = dot(b,L);
+    return (lb < lo || lb > hi) ? a : b;
+  }
   void main(){
-    vec3 c = texture2D(tD,vUv).rgb;
+    vec3 c = uAA > 0.5 ? aa(vUv) : texture2D(tD,vUv).rgb;
     // THE RUSH. Six taps smeared toward the middle of the frame, weighted out from it so the
     // centre -- where he is -- stays sharp and the edges streak. This is what a game does to
     // say fast, and it is the whole effect: the lens also opens up seven degrees, which is
@@ -11765,6 +11799,7 @@ function renderPost() {
   quad.material = compMat;
   compMat.uniforms.tD.value = rtScene.texture; compMat.uniforms.tB.value = rtA.texture;
   compMat.uniforms.uNight.value = world.night; compMat.uniforms.uT.value = world.clock % 100;
+  compMat.uniforms.uPx.value.set(1 / rtScene.width, 1 / rtScene.height);
   // Reserved for the open air. The cave is the one place true black IS the point, so the
   // floor drops away as he goes under -- measured off the mouth rather than off a flag,
   // because there is no flag and inventing one to read here would be inventing state to make
@@ -13832,6 +13867,7 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
 window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, get chop() { return CHOP; }, get melee() { return MELEE; },
+  dpr: setDpr, aa: v => { compMat.uniforms.uAA.value = v === false ? 0 : 1; return !!compMat.uniforms.uAA.value; },
   // isle.axe({roll: 1.57}) -- turn it, slide his grip up or down it, resize it. Prints the set.
   axe: o => { if (o) Object.assign(AXEM, o); fitAxe(); console.log(JSON.stringify(AXEM)); return AXEM; },
   // who is feeling what, right now, nearest first
@@ -18294,6 +18330,17 @@ function syncSize(probe) {
   for (const ps of world.psys) { const u = ps.mat.uniforms.uScale; if (u) u.value = h * .5; }
 }
 addEventListener('resize', syncSize);
+// THE OTHER HALF OF SOFT EDGES, and the bigger half. dpr 1.5 on a phone whose screen is 3
+// renders at a quarter of the panel's pixels and lets the compositor upscale -- no amount of
+// FXAA puts back detail that was never drawn. It is 1.5 because at 2 the frame was 95 ms when
+// that number was last measured, and a lot has changed since. This makes it a thing to look at
+// rather than a thing to argue about: isle.dpr(2) and watch the counter.
+function setDpr(v) {
+  Q.dpr = clamp(+v || 1, .75, 3);
+  _vw = _vh = -1; syncSize();
+  console.log('[dpr] ' + Q.dpr.toFixed(2) + ' — scene target now ' + rtScene.width + 'x' + rtScene.height);
+  return Q.dpr;
+}
 addEventListener('orientationchange', syncSize);
 // The same schedule the head script runs on, for the same reason: a navigation lands with the
 // viewport mid-flight and iOS does not reliably fire a resize when it settles, so one probe at
