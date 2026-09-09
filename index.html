@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd93';
+const BUILD = 'd94';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -6489,7 +6489,13 @@ const THROW = {
   rise: [4, 20],     // stick-travel a second: the softest swipe that counts, and a full one
   chargeT: 1.7,      // a standing hold takes this long to fill the bar
   min: .26,          // nothing leaves his hands slower than this
-  speed: [15, 54],   // launch speed at no power and at full
+  // A HEAVY THING DOES NOT GO THAT FAR. 54 put a mossback most of the way across a region,
+  // which reads as a catapult rather than as a man heaving an animal -- and range goes as the
+  // SQUARE of this, so 38 is half the ground for a quarter off the number. That second effect
+  // is the one that matters for aiming: the same millimetre of thumb now covers half as much
+  // ground, so the mark can be PUT somewhere instead of flung near it. Cutting the top of the
+  // range is what buys the precision; there is no separate sensitivity dial to find.
+  speed: [15, 38],   // launch speed at no power and at full
   // A FLICK MAY NOT OUT-THROW A WIND-UP. The swipe's power came off stick speed and a hard
   // flick saturates it instantly, so it reached the same 54 the bar takes 1.7 seconds to
   // fill -- which makes the charge throw pointless and sends the animal out of sight.
@@ -6534,7 +6540,12 @@ const THROW = {
   // `ease` is the friction on top: the mark chases the thumb at this rate rather than being
   // pinned to it, so a flick of the thumb is a glide of the indicator and it comes to rest
   // where it is put.
-  ease: 5.5,
+  // 5.5 was a quarter-second of glide behind the thumb, and the glide is what makes a flick
+  // read as a throw rather than a twitch. But it is also what makes placing one hard: you push,
+  // it drifts on past, you pull back, it drifts again. 11 still smooths the swipe -- a flick is
+  // over in eighty milliseconds and the ease cannot keep up with it either way -- while a slow
+  // deliberate thumb now arrives where it is pointing instead of somewhere near it.
+  ease: 11,
   // How much of the throw a heavy thing eats. `hurl` divides the launch speed by the body's
   // own radius; this is the power that radius is raised to, so above 1 a big animal loses
   // ground faster than its size and a small one barely notices being thrown hard.
@@ -16143,7 +16154,12 @@ function setChargeRing(k) {
 // numbers hurl() will use -- the animal's own heft included, because a mossback does not go
 // as far as a tinker off the same wind-up -- and the answer is drawn on the ground: a ring at
 // the landing point with the arc dashed out to it. Instrument, not puddle: it has ticks.
-const TMARK = { dashes: 14, steps: 34, h: .055, r: 1.5, cool: '#8ff0ff', hot: '#ffd2a0' };
+// THE INDICATOR. It was a string of soft round glows and a rotating ring -- fuzzy, and fuzzy
+// is the one thing this game's art is not. Chevrons instead: flat triangles laid on the arc
+// and turned to point down it, so the path reads as a direction rather than as a row of dots,
+// growing toward the target so the eye travels the right way. The ring keeps its shape but
+// loses the spin and the pip and gains a crosshair, which is a mark rather than a decoration.
+const TMARK = { dashes: 11, steps: 34, h: .055, r: 1.5, cool: '#8ff0ff', hot: '#ffd2a0' };
 const _tmCool = new THREE.Color(TMARK.cool), _tmHot = new THREE.Color(TMARK.hot);
 let tmark = null;
 function buildThrowMark() {
@@ -16151,18 +16167,23 @@ function buildThrowMark() {
   const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(TMARK.cool), transparent: true,
     opacity: .55, side: THREE.DoubleSide, depthWrite: false });
   mat.userData.noHole = 1;
-  const ring = new THREE.Mesh(new THREE.RingGeometry(.84, 1, 44), mat); ring.rotation.x = -Math.PI / 2;
-  const pip = new THREE.Mesh(new THREE.RingGeometry(.3, .38, 20), mat); pip.rotation.x = -Math.PI / 2; pip.position.y = .03;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(.9, 1, 48), mat); ring.rotation.x = -Math.PI / 2;
+  const pip = new THREE.Mesh(new THREE.CircleGeometry(.13, 12), mat); pip.rotation.x = -Math.PI / 2; pip.position.y = .03;
   g.add(ring, pip);
-  for (let i = 0; i < 3; i++) {                       // three ticks outside the ring
-    const a = i / 3 * Math.PI * 2 - .13;
-    const t = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.36, 4, 1, a, .26), mat);
-    t.rotation.x = -Math.PI / 2; t.position.y = .03; g.add(t);
+  // Four bars pointing in at the ring: a crosshair, not a compass rose.
+  for (let i = 0; i < 4; i++) {
+    const a = i / 4 * Math.PI * 2;
+    const t = new THREE.Mesh(new THREE.PlaneGeometry(.07, .34), mat);
+    t.rotation.x = -Math.PI / 2; t.rotation.z = -a;
+    t.position.set(Math.sin(a) * .62, .03, Math.cos(a) * .62);
+    g.add(t);
   }
   g.scale.setScalar(TMARK.r);
   scene.add(g);
+  // A triangle, flat, with its point on +Z so turning it by the arc's bearing aims it.
+  const chev = new THREE.CircleGeometry(1, 3).rotateZ(Math.PI / 2).rotateX(-Math.PI / 2);
   const dashes = [];
-  for (let i = 0; i < TMARK.dashes; i++) { const s = glow(TMARK.cool, .5, .5); scene.add(s); dashes.push(s); }
+  for (let i = 0; i < TMARK.dashes; i++) { const m = new THREE.Mesh(chev, mat.clone()); m.userData.noHole = 1; scene.add(m); dashes.push(m); }
   return { g, mat, dashes, ring, pip };
 }
 // Walks the arc in fixed steps until it meets the ground, filling `out` with the samples it
@@ -16202,7 +16223,7 @@ function throwMarkStep(show, power, T) {
   tmark.g.visible = true;
   tmark.g.position.set(ex, ey + .07, ez);
   alignTo(tmark.g, ex, ez, .9);
-  tmark.g.rotateY(world.clock * .7);                  // it turns slowly, so it reads as live
+  tmark.g.rotateY(player.aimH);                       // square to the throw, not spinning
   tmark.g.scale.setScalar(TMARK.r * (1 + power * .5));
   tmark.mat.color.copy(_tmCool).lerp(_tmHot, power);
   tmark.mat.opacity = .42 + power * .3 + (power > .995 ? Math.sin(world.clock * 11) * .12 : 0);
@@ -16210,11 +16231,17 @@ function throwMarkStep(show, power, T) {
   for (let i = 0; i < tmark.dashes.length; i++) {
     const d = tmark.dashes[i];
     const k = (i + 1) / (tmark.dashes.length + 1);
-    const s = Math.min(n - 1, Math.round(k * k * (n - 1)));
+    const s = Math.min(n - 1, Math.round(k * (n - 1)));
+    const s2 = Math.min(n - 1, s + 1);
     d.visible = true;
-    d.position.set(_tmArc[s * 3], _tmArc[s * 3 + 1] + .12, _tmArc[s * 3 + 2]);
-    d.scale.setScalar(.22 + k * .5);
-    d.material.opacity = .16 + k * .5;
+    d.position.set(_tmArc[s * 3], _tmArc[s * 3 + 1] + .14, _tmArc[s * 3 + 2]);
+    // pointed down the arc, read off the next sample rather than assumed from the bearing --
+    // near the top of a lob the path is climbing and the chevron should say so
+    const dx = _tmArc[s2 * 3] - _tmArc[s * 3], dz = _tmArc[s2 * 3 + 2] - _tmArc[s * 3 + 2];
+    if (dx * dx + dz * dz > 1e-6) d.rotation.set(0, Math.atan2(dx, dz), 0);
+    const sc = .30 + k * .34;
+    d.scale.set(sc * .72, sc, sc);
+    d.material.opacity = (.20 + k * .55) * (.55 + power * .45);
     d.material.color.copy(tmark.mat.color);
   }
 }
