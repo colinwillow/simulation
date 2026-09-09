@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e30';
+const BUILD = 'e31';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -2604,7 +2604,10 @@ renderer.setSize(innerWidth, innerHeight, false);
 renderer.domElement.style.width = '';
 renderer.domElement.style.height = '';
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// PCFSoft is the dearest filter three.js has: it takes more taps per fragment than plain
+// PCF and does it on every shadowed pixel of every frame. On a phone, the plainer one --
+// a touch harder at the edge -- is the trade. Desktop has the headroom and keeps the soft.
+renderer.shadowMap.type = MOBILE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.outputEncoding = THREE.LinearEncoding; // final gamma is done in the composite pass
@@ -3980,6 +3983,53 @@ function polarGeo(spokes, rings, rOf) {
   g.setIndex(n > 65535 ? new THREE.Uint32BufferAttribute(tri, 1) : new THREE.Uint16BufferAttribute(tri, 1));
   return g;
 }
+// ONE MESH CANNOT BE HALF CULLED. The terrain and the sea are each a single polar grid, and
+// a single object is in the frustum or it is not -- so the half of the island behind the lens
+// was going through the vertex shader every frame, and again for the shadow map, and the sea
+// with it: off his own stats line that was roughly 290k of 670k triangles, drawn for nobody.
+//
+// This cuts a finished grid into S wedges by spoke. The vertex buffers are SHARED -- every
+// wedge points at the same position, colour, chart and height attributes, so the repaint that
+// writes into terrainGeo's colours still lands in all of them and nothing is uploaded twice.
+// Only the index is per wedge. polarGeo lays its triangles out in a known order (the centre
+// fan first, then ring by ring, spoke by spoke), so a wedge's index is a gather, not a search.
+//
+// Each wedge gets its bounds set BY HAND from the vertices it actually references. three.js
+// would otherwise compute them from the whole shared position buffer, which is the whole
+// planet, and the cull would never reject anything. `margin` is for what the vertex shader
+// moves after this: the sea's waves.
+function polarSectors(src, spokes, rings, S, margin) {
+  const idx = src.index.array, pos = src.attributes.position, out = [], v = new THREE.Vector3();
+  for (let s = 0; s < S; s++) {
+    const j0 = Math.floor(s * spokes / S), j1 = Math.floor((s + 1) * spokes / S), tri = [];
+    for (let j = j0; j < j1; j++) for (let k = 0; k < 3; k++) tri.push(idx[j * 3 + k]);
+    for (let i = 1; i < rings; i++) for (let j = j0; j < j1; j++) {
+      const o = spokes * 3 + ((i - 1) * spokes + j) * 6;
+      for (let k = 0; k < 6; k++) tri.push(idx[o + k]);
+    }
+    const g = new THREE.BufferGeometry();
+    for (const k in src.attributes) g.setAttribute(k, src.attributes[k]);
+    g.setIndex(pos.count > 65535 ? new THREE.Uint32BufferAttribute(tri, 1) : new THREE.Uint16BufferAttribute(tri, 1));
+    const bb = new THREE.Box3();
+    for (const t of tri) bb.expandByPoint(v.fromBufferAttribute(pos, t));
+    const sph = new THREE.Sphere(); bb.getBoundingSphere(sph); sph.radius += margin;
+    bb.expandByScalar(margin); g.boundingBox = bb; g.boundingSphere = sph;
+    out.push(g);
+  }
+  return out;
+}
+// A group of wedge meshes standing in for the one mesh. Flat, because the vertices are on
+// the sphere already; the wrapper on scene.add only looks at what it is handed directly, but
+// the children carry the flag too so nothing downstream can get it wrong.
+function sectorGroup(geos, mat, what, setup) {
+  const grp = new THREE.Group(); grp.userData.flat = true; grp.userData.what = what;
+  for (const g of geos) {
+    const m = new THREE.Mesh(g, mat); m.userData.flat = true; m.userData.what = what;
+    setup(m); grp.add(m);
+  }
+  return grp;
+}
+const SECTORS = 16;
 // Chart radius of ring t: about two units apart under the island, widening to six by the
 // time it reaches the far pole. The whole globe for fewer vertices than the old flat square.
 // STOP WELL SHORT OF THE FAR POLE. The grid ran the whole 180 degrees to the antipode, and
@@ -4345,9 +4395,10 @@ function groundPatch(sh, patch) {
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, metalness: 0 });
 terrainMat.userData.shaderTag = 'ground';
 terrainMat.onBeforeCompile = sh => { toonPatch(sh); groundPatch(sh, true); };
-const terrain = new THREE.Mesh(terrainGeo, terrainMat);
-terrain.material.userData.noHole = true;
-terrain.receiveShadow = true; terrain.userData.flat = true; terrain.userData.what = 'terrain'; scene.add(terrain);   // built on the sphere already
+terrainMat.userData.noHole = true;
+const terrain = sectorGroup(polarSectors(terrainGeo, TSPOKE, TRING, SECTORS, 2), terrainMat, 'terrain',
+  m => { m.receiveShadow = true; });
+scene.add(terrain);   // built on the sphere already
 
 // ---------- water + foam ----------
 // The sea is the whole globe: the same polar grid, coarser, with the chart point each vertex
@@ -4551,8 +4602,10 @@ function waveNormal(x, z, d = .8) {
   const dx = waveY(x + d, z) - waveY(x - d, z), dz = waveY(x, z + d) - waveY(x, z - d);
   return _wn.set(-dx, 2 * d, -dz).normalize();
 }
-const water = new THREE.Mesh(waterGeo, waterMat);
-water.receiveShadow = false; water.renderOrder = 0; water.userData.flat = true; scene.add(water);
+// The margin is for the waves, which the vertex shader adds after these bounds are set.
+const water = sectorGroup(polarSectors(waterGeo, WSPOKE, WRING, SECTORS, 12), waterMat, 'water',
+  m => { m.receiveShadow = false; m.renderOrder = 0; });
+scene.add(water);
 
 const abyss = new THREE.Mesh(new THREE.SphereGeometry(PLANET.R + SEA - 16, 64, 40), new THREE.MeshBasicMaterial({ color: col('#0a1a24'), fog: true }));
 abyss.userData.flat = true; scene.add(abyss);
@@ -6732,6 +6785,7 @@ const PLANT_MODELS = {
   Bloom: {
     url: 'models/alien_plant_01_game.glb',
     height: 3.4,
+    cast: false,
     glowY: 2.1,
     // The bulbs. A C4D selection tag does not survive the trip through FBX and glTF -- what
     // arrives is one mesh, one primitive, one material, with nothing marking which polygons
@@ -6973,6 +7027,7 @@ const CREATURE_RIGS = {
   // bob the primitive hopper used gets switched off the moment the rig lands.
   Hopper: {
     url: 'models/tucann.glb',
+    cast: false,
     // Was 1.3, which is what the primitive body it replaced stood -- and at that size the
     // best-looking model on the island was the one you could barely see. 1.9 puts it between
     // the mudlark (1.6) and the mossback (2.4), which is where a ground bird of this build
@@ -7033,6 +7088,7 @@ const CREATURE_RIGS = {
   },
   Burrower: {
     url: 'models/creature_green.glb',
+    cast: false,
     height: 1.6,          // a mudlark's own build, roughly
     idle: 'idle', walk: 'walk_fwd',
     blinkL: 'eye_L_close', blinkR: 'eye_R_close',
@@ -7509,6 +7565,10 @@ class Creature {
     if (rc) attachRig(this.g, rc, r => {
       if (!this.alive) { this.g.remove(r.root); return; }   // died while the GLB was in flight
       this.rig = r;
+      // A species too small for its shadow to read does not pay to be drawn into the map.
+      // Everything that casts is drawn twice a frame; for a hopper the second time buys a
+      // smudge under it that the contact blob already provides.
+      if (rc.cast === false) r.root.traverse(o => { if (o.isMesh) o.castShadow = false; });
       this.body.visible = false;   // primitives stay as the fallback if the model never lands
       this.bob = 0;                // the clip carries its own bounce now
     });
@@ -20004,7 +20064,7 @@ function tap(cx, cy) {
   if (DPAN.open) { dpanClose(); return; }            // a tap anywhere else closes the wheel
   if (tappedDrone(cx, cy)) { dpanOpen(); return; }
   ray.setFromCamera({ x: cx / (_vw || innerWidth) * 2 - 1, y: -(cy / (_vh || innerHeight)) * 2 + 1 }, camera);
-  const hit = ray.intersectObject(terrain)[0]; if (!hit) return;
+  const hit = ray.intersectObject(terrain, true)[0]; if (!hit) return;
   const p = hit.point;
   if (height(p.x, p.z) < SEA) { world.effects.push(new Burst(p.x, SEA + .3, p.z, '#cff4ff', 10, 1)); return; }
   world.sparks.push(new Spark(p.x, p.z));
