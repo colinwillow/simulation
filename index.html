@@ -1740,7 +1740,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e3';
+const BUILD = 'e4';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -18200,7 +18200,17 @@ function toggleArm() {
 }
 flyB.addEventListener('click', () => { player.fly = !player.fly; flyB.classList.toggle('on', player.fly); if (player.fly) player.pos.y += 2.5; });
 const mapB = null;   // the minimap is the way in now
-document.getElementById('mini').addEventListener('click', e => { e.stopPropagation(); toggleMap(true); });
+// THE CLOSE BUTTON SITS ON TOP OF THE MINIMAP -- both are pinned to the same corner, and the
+// map panel is the only thing between them. So closing it put a finger over the thing that
+// opens it: the panel went away and the very next tap, in the same place, brought it back.
+// The outside-tap close is worse, because it closes on POINTERDOWN and the click that follows
+// lands on the minimap underneath. A short deaf window after any close fixes both, and
+// refusing to open while it is already open costs nothing.
+document.getElementById('mini').addEventListener('click', e => {
+  e.stopPropagation();
+  if (MAP.open || performance.now() - (MAP.shutAt || 0) < 450) return;
+  toggleMap(true);
+});
 document.getElementById('mapclose').addEventListener('click', e => { e.stopPropagation(); toggleMap(false); });
 // The map takes its own pointers: two of them pinch, one drags, and a short one that went
 // nowhere is a tap. A tap on open ground drops a waypoint, a tap back on the waypoint takes
@@ -19563,8 +19573,12 @@ const bldEl = document.getElementById('bld');
 // reads as a chase rather than as a hint. A fixed slow drift looks the same near and far.
 // The rest is noise: two out-of-step sines per axis, per mote, off a phase that never repeats
 // across the line, so they wander a little instead of running on rails.
-const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 44, gap: 4.6,
-  flow: 2.4, sway: .55, swayR: .62, bob: .30, bobR: .74 };
+const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 110, gap: 2.5,
+  // 4.6 units apart over a walk of a couple of hundred is a dotted line you lose against the
+  // ground; 2.5 is a line. N is up to match, because the count is the span over the gap and a
+  // denser trail that stops after forty-four motes is a line that ends in the middle of the
+  // walk. The buffer is allocated from N, so the two must move together.
+  sway: .55, swayR: .62, bob: .30, bobR: .74 };
 function buildWaypoint() {
   const g = new THREE.Group(); g.visible = false; scene.add(g); WAY.g = g;
   const uni = { uT: { value: 0 }, uC: { value: col('#7fd8ff') } }; WAY.uni = uni;
@@ -19620,10 +19634,19 @@ function updateWaypoint(dt) {
   WAY.trail.geometry.setDrawRange(0, n);       // the rest of the buffer is simply not drawn
   const ux = dx / (d || 1), uz = dz / (d || 1);
   const rgx = -uz, rgz = ux;                   // the line's own right, for the side-to-side
-  const rate = WAY.flow / Math.max(8, span);   // units a second, expressed as runs a second
+  // ANCHORED TO THE MARK, NOT TO HIM, and that is the whole of the conveyor belt. The motes
+  // were placed at a FRACTION along the line -- (i/n) + t*rate -- so their spacing was the
+  // distance to the mark divided up, and walking toward it shrank the divisor and shunted the
+  // whole trail along. Worse, `rate` had `span` in the denominator, so the closer he got the
+  // faster they ran: the conveyor speeding up when he moved.
+  //
+  // Now each one sits a fixed number of units back from the MARK. It does not move when he
+  // does; he walks through it, which is what he described wanting -- and the ones behind him
+  // simply stop being drawn as the count comes down.
   for (let i = 0; i < n; i++) {
     const ph = i * 2.3999632;                  // the golden angle: no two motes in step
-    const f = ((i / n) + t * rate) % 1, k = 2.5 + f * span;
+    const k = d - 2.0 - i * WAY.gap;
+    if (k < 1.2) { a.array[i * 3 + 1] = -9999; continue; }   // parked under the world, not drawn
     const sway = Math.sin(t * WAY.swayR + ph) * WAY.sway
                + Math.sin(t * WAY.swayR * 1.73 + ph * 2.1) * WAY.sway * .42;
     const bob = Math.sin(t * WAY.bobR + ph * 1.31) * WAY.bob
@@ -19759,6 +19782,12 @@ function mapMarks() {
     if (p instanceof LanternTree && p.growth > .6) out.push({ x: p.pos.x, z: p.pos.z, k: 'tree2' });
     else if (MAP.lod > 3 && p instanceof Bloom && p.size > .5) out.push({ x: p.pos.x, z: p.pos.z, k: 'bloom' });
   }
+  // THE POACHERS. He built one and then could not find him, which is fair: the map has always
+  // shown places and never people. They are the first thing on this island worth walking
+  // TOWARD that moves, so they go on it, and they are drawn at any zoom -- a mark you have to
+  // zoom in to find is no use for finding somebody.
+  for (const c of world.creatures) if (c.alive && c instanceof Poacher && !c.carried)
+    out.push({ x: c.pos.x, z: c.pos.z, k: 'poacher' });
   if (MAP.way) out.push({ x: MAP.way.x, z: MAP.way.z, k: 'way', label: 'waypoint' });
   return out;
 }
@@ -19766,6 +19795,7 @@ const MAP_KEY = {
   you: ['#ffe9b0', 'you'], way: ['#7fd8ff', 'waypoint'], ship: ['#ff8a3c', 'ship'], tree: ['#8fe6a8', 'Elderwillow'],
   camp: ['#ffb45a', 'camp'], cave: ['#9fd6ff', 'cave'], isle: ['#c9a6ff', 'floating isle'],
   beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'], lander: ['#c48cff', 'the lander'],
+  poacher: ['#ff7a6a', 'poacher'],
 };
 function drawMap() { drawMapTo(document.getElementById('mapc'), false); }
 // WHAT AM I LOOKING AT. One ray down the middle of the lens, every HUD tick, reported by
@@ -19925,6 +19955,7 @@ function toggleMap(on) {
     stick.L.x = stick.L.y = stick.R.x = stick.R.y = 0;
     if (!MAP.view.span) { MAP.view.span = 2 * W; MAP.view.cx = MAP.view.cz = 0; clampView(); }
   }
+  if (!MAP.open) MAP.shutAt = performance.now();
   v.hidden = !MAP.open;
   mapB && mapB.classList.toggle('on', MAP.open);
   if (MAP.open) drawMap();
