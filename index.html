@@ -1607,8 +1607,12 @@ const SND_FILES = {
   jewel: ['jewel_noise_01'],
   power: ['powerup_01'],
   // Carried for auditioning, bound to nothing yet.
-  spare: ['laser_01', 'beam_01', 'electricity_beam_01', 'plasma_canon', 'phase_warp_01', 'helix_blaster_air'],
+  spare: ['laser_01', 'beam_01', 'electricity_beam_01', 'plasma_canon', 'phase_warp_01', 'helix_blaster_air', 'fire_burn_01'],
 };
+// How far he goes between footfalls. Measured off nothing -- it is a taste number, and the
+// only thing that makes it wrong is a foot landing visibly out of time with the sound, which
+// is what a stride is for.
+const STEP = { walk: 1.55, run: 2.35 };
 const SFX = {
   ctx: null, master: null, on: true, vol: .8,
   near: 14, far: 90, floor: .12,      // how a sound a long way off is attenuated
@@ -1718,6 +1722,17 @@ const snd = {
   shot: (x, z, c) => SFX.play('laser', .38 + (c || 0) * .22, 1.14 - (c || 0) * .30, x, z)
     || (SFX.blip(1150, .10, 'square', .12, 380, x, z), SFX.noise(.07, .10, 2600, x, z)),
   boom: (x, z) => SFX.play('boom', .7, rnd(.9, 1.1), x, z) || SFX.noise(.4, .3, 700, x, z),
+  // WHAT A BOLT LANDING SOUNDS LIKE. Bright and over quickly, dropping in pitch with the
+  // charge so a big one lands heavier without becoming a different event.
+  zap: (x, z, c) => SFX.play('ping', .34 + (c || 0) * .2, .78 - (c || 0) * .18, x, z)
+    || (SFX.blip(880, .07, 'triangle', .1, 300, x, z), SFX.noise(.05, .12, 2200, x, z)),
+  // FOOTSTEPS ARE SYNTHESISED, and there is nothing to borrow: neither repo has one. Which is
+  // no loss -- a footstep is a short filtered thump, and making it means every step can differ
+  // slightly instead of a four-file pool going round. `hard` is a run rather than a walk.
+  step: (x, z, hard) => {
+    SFX.noise(hard ? .085 : .065, hard ? .16 : .085, hard ? 620 : 460, x, z);
+    SFX.blip(hard ? 92 : 78, .055, 'sine', hard ? .10 : .055, hard ? 55 : 48, x, z);
+  },
   net: (x, z) => SFX.play('swing', .55, rnd(.55, .68), x, z)
     || (SFX.noise(.22, .16, 1100, x, z), SFX.blip(420, .16, 'sine', .07, 160, x, z)),
   thud: (x, z) => SFX.play('crack', .5, rnd(.55, .65), x, z)
@@ -1849,7 +1864,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e7';
+const BUILD = 'e8';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -6045,7 +6060,12 @@ function attachRig(parent, cfg, done) {
       legs.tracks = legs.tracks.filter(t => !CARRY.upper.test(t.name) && !isHipTurn(t.name));
       if (legs.tracks.length) clips[g + 'Legs'] = legs;
     }
-    for (const k of ['walk', 'run', 'rifleWalk', 'rifleRun']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
+    // The alternative gaits get measured too. A tiptoe is a four-and-a-half second clip that
+    // covers about a foot; run it at the walk's rate and the feet crawl while the body slides,
+    // which is the poacher gliding through his own creep. Measured, each one plays at the pace
+    // it is actually travelling, exactly as the walk does.
+    const gaitK = ['walk', 'run', 'rifleWalk', 'rifleRun'].concat(cfg.extraLoop || []);
+    for (const k of gaitK) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
     // each clip's own floor, relative to the pose the rig was normalised on, in model units
     for (const k in clips) { const cl = clips[k]; if (cl && e.floors[cl.name] === undefined) e.floors[cl.name] = clipSpan(e.root, cl); }
     const refF = (clips.idle ? e.floors[clips.idle.name] : clips.walk ? e.floors[clips.walk.name] : { lo: 0 }).lo;
@@ -6120,6 +6140,8 @@ function attachRig(parent, cfg, done) {
       melee: meleeK, wmelee: wmeleeK, oneShot,   // the combo lists, in the order they were named
       rateMax: cfg.rateMax,      // a short-strided clip may need to run faster than the default ceiling
       walkSpeed: walk ? e.strides[walk.name] * s : 0,
+      // stride per gait key, in world units, for anything stepRig is asked to swap in
+      gaitSpeed: (() => { const o = {}; for (const k of gaitK) if (clips[k]) o[k] = e.strides[clips[k].name] * s; return o; })(),
       runSpeed: run ? e.strides[run.name] * s : 0,
       rollT: clips.roll ? clips.roll.duration : 0,        // how long the move should own him
       w: {},                                              // smoothed weight per action
@@ -6264,7 +6286,11 @@ function stepRig(r, dt, speed, grounded, ctx) {
   if (c.gait && a[c.gait]) {
     want[c.gait] = (want.walk || 0) + (want.run || 0);
     want.walk = want.run = 0;
-    a[c.gait].timeScale = clamp(a.walk ? a.walk.timeScale : 1, MODEL.rateMin, r.rateMax || MODEL.rateMax);
+    // Its OWN stride, not the walk's. Borrowing the walk's rate is what made the tiptoe crawl
+    // while the body slid: two clips of very different lengths cannot share a rate and both
+    // put a foot down where the ground goes past.
+    const gs = (r.gaitSpeed && r.gaitSpeed[c.gait]) || ref;
+    a[c.gait].timeScale = clamp(speed / Math.max(.05, gs), MODEL.rateMin, r.rateMax || MODEL.rateMax);
   }
   const actK = clamp(c.actK || 0, 0, 1), actN = (c.act && a[c.act]) ? c.act : null;
   if (actN) {
@@ -12576,6 +12602,19 @@ CHASE.tick = function () {
     this.qp.position.x = this.q.position.x; this.cp.position.x = this.c.position.x;
     this.qp.scale.set(L.quarry * 2.4, L.quarry * .5, 1);
     this.cp.scale.set(L.chaser * 2.1, L.chaser * .42, 1);
+    // FOOTFALLS, ON THE SPLASH. Two sets, offset, so it reads as two animals rather than one
+    // with an echo -- and quiet, because this is under a logo and not in a fight.
+    //
+    // It will be SILENT ON A COLD LOAD and there is no way round that: a browser will not
+    // build an AudioContext before the page has been touched, and nothing has been touched
+    // yet at four seconds into the boot. On a warm load -- a reload, or a return to an
+    // installed app in the same session -- the context is already there and they land. So
+    // this is written to work when it can rather than not written at all.
+    this._st = (this._st || 0) + dt;
+    if (this._st > .17) {
+      this._st = 0;
+      snd.step(); setTimeout(() => snd.step(undefined, undefined, 1), 60);
+    }
   }
   this.r.render(this.scene, this.cam);
   // Across, AND the mark has had its full run. Both are measured from the same instant -- the
@@ -17563,7 +17602,11 @@ class Bolt {
     // only hear it.
     // Only a CHARGED shot lands with a bang. A small explosion on every bolt is what turns a
     // sidearm into a machine gun, and the shot itself already has a voice.
-    if (this.c > .45) { snd.boom(this.x, this.z); addTrauma(.06 + this.c * .14); } else addTrauma(.05);
+    // A light zap on every bolt and a bang only on a charged one. Nothing in either repo is
+    // named for this -- robits kept a _HIT_SFX_FILE slot and never filled it -- so it is the
+    // metal ping pitched down, which is short and bright and does not sound like ordnance.
+    snd.zap(this.x, this.z, this.c);
+    if (this.c > .55) { snd.boom(this.x, this.z); addTrauma(.06 + this.c * .14); } else addTrauma(.05);
     for (const st of world.structures) {
       if (st.alive && st.shatter) st.shatter(this.x, this.y, this.z, R, BL, this.c);
     }
@@ -18803,6 +18846,19 @@ function updatePlayer(dt) {
   const bob = animated ? 0 : Math.abs(Math.sin(bobT)) * .12 * player.moving;
   g.position.y += bob + (player.fly ? Math.sin(world.clock * 1.6) * .25 : 0);
   player.speed = dt > 0 ? Math.hypot(player.pos.x - _prevP.x, player.pos.z - _prevP.z) / dt : 0;
+  // FOOTSTEPS OFF THE GROUND HE COVERS, not off the clip. A clip event would be exact and
+  // would also have to be authored per gait, per species, and re-authored on every export;
+  // a stride's worth of distance is the same answer for a tenth of the work, and it stays
+  // right when the clip is played at a different rate. `hard` is a run rather than a walk,
+  // which is only a different filter and a different weight on the same two oscillators.
+  if (player.grounded && player.swim < .5 && !player.aboard && !player.free && !player.fly && player.speed > .6) {
+    player.stepD = (player.stepD || 0) + player.speed * dt;
+    const hard = player.speed > MOVE.max * .55;
+    if (player.stepD > (hard ? STEP.run : STEP.walk)) {
+      player.stepD = 0;
+      snd.step(player.pos.x, player.pos.z, hard);
+    }
+  } else player.stepD = 0;
   updateRig(dt);
   // airborne: tuck the legs, then squash a little on landing
   player.hang = lerp(player.hang || 0, player.grounded ? 0 : 1, Math.min(1, dt * 10));
