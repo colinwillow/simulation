@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e29';
+const BUILD = 'e30';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -5259,8 +5259,8 @@ class Stump {
 // you cannot tell it from the moss anyway. The big ones keep their range, because a leviathan
 // or a grovewalker at three hundred units is a thing you steer toward.
 const FAR = MOBILE
-  ? { MossTuft: 70, Bloom: 92, Litter: 80, Stump: 92, Mound: 80, Hopper: 96, Skimmer: 92, Burrower: 96, Weaver: 104, Drifter: 110, Grazer: 130, Walker: 230, Leviathan: 280 }
-  : { MossTuft: 165, Bloom: 215, Litter: 185, Stump: 215, Mound: 185, Hopper: 225, Skimmer: 215, Burrower: 230, Weaver: 245, Drifter: 260, Grazer: 300, Walker: 420, Leviathan: 440 };
+  ? { MossTuft: 70, Bloom: 92, Litter: 80, Stump: 92, Mound: 80, Hopper: 96, Skimmer: 92, Burrower: 96, Weaver: 104, Drifter: 110, Grazer: 130, Poacher: 135, Walker: 230, Leviathan: 280 }
+  : { MossTuft: 165, Bloom: 215, Litter: 185, Stump: 215, Mound: 185, Hopper: 225, Skimmer: 215, Burrower: 230, Weaver: 245, Drifter: 260, Grazer: 300, Poacher: 310, Walker: 420, Leviathan: 440 };
 // Sub-pixel from orbit. On the title screen the whole island is in frame at once and every
 // moss tuft on it is still being drawn: 2,600 calls and five million triangles for a picture
 // in which none of them covers a pixel. Past this boom length they simply do not exist.
@@ -5275,14 +5275,40 @@ function cullFar(dt) {
     for (const o of list) {
       const r = FAR[o.constructor.name];
       if (!r || !o.alive || !o.g) continue;
-      if (tiny && TINY[o.constructor.name]) { o.g.visible = false; continue; }
+      if (tiny && TINY[o.constructor.name]) { o.g.visible = false; o.farHid = true; continue; }
       // Never hide one that is in the air or in his arms: those two are the moments you are
       // certainly looking at it, and a distance test on a body that is being moved by
       // something other than its own legs is a test on a number that is mid-change.
-      if (o.fling || o.carried) { o.g.visible = true; continue; }
+      if (o.fling || o.carried) { o.g.visible = true; o.farHid = false; continue; }
       const dx = o.pos.x - x, dz = o.pos.z - z;
-      o.g.visible = dx * dx + dz * dz < r * r;
+      // `farHid` is this pass's own answer, kept apart from g.visible so that cullView below
+      // can hide a near creature that is behind the lens without this pass, three tenths of a
+      // second later, reading that as "far" and never showing it again.
+      o.g.visible = dx * dx + dz * dz < r * r; o.farHid = !o.g.visible;
     }
+}
+// ---------- and what the lens can actually see ----------
+// FAR hides what is too far to matter. This hides what is BEHIND THE LENS. A skinned mesh
+// runs with frustumCulled off -- its bounding sphere does not follow its bones, so three.js
+// would wink it out at the screen edge -- and the cost of that is that every creature inside
+// its FAR radius is drawn every frame, in the main pass and again in the shadow pass, whether
+// it is in frame or not. The camera sits low and close behind him: half of any FAR circle is
+// behind it. One sphere test per creature against the real frustum, with a margin wide
+// enough that nothing can wink at the edge, and it runs every frame because the camera
+// turns every frame -- a test on a stale frustum pops things in at the edge of a pan.
+//
+// AND A HIDDEN CREATURE DOES NOT STEP ITS RIG. The mixer is the single dearest thing a
+// creature does per frame, and there is nobody to see the result. It resumes where it was.
+const _frus = new THREE.Frustum(), _frusM = new THREE.Matrix4(), _frusS = new THREE.Sphere();
+function cullView() {
+  _frusM.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  _frus.setFromProjectionMatrix(_frusM);
+  for (const c of world.creatures) {
+    if (!c.alive || !c.g || c.farHid || c.fling || c.carried) continue;
+    planetPos(c.pos.x, c.pos.y + 1.2, c.pos.z, _frusS.center);
+    _frusS.radius = (c.rad || 1) * 4 + 5;       // a rig reaches well past its collider
+    c.g.visible = _frus.intersectsSphere(_frusS);
+  }
 }
 
 // Nothing the island makes may accumulate for ever. Felling a tree used to leave a stump
@@ -8266,6 +8292,9 @@ class Creature {
     if (this.rig) {
       const px = this.px2 === undefined ? this.rx : this.px2, pz = this.pz2 === undefined ? this.rz : this.pz2;
       this.px2 = this.rx; this.pz2 = this.rz;
+      // Off screen or past FAR, nothing below is seen. The bookkeeping above still runs so
+      // the speed it hands over on the frame it comes back is a real speed, not a jump.
+      if (this.g.visible === false) return;
       stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic,
         // act / gait are how a species with its own clips drives them: it sets them on itself
         // and this hands them through. Nothing that has neither pays anything for them.
@@ -21126,7 +21155,7 @@ function frame(now) {
   updateWaypoint(dt);
   if (MAP.open) { clampView(); drawMap(); }
   drawMini(dt); showAct();
-  weatherLeavings(dt); cullFar(dt); stainTick(dt); blobStep(); stepSlash(dt); MUSIC.step(dt);
+  weatherLeavings(dt); cullFar(dt); cullView(); stainTick(dt); blobStep(); stepSlash(dt); MUSIC.step(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
   waterUni.uT.value = world.clock; foamUni.uT.value = world.clock; grassUni.uT.value = world.clock;
