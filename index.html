@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd94';
+const BUILD = 'd95';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -8717,13 +8717,20 @@ function flameMat(hot, cool, dia = 1, alpha = 1) {
 // floating isle when you are over it and above its deck. `groundY` deliberately stays the
 // terrain alone -- every creature, mote and blade of grass reads it, and none of them has
 // any business standing on something eighty units up.
-function deckY(x, z, y) {
+// `y0` is where the body WAS. Without it this is a point test on a surface a body can cross
+// in one frame: eject over the isle and you fall thirty units a second, which at sixty frames
+// is half a unit -- fine -- but the band is only 1.6 deep and anything faster, a fall from
+// height or a dropped frame, steps straight over it and the test reports the ground far
+// below. That is falling through it. Given both ends of the step, the deck catches anything
+// that was above it a moment ago, which is what a floor is.
+function deckY(x, z, y, y0) {
   const g = groundY(x, z), isle = world.isle;
   if (!isle || !isle.alive) return g;
   const dx = x - isle.pos.x, dz = z - isle.pos.z;
   if (Math.hypot(dx, dz) > isle.R * .94) return g;
   const top = isle.g.position.y + isle.topH(dx, dz);
-  return (top > g && y > top - 1.6) ? top : g;   // above it, it is a deck; below it, fly under
+  const hi = (y0 === undefined || y0 < y) ? y : y0;
+  return (top > g && hi > top - 1.6) ? top : g;   // above it, it is a deck; below it, fly under
 }
 class Ship {
   constructor(x, z, face) {
@@ -14473,7 +14480,9 @@ const WEAPONS = {
   // CALL THE SHIP. Not a weapon at all, but this is the only wheel he has and a thing you
   // aim and throw belongs on it. It lands where you are pointing, plants a lit marker, and
   // the ship lifts, routes over whatever is between, and sets down on it.
-  beacon: { label: 'beacon', charge: 0, cool: () => BEACON.cool,
+  // `hand` marks it as something he HOLDS rather than something he shoulders: no rifle stance,
+  // no blaster in the fist, and the ordinary idle and walk underneath.
+  beacon: { label: 'beacon', charge: 0, hand: 1, cool: () => BEACON.cool,
     icon: '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4v9"/><circle cx="16" cy="16" r="3.2"/><path d="M9 26l5-7M23 26l-5-7"/><path d="M6.5 9.5a13 13 0 0 0 0 13M25.5 9.5a13 13 0 0 1 0 13"/></svg>' },
   // A MELEE WEAPON ON THE SAME RACK. It is a stand-in for a model, built out of six
   // primitives, and it hangs on the same joint the blaster does -- there is only one weapon
@@ -15884,6 +15893,26 @@ function attachWeapon(r) {
       envUse(g3, .5); markBody(g3);
       weap.bone.add(g3); weap.net = g3; g3.visible = false; weap.netK0 = k;
     }
+    // THE BEACON, in his hand rather than shouldered. Small -- a canister the size of a fist
+    // with a lit band and a cage over the lamp -- because he is meant to look like a man
+    // holding something, not a man aiming something.
+    {
+      const g5 = new THREE.Group();
+      const L = tipD * W.fit / Math.max(1e-4, k) * .42;
+      g5.add(mesh(G.cyl, M.domeSteel, L * .30, L * .78, L * .30, 0, 0, L * .30).rotateX(Math.PI / 2));
+      g5.add(mesh(G.cyl, M.domeDark, L * .34, L * .10, L * .34, 0, 0, L * .00).rotateX(Math.PI / 2));
+      g5.add(mesh(G.cyl, M.domeTrim, L * .33, L * .08, L * .33, 0, 0, L * .46).rotateX(Math.PI / 2));
+      g5.add(mesh(G.sph, M.domeGlass, L * .26, L * .26, L * .26, 0, 0, L * .78));
+      for (let i = 0; i < 3; i++) {
+        const a = i / 3 * Math.PI * 2;
+        g5.add(mesh(G.box, M.domeSteel, L * .06, L * .06, L * .34, Math.cos(a) * L * .24, Math.sin(a) * L * .24, L * .74));
+      }
+      const gl = glow(BEACON.col, L * 1.5, .5); gl.position.z = L * .78; g5.add(gl);
+      g5.scale.setScalar(k); g5.position.fromArray(W.drop);
+      g5.traverse(m => { if (m.isMesh) m.castShadow = true; });
+      envUse(g5, .5); markBody(g5);
+      weap.bone.add(g5); weap.bea = g5; g5.visible = false; weap.beaK0 = k;
+    }
     weap.ready = true;
     if (!weap.fx) buildChargeFx();
     if (!INTRO.on) wdock.hidden = false;
@@ -16339,12 +16368,22 @@ function stepThrow(dt, rx, ry) {
 // The beacon's wind-up. Deliberately the same shape as stepThrow, down to the flick test, so
 // the two read as one gesture with two things on the end of it -- the only differences are
 // what it launches and that there is nothing in his arms to put down instead.
+// AND IT DOES NOT OWN THE STICK. Every other thing on the wheel is aimed, so taking the right
+// stick the moment it moves is right for them -- but with the beacon out there is nothing to
+// aim at until you decide to throw one, and taking the stick at THROW.at meant that selecting
+// the beacon cost you the camera entirely. You could not look around holding it.
+//
+// So it LATCHES instead: a firm push past `at` commits to the throw and from then on the whole
+// pad is the placement, right down to `keep`; anything short of that is just looking. The
+// commit is deliberately well past where a look lives, and a flick sails through it on its way
+// out, so the quick toss is unchanged.
+const TOSS = { at: .70, keep: .18 };
 function stepToss(dt, rx, ry) {
   const p = player;
   const mag = Math.hypot(rx, ry);
-  if (mag > THROW.at) {
+  if (mag > (p.windOwn === 'beacon' ? TOSS.keep : TOSS.at)) {
     throwStick(dt, rx, ry, 'beacon', BTOSS.speed);
-    p.tossAim = 1; p.aiming = 1;                   // he stands like a man about to throw
+    p.tossAim = 1;                                 // NOT p.aiming: that is the rifle stance
     throwMarkStep(true, p.throwK, BTOSS);
     return true;
   }
@@ -16599,12 +16638,13 @@ function stepWeapon(dt, rx, ry) {
     }
     if (show !== p.wpnShow) { p.wpnShow = show; weaponPop(show); }
     p.wpnK = lerp(p.wpnK, show, Math.min(1, dt / ARMA.pop));
-    const k = p.wpnK, vis = k > .02, ax = p.wpn === 'axe', nt = p.wpn === 'net';
+    const k = p.wpnK, vis = k > .02, ax = p.wpn === 'axe', nt = p.wpn === 'net', bc = p.wpn === 'beacon';
     // it assembles rather than appearing: up through its own size with a little overshoot
     const sc = k * (1.06 - .06 * k);
-    if (weap.model) { weap.model.visible = vis && !ax && !nt; if (weap.k0) weap.model.scale.setScalar(weap.k0 * sc); }
+    if (weap.model) { weap.model.visible = vis && !ax && !nt && !bc; if (weap.k0) weap.model.scale.setScalar(weap.k0 * sc); }
     if (weap.axe) { weap.axe.visible = vis && ax; if (weap.axeK0) weap.axe.scale.setScalar(weap.axeK0 * sc); }
     if (weap.net) { weap.net.visible = vis && nt; if (weap.netK0) weap.net.scale.setScalar(weap.netK0 * sc); }
+    if (weap.bea) { weap.bea.visible = vis && bc; if (weap.beaK0) weap.bea.scale.setScalar(weap.beaK0 * sc); }
   }
   armB.classList.toggle('on', !!p.armWant);
   if (!(canHold && p.armed > .5)) {
@@ -17944,8 +17984,9 @@ function updatePlayer(dt) {
     }
     // deckY, not height: whatever the ship can land on he can stand on, which right now
     // means the floating isle. Step out of a ship parked on it and the ground is there.
-    const deck = Math.max(deckY(player.pos.x, player.pos.z, player.pos.y),
+    const deck = Math.max(deckY(player.pos.x, player.pos.z, player.pos.y, player._y0),
                           standOn(player.pos.x, player.pos.z, player.pos.y));
+    player._y0 = player.pos.y;
     // Over deep water the dry target is the surface itself — not flat SEA — so a fall lands
     // on the actual swell and the swim picks up from there rather than hovering above a
     // trough. **Only over deep water.** Unguarded, that max() applied on the beach too: the
@@ -18486,7 +18527,7 @@ function updateRig(dt) {
     // The armed SET is the rifle set -- braced, muzzle up, both hands forward -- and that is
     // the wrong body for anything you swing. A melee weapon keeps the ordinary idle, walk and
     // run until there are clips authored for holding one.
-    armed: (WEAPONS[p.wpn] && WEAPONS[p.wpn].melee) ? 0 : p.armed, shoot: p.shootT > 0,
+    armed: (WEAPONS[p.wpn] && (WEAPONS[p.wpn].melee || WEAPONS[p.wpn].hand)) ? 0 : p.armed, shoot: p.shootT > 0,
     act: p.actN, actK: p.actK, actFrom: p.actFrom || 0,
     // How far into the cocked-arm pose he is. It is a ramp, not a switch, so the arm comes
     // back over a beat rather than snapping into place on the frame the thumb crosses THROW.at.
