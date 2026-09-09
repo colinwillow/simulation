@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd76';
+const BUILD = 'd77';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -14032,7 +14032,11 @@ const WEAPONS = {
 // or laid flat, and `drop` is a last nudge in joint units if it wants to sit further out of
 // his fist. `lift` and `tilt` are the two other turns, there so nothing here needs a code
 // change to try: isle.axe({ roll: 1.57 }) applies any of them at once and prints the set.
-const AXEM = { url: 'models/alien_axe.glb', grip: .40, len: 1.15, roll: 0, lift: 0, tilt: 0, drop: [0, 0, 0] };
+// roll = pi: half a turn about the shaft, which is what puts the blade on the outside of
+// his fist rather than facing back at him. The order below is ZYX, so the X quarter-turn that
+// stands the model along the weapon axis happens FIRST and the Z turn is then about the shaft
+// itself -- which is why this is one number and not a re-derivation of the whole basis.
+const AXEM = { url: 'models/alien_axe.glb', grip: .40, len: 1.15, roll: Math.PI, lift: 0, tilt: 0, drop: [0, 0, 0] };
 function fitAxe() {
   const m = weap.axeM, g = weap.axe;
   if (!m || !g) return AXEM;
