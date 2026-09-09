@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e37';
+const BUILD = 'e38';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -1843,6 +1843,12 @@ const snd = {
     SFX.blip(f, .045 + .055 * q, 'sine', .05 + .13 * q, f * .55, x, z);
     SFX.noise(.035, .02 + .05 * q, 900 + 600 * (1 - q), x, z);
   },
+  // THE ARM CROSSING THE BODY. The same air the swing and the leap use, because it is the same
+  // motion done slower, and pitched by which way it is going: up and quick for a draw, down
+  // and slower for putting it away.
+  arm: (x, z, out) => SFX.play('swing', .3, out ? rnd(1.00, 1.16) : rnd(.70, .84), x, z)
+    || (SFX.noise(.13, .09, out ? 1900 : 1150, x, z),
+        SFX.blip(out ? 380 : 240, .09, 'sine', .04, out ? 640 : 140, x, z)),
   // FOOTSTEPS ARE SYNTHESISED, and there is nothing to borrow: neither repo has one. Which is
   // no loss -- a footstep is a short filtered thump, and making it means every step can differ
   // slightly instead of a four-file pool going round. `hard` is a run rather than a walk.
@@ -18924,6 +18930,14 @@ function paintWeapon() {
   for (const b of wrack.children) b.classList.toggle('sel', b.dataset.w === player.wpn);
   armB.classList.toggle('on', !!player.armWant);
 }
+// ON THE HAND-OFF FRAME, not on the tap. The weapon leaves his hand or arrives in it at
+// ARMA.at of the clip -- that is the one frame where the hand is at the rack, and it is what
+// `show` above is keyed to -- so the noise belongs there too. Set after playAct, which clears
+// actFire as part of starting a move.
+function armSound(out) {
+  const p = player;
+  p.actFire = { t: p.actMax * ARMA.at, fn: () => snd.arm(p.pos.x, p.pos.z, out) };
+}
 function pickWeapon(k) {
   if (!WEAPONS[k] || player.aboard || player.free) return;
   if (player.carry || player.liftT > 0) { logMsg('Not with his arms full.'); return; }
@@ -18932,7 +18946,7 @@ function pickWeapon(k) {
   // seconds of standing still and nobody would ever use the rack twice.
   const swap = player.wpn !== k && player.armWant;
   if (player.wpn !== k) { player.wpn = k; player.charge = 0; player.cool = Math.max(player.cool, .3); }
-  if (swap || !player.armWant) { player.armAct = { to: 1 }; playAct(ARMA.clip, swap ? ARMA.swap : ARMA.rate); }
+  if (swap || !player.armWant) { player.armAct = { to: 1 }; playAct(ARMA.clip, swap ? ARMA.swap : ARMA.rate); armSound(1); }
   player.armWant = 1;                       // choosing one is also drawing it
   paintWeapon();
   logMsg('He racks the ' + WEAPONS[k].label + '.');
@@ -18945,6 +18959,7 @@ function toggleArm() {
   player.armWant = player.armWant ? 0 : 1;
   player.armAct = { to: player.armWant ? 1 : 0 };
   playAct(ARMA.clip, ARMA.rate);
+  armSound(player.armWant);
   paintWeapon();
   logMsg(player.armWant
     ? 'He unclips the ' + WEAPONS[player.wpn].label + '. Push the right stick all the way UP to aim; let go to fire.'
