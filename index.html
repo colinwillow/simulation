@@ -1864,7 +1864,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e10';
+const BUILD = 'e11';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -10981,8 +10981,12 @@ const DOME = {
   capH: 3.6,       // the dome on top of it
   cols: 28,        // panels round the wall
   courses: 3,
-  doorCols: 2,     // panels left out for the doorway
-  door: { w: 2.3, h: 3.2 },
+  // PANELS LEFT OUT FOR THE DOORWAY, and this used to be 2, which left exactly ONE out: the
+  // test is `off < half * doorCols` and the column at half*2 is not less than half*2. A single
+  // panel is a 1.2-wide hole and the player is 2.4 across, so the doorway was narrower than he
+  // is before a single collider was considered. Four leaves three out -- a 3.4 hole.
+  doorCols: 4,
+  door: { w: 3.1, h: 3.2 },
 };
 function buildDomeHut(x, z, yaw) {
   const S = siteAt(x, z, yaw); S.kind = 'dome';
@@ -11074,10 +11078,24 @@ function buildDomeHut(x, z, yaw) {
   // ---- and it is SOLID, with a way in ----
   // One collider per panel column rather than one circle round the lot, because a circle
   // cannot have a doorway in it and the doorway is the whole point of building it this way.
-  for (let i = 0; i < D.cols; i += 2) {
+  // `block` takes a RADIUS -- it hands its third argument straight to obAdd -- and this passed
+  // it `chord * 1.05`, which is the panel's full WIDTH. Every collider in the ring was twice
+  // the size of the panel it stood for, so the two flanking the door, 2.26 out from the
+  // doorway's axis with a 1.27 radius and a 1.2-radius player, OVERLAPPED ON THE CENTRELINE.
+  // The hole in the wall was real the whole time and the collider ring had never had a gap in
+  // it: you could see through the door and walk into the doorway and no further.
+  //
+  // Half the chord, and one per column instead of every other one, so the circles still
+  // overlap into a continuous wall at 28 of them rather than leaving 14 gaps you could squeeze
+  // between. And the collider gap runs one panel wider than the hole on each side, because a
+  // circle at the wall reaches 1.2 further than the wall does and a 2.4-wide player cannot
+  // thread a doorway whose jambs are guarded to the middle. The panel that leaves uncollided
+  // sits almost entirely inside the reach of the next collider along, so what it costs is a
+  // sliver of shoulder clipping the reveal, not a wall you can walk through.
+  for (let i = 0; i < D.cols; i++) {
     const a = i * step;
-    if (Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) < half * (D.doorCols + 1)) continue;
-    S.block(Math.sin(a) * R, Math.cos(a) * R, chord * 1.05, D.wallH + D.capH * .9);
+    if (Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) < half * (D.doorCols + 2)) continue;
+    S.block(Math.sin(a) * R, Math.cos(a) * R, chord * .55, D.wallH + D.capH * .9);
   }
   S.done();
   world.structures.push(new DomeDoor(S, D, dw, dh, dz, yaw));
