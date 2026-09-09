@@ -1616,7 +1616,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e41';
+const BUILD = 'e42';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -21283,8 +21283,14 @@ function updateHUD() {
         + SFX.miss.slice(0, 3).join(', ') + (SFX.miss.length > 3 ? ' +' + (SFX.miss.length - 3) : '') + '</span>';
       return;
     }
+    // THE BUILD ALONE UNLESS SOMETHING IS ASKED FOR. The line under the title is the one piece
+    // of chrome that is always on screen, and most of what it was saying was an advertisement
+    // for a debug switch: without ?look, lookingAt() returns "add ?look to the URL" and that
+    // is what sat under the title, permanently, for everybody. The readout is still there
+    // with ?look on, and the stats panel prints it either way -- that is where a thing you
+    // have to ask for belongs.
     bldEl.innerHTML = BUILD + (KDBG ? '+knock' : '') + (KOBS ? '+obs' : '')
-      + '  \u00b7  ' + (INTRO.on ? 'title' : lookingAt());
+      + (KLOOK && !INTRO.on ? '  \u00b7  ' + lookingAt() : '');
   }
 }
 setInterval(updateHUD, 600); updateHUD();
