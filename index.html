@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd89';
+const BUILD = 'd90';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -3578,7 +3578,7 @@ function stainFlush() {
 // already knows where every solid thing is and how wide it is, so this needs no hook in the
 // twenty classes that put something down. `_stained` marks what has been done, which is what
 // makes calling it again cheap: it only picks up what has been built since.
-function stainWorld() {
+function stainWorld(hold) {
   let n = 0;
   for (const a of OB.map.values()) for (const o of a) {
     if (o._stained) continue;
@@ -3597,7 +3597,7 @@ function stainWorld() {
     n++;
   }
   _stain.n += n;
-  stainFlush();
+  if (!hold) stainFlush();
   return n;
 }
 // ---------- and the things that move ----------
@@ -3670,11 +3670,18 @@ function blobStep() {
 }
 // Anything built, grown or dropped since the last look. Cheap enough at 0.4 Hz that nothing
 // has to remember to call it.
-let stainT = 3;
+// NOT EVERY COUPLE OF SECONDS. Setting needsUpdate on the stain map re-uploads the whole
+// canvas -- four megabytes on a phone -- and in a jungle a tree finishes growing every few
+// seconds, so this was handing the driver a full texture upload at 0.4 Hz for ever. The pools
+// are still painted the moment something appears; only the upload waits, and a tree's shadow
+// arriving twenty seconds late is a thing nobody will ever see.
+let stainT = 3, stainNew = 0, stainUp = 0;
 function stainTick(dt) {
+  stainUp += dt;
   if ((stainT -= dt) > 0) return;
   stainT = 2.5;
-  stainWorld();
+  stainNew += stainWorld(true);
+  if (stainNew && (stainNew >= 8 || stainUp > 20)) { stainNew = 0; stainUp = 0; _stain.tex.needsUpdate = true; }
 }
 // Start again at a different strength -- or at zero, which is the A/B.
 function stainSet(k) {
@@ -19241,13 +19248,21 @@ const perf = { ms: 16.7, worst: 0, acc: 0, n: 0 };
 // log as well as the console, because the console is not where he is.
 const PROF = {
   on: 0, i: 0, skip: 0, take: 0, samples: [], rows: [], noPost: 0, noBloom: 0, base: 0,
-  warm: 14, count: 34,        // frames thrown away after a change, then frames kept
+  warm: 14, count: 26,        // frames thrown away after a change, then frames kept
 };
+// A BASELINE ON EITHER SIDE OF EVERY STEP. Four screenshots of the same spot with the same
+// settings came in at 26.7, 43.0, 28.0 and 30.7 ms -- a sixteen millisecond spread with the
+// draw calls and the triangle count all but identical. That is a phone getting hot, and it
+// means any single measurement here carries an error bar wider than most of the things worth
+// measuring. Two baselines at the ends of a run only DETECT that drift; measuring one before
+// and after each step CANCELS it, because a step is now compared against the machine as it
+// was either side of that step rather than against how it was a minute ago.
 function profSteps() {
   const u = compMat.uniforms;
   const st = [];
-  const add = (name, off, on, warm) => st.push({ name, off, on, warm: warm || PROF.warm });
-  add('— baseline —', () => {}, () => {});
+  const base = () => st.push({ name: '—', off: () => {}, on: () => {}, warm: 8, base: 1 });
+  const add = (name, off, on, warm) => { st.push({ name, off, on, warm: warm || PROF.warm }); base(); };
+  base();
   add('half the pixels', () => setDpr(Q.dpr * .707), () => setDpr(PROF.dpr0), 24);
   add('no post chain at all', () => PROF.noPost = 1, () => PROF.noPost = 0);
   add('no bloom', () => { PROF.noBloom = 1; u.uStr.value = 0; }, () => { PROF.noBloom = 0; u.uStr.value = PROF.str0; });
@@ -19262,7 +19277,6 @@ function profSteps() {
                       () => { for (const p of world.psys) if (p.pts) p.pts.visible = true; });
   add('no shadows', () => { renderer.shadowMap.enabled = false; scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); },
                      () => { renderer.shadowMap.enabled = true; scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); }, 40);
-  add('— baseline again —', () => {}, () => {});
   return st;
 }
 function profStart() {
@@ -19296,17 +19310,31 @@ function profStep(raw) {
 }
 function profReport() {
   const r = PROF.rows;
-  const b0 = r[0].ms, b1 = r[r.length - 1].ms;
-  const base = (b0 + b1) * .5;
-  const drift = Math.abs(b0 - b1);
-  const out = r.slice(1, -1).map(x => ({ what: x.name, ms: x.ms, saved: base - x.ms }))
-    .sort((x, y) => y.saved - x.saved);
-  const pct = v => (v / base * 100).toFixed(0) + '%';
-  console.log('baseline ' + base.toFixed(1) + ' ms (' + (1000 / base).toFixed(0) + ' fps), drift between the two baselines ' + drift.toFixed(1) + ' ms');
-  for (const o of out) console.log('  ' + o.what.padEnd(22) + o.ms.toFixed(1) + ' ms   saves ' + o.saved.toFixed(1) + '  ' + pct(o.saved));
-  logMsg('Frame is ' + base.toFixed(1) + ' ms, about ' + (1000 / base).toFixed(0) + ' fps.');
-  for (const o of out.slice(0, 4)) logMsg(o.what + ': ' + (o.saved > .3 ? 'saves ' + o.saved.toFixed(1) + ' ms (' + pct(o.saved) + ')' : 'costs nothing'));
-  if (drift > base * .12) logMsg('The two baselines disagree by ' + drift.toFixed(1) + ' ms — the view changed under it, so read this loosely.');
+  const bases = r.filter(x => x.base).map(x => x.ms);
+  const mean = bases.reduce((a, b) => a + b, 0) / Math.max(1, bases.length);
+  const spread = Math.max.apply(null, bases) - Math.min.apply(null, bases);
+  const out = [];
+  for (let i = 0; i < r.length; i++) {
+    if (r[i].base) continue;
+    // the machine as it was either side of this step
+    const lo = r[i - 1] && r[i - 1].base ? r[i - 1].ms : mean;
+    const hi = r[i + 1] && r[i + 1].base ? r[i + 1].ms : mean;
+    const near = (lo + hi) * .5;
+    out.push({ what: r[i].name, ms: r[i].ms, saved: near - r[i].ms, near });
+  }
+  out.sort((x, y) => y.saved - x.saved);
+  const pct = v => (v / mean * 100).toFixed(0) + '%';
+  console.log('frame ' + mean.toFixed(1) + ' ms (' + (1000 / mean).toFixed(0) + ' fps) across ' + bases.length
+    + ' baselines, which themselves spread ' + spread.toFixed(1) + ' ms');
+  for (const o of out) console.log('  ' + o.what.padEnd(30) + o.ms.toFixed(1) + ' vs ' + o.near.toFixed(1)
+    + '   saves ' + o.saved.toFixed(1) + '  ' + pct(o.saved));
+  logMsg('Frame is ' + mean.toFixed(1) + ' ms, about ' + (1000 / mean).toFixed(0) + ' fps.');
+  // Nothing smaller than the machine's own wobble is worth reporting as a finding.
+  const floor = Math.max(.6, spread * .35);
+  const real = out.filter(o => o.saved > floor);
+  if (!real.length) logMsg('Nothing measured bigger than the noise (' + spread.toFixed(1) + ' ms of drift). No single thing is the problem.');
+  for (const o of real.slice(0, 4)) logMsg(o.what + ': saves ' + o.saved.toFixed(1) + ' ms (' + pct(o.saved) + ')');
+  if (spread > mean * .25) logMsg('The machine drifted ' + spread.toFixed(1) + ' ms during the run — it is probably getting hot.');
   return out;
 }
 function updateHUD() {
