@@ -1635,6 +1635,33 @@ const SFX = {
       });
     }
   },
+  // WHERE THE SOUND ACTUALLY STARTS AND STOPS. An exported effect is very often a short noise
+  // sitting in a long file: leading silence, then the event, then a tail of nothing. Played
+  // from zero that is a sound with a delay bolted to the front of it -- the blaster that fires
+  // silently, the footsteps that arrive a moment after he sets off -- and no amount of work on
+  // the trigger side can fix a file whose first half second is empty.
+  //
+  // So every buffer is scanned once, when it decodes, for the first and last block that is
+  // above the floor, and everything that plays it starts and ends there instead. -46 dBFS is
+  // low enough to ignore a noise floor and high enough not to be fooled by one; a fiftieth of
+  // a second of head room keeps the attack, which is the part of a transient that carries it.
+  // A buffer that is silent throughout is left alone rather than reduced to nothing.
+  edge(buf) {
+    if (buf._lead !== undefined) return buf;
+    const n = buf.length, sr = buf.sampleRate, TH = .005, B = 128;
+    let a = -1, b = -1;
+    const ch = [];
+    for (let c = 0; c < buf.numberOfChannels; c++) ch.push(buf.getChannelData(c));
+    for (let i = 0; i < n; i += B) {
+      const e = Math.min(n, i + B); let peak = 0;
+      for (const d of ch) for (let k = i; k < e; k++) { const v = d[k] < 0 ? -d[k] : d[k]; if (v > peak) peak = v; }
+      if (peak > TH) { if (a < 0) a = i; b = e; }
+    }
+    if (a < 0) { buf._lead = 0; buf._end = buf.duration; return buf; }
+    buf._lead = Math.max(0, a / sr - .02);
+    buf._end = Math.min(buf.duration, b / sr + .04);
+    return buf;
+  },
   decode() {
     if (!this.ctx) return;
     for (const k in this.raw) {
@@ -1642,7 +1669,7 @@ const SFX = {
       this.raw[k].forEach((b, i) => {
         if (!b || this.buf[k][i] === 0) return;
         this.buf[k][i] = 0;                       // claimed, so a second wake does not decode it twice
-        this.ctx.decodeAudioData(b.slice(0), out => { this.buf[k][i] = out; }, () => { this.buf[k][i] = null; });
+        this.ctx.decodeAudioData(b.slice(0), out => { this.buf[k][i] = this.edge(out); }, () => { this.buf[k][i] = null; });
       });
     }
   },
@@ -1670,10 +1697,14 @@ const SFX = {
     // `i` given: take that one, so a caller with a counter can cycle its pool in order. Left
     // out: one at random, which is what every other sound in the file wants.
     src.buffer = i === undefined ? ok[(Math.random() * ok.length) | 0] : ok[((i % ok.length) + ok.length) % ok.length];
-    src.playbackRate.value = rate || 1;
+    const r = rate || 1;
+    src.playbackRate.value = r;
     const g = this.ctx.createGain();
     g.gain.value = (v === undefined ? .7 : v) * this.gainAt(x, z);
-    src.connect(g); g.connect(this.master); src.start(this.ctx.currentTime);
+    src.connect(g); g.connect(this.master);
+    // From where the noise starts, to where it stops. Not from zero to the end of the file.
+    const bf = src.buffer, t0 = this.ctx.currentTime;
+    src.start(t0, bf._lead || 0, Math.max(.02, (bf._end === undefined ? bf.duration : bf._end) - (bf._lead || 0)));
     return true;
   },
   init() {
@@ -1810,10 +1841,17 @@ const FOOT = {
   ready() {
     if (this.buf) return !!(SFX.ctx && SFX.on);
     const b = (SFX.buf.steps || [])[0];
-    if (b && b.duration) this.buf = b;
+    if (b && b.duration) { this.buf = b; this.off = b._lead || 0; }
     return !!(this.buf && SFX.ctx && SFX.on);
   },
-  at() { return (this.off + (SFX.ctx.currentTime - this.t0) * this.rate) % this.buf.duration; },
+  lead() { return this.buf._lead || 0; },
+  tail() { const e = this.buf._end; return e === undefined ? this.buf.duration : e; },
+  // Where in the recording the source playing right now has reached. Measured inside the
+  // loop region, so it comes back somewhere that is actually a footstep.
+  at() {
+    const a = this.lead(), span = Math.max(.05, this.tail() - a);
+    return a + (((this.off - a) + (SFX.ctx.currentTime - this.t0) * this.rate) % span + span) % span;
+  },
   kill() {
     if (this.src) { try { this.src.stop(); } catch (e) {} }
     this.src = null; this.g = null; this.on = false;
@@ -1824,12 +1862,16 @@ const FOOT = {
     if (ctx.state !== 'running') SFX.wake();
     const src = ctx.createBufferSource();
     src.buffer = this.buf; src.loop = true;
-    src.loopStart = 0; src.loopEnd = this.buf.duration;
+    // Round the RECORDING, not round the file. Half a second of dead air at the top of the
+    // export is half a second of nothing every time the loop comes round, which reads as
+    // footsteps that keep stopping.
+    src.loopStart = this.lead(); src.loopEnd = this.tail();
     src.playbackRate.value = r;
     const g = ctx.createGain(); g.gain.value = 0;
     g.gain.setTargetAtTime(v, now, this.fade);
     src.connect(g); g.connect(SFX.master);
-    src.start(now, this.off % this.buf.duration);
+    const a = this.lead(), span = Math.max(.05, this.tail() - a);
+    src.start(now, a + (((this.off - a) % span) + span) % span);
     this.src = src; this.g = g; this.gv = v; this.t0 = now; this.rate = r; this.on = true;
   },
   // Returns false when there is no recording yet, so the caller can fall back to the synth.
@@ -1928,7 +1970,7 @@ const MUSIC = {
         if (!b) return;
         this.raw[k][i] = null;
         SFX.ctx.decodeAudioData(b.slice(0), out => {
-          (this.track[k] = this.track[k] || [])[i] = out;
+          (this.track[k] = this.track[k] || [])[i] = SFX.edge(out);
           if (this.want === k && !this.cur) this.go(k);
         }, () => {});
       });
@@ -1958,11 +2000,14 @@ const MUSIC = {
     // through and hand over, which is why a night does not become a six-minute round.
     const solo = list.length < 2;
     src.loop = solo;
-    if (solo) { src.loopStart = .02; src.loopEnd = Math.max(.1, buf.duration - .02); }
+    // The same measured edges the effects use. An MP3 encoder pads both ends because the
+    // format works in frames, and a piece exported with room around it has more than padding.
+    const a0 = buf._lead || .02, a1 = buf._end === undefined ? buf.duration - .02 : buf._end;
+    if (solo) { src.loopStart = a0; src.loopEnd = Math.max(a0 + .1, a1); }
     else src.onended = () => { if (this.cur === src && this.curName === k && this.on) this.go(k, true); };
     const g = ctx.createGain(); g.gain.setValueAtTime(.0001, t);
     g.gain.linearRampToValueAtTime(1, t + this.fade);
-    src.connect(g); g.connect(bus); src.start(t);
+    src.connect(g); g.connect(bus); src.start(t, a0);
     this.cur = src; this.curGain = g; this.curName = k; this.curBuf = buf; this.want = k;
   },
   stop() {
@@ -2029,7 +2074,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e22';
+const BUILD = 'e23';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -7314,7 +7359,11 @@ function stepFace(c, dt) {
 // One blow, wherever it came from. Everything else -- the fling, the species barometer, the
 // flock alarm -- is already handled by knock/stagger; this is only the part that is about the
 // individual: what it costs it, and what it decides to do about it.
-function creatureHurt(c, k, from) {
+// `quiet` is for a blow that is ALREADY making a noise. The daze below is a state sound -- it
+// says the animal has gone under -- and on a melee or a bolt it lands in the same instant as
+// the impact, so what he hears is the punch and a metal ting on top of it. The caller that
+// owns the impact says so and this one stays out of the way.
+function creatureHurt(c, k, from, quiet) {
   if (!c || !c.alive || c.vig === undefined) return;
   c.vig = clamp(c.vig - k, 0, 1); c.hurtAt = world.clock;
   c.trust = 0;                                  // whatever he had built up, that was that
@@ -7324,7 +7373,8 @@ function creatureHurt(c, k, from) {
     c.daze = rnd(VIT.dazeT[0], VIT.dazeT[1]);
     c.ire = 0; c.alarm = 0; c.fleeTo = null; c.abandon();
     bubbleSay(c, 'daze');
-    snd.daze(c.pos.x, c.pos.z); addTrauma(.10);
+    if (!quiet) snd.daze(c.pos.x, c.pos.z);
+    addTrauma(.10);
     world.effects.push(new Burst(c.pos.x, c.pos.y + (c.rad || 1) * 1.4, c.pos.z, '#ffe9a8', 12, .8));
     const nm = (MOOD.label[c.constructor.name] || 'it').replace(/^the /, '').replace(/s$/, '');
     logMsg('The ' + nm + ' goes down on its side, dazed. Take it now, before it comes round.');
@@ -15770,7 +15820,7 @@ function meleeHit(slide, first) {
     hitStop(slide ? 6 : 4);
     addTrauma(slide ? .22 : .15);
     snd.hit(o.pos.x, o.pos.z, (o.rad || 1) > 1.4 || slide, p.armWant && p.armed > .4 && WEAPONS[p.wpn] && WEAPONS[p.wpn].melee);
-    creatureHurt(o, VIT.melee * (slide ? 1.35 : 1), p.pos);
+    creatureHurt(o, VIT.melee * (slide ? 1.35 : 1), p.pos, 1);
     if (o.hurl) o.hurl(h.dx / h.d, h.dz / h.d, MELEE.push * (slide ? 1.3 : 1), slide ? .7 : MELEE.arcUp);
     else if (o.knock) o.knock(p.pos, 1);
     moodShift(o, MOOD.hit);
@@ -18007,8 +18057,8 @@ class Bolt {
       // no new button and reads on sight.
       if (o.net && d < BL * .6) { o.net.cut(); continue; }
       // Right where it went off, it throws. Out at the edge of the blast it only startles.
-      if (d < R + (o.rad || 1) + 1.6 && o.knock) { creatureHurt(o, VIT.bolt, this); o.knock(this, 1); punched = punched || o; }
-      else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * f, this); o.knock(this, f); punched = punched || o; }
+      if (d < R + (o.rad || 1) + 1.6 && o.knock) { creatureHurt(o, VIT.bolt, this, 1); o.knock(this, 1); punched = punched || o; }
+      else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * f, this, 1); o.knock(this, f); punched = punched || o; }
       else if (o.spook) o.spook(this, 10);
     }
     // The same noise a bare-handed melee makes when it connects, and nothing at all when the
