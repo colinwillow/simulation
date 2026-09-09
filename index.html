@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e25';
+const BUILD = 'e26';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -1807,6 +1807,13 @@ const snd = {
   // charge so a big one lands heavier without becoming a different event.
   zap: (x, z, c) => SFX.play('ping', .34 + (c || 0) * .2, .78 - (c || 0) * .18, x, z)
     || (SFX.blip(880, .07, 'triangle', .1, 300, x, z), SFX.noise(.05, .12, 2200, x, z)),
+  // WHAT A BOLT SOUNDS LIKE LANDING ON SOMEBODY. It was the unarmed melee's own noise -- the
+  // bamboo pool pitched down, which is the fist-on-something-soft -- on the reasoning that he
+  // asked for "the punch". He named the swooshes in the same breath, so it is those instead,
+  // dropped to two thirds: a swoosh at pitch is air moving, and a swoosh pitched down is the
+  // wind knocked out of something, which is nearer a body taking a hit than a woodblock is.
+  beamHit: (x, z, big) => SFX.play('swing', big ? .62 : .5, rnd(.60, .74), x, z)
+    || (SFX.noise(.16, .2, 900, x, z), SFX.blip(180, .12, 'sine', .12, 90, x, z)),
   // FOOTSTEPS ARE SYNTHESISED, and there is nothing to borrow: neither repo has one. Which is
   // no loss -- a footstep is a short filtered thump, and making it means every step can differ
   // slightly instead of a four-file pool going round. `hard` is a run rather than a walk.
@@ -18081,7 +18088,7 @@ class Bolt {
     }
     // The same noise a bare-handed melee makes when it connects, and nothing at all when the
     // bolt lands on dirt.
-    if (punched) snd.hit(punched.pos.x, punched.pos.z, (punched.rad || 1) > 1.1, false);
+    if (punched) snd.beamHit(punched.pos.x, punched.pos.z, (punched.rad || 1) > 1.1);
   }
   dispose() {
     scene.remove(this.g);
