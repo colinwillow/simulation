@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd85';
+const BUILD = 'd86';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -3488,6 +3488,102 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
   terrainGeo.setAttribute('hgt', new THREE.BufferAttribute(hgt, 1));
   terrainGeo.computeVertexNormals();
 }
+// ---------- contact shadow, baked into the ground ----------
+// WHAT ACTUALLY GROUNDS A THING is the dark under it, and a shadow map is an expensive and
+// literal way to get one. It costs 13-23% of the frame here, it goes muddy under a canopy
+// because it is a projected silhouette rather than a soft pool, and half the island is exempt
+// from it anyway -- the mushrooms, the moss and the turnips all call noCast, so they have
+// never been grounded at all. That is the plant he found standing on nothing.
+//
+// So: a pool of dark painted under everything, once, when it is placed, and sampled by the
+// ground shader. Nothing is drawn per frame and nothing is projected -- the cost is a few
+// milliseconds at world build and then zero for ever, it grounds what casts and what does
+// not, it survives with the shadow map switched off, and because it is a stain rather than a
+// silhouette it reads as painterly rather than muddy.
+//
+// A TEXTURE AND NOT THE VERTEX COLOURS, which was the first attempt and was wrong: the
+// terrain grid is 440 x 200 over 800 units, about two and three quarter units a vertex, so a
+// mushroom with a half-unit footprint would not have reached a single one of them and a tree
+// would have got a hard triangular blob. At 2048 the stain map is 0.39 units a texel -- seven
+// times finer -- and every pool is a real circle whatever the mesh underneath is doing.
+const STAIN = {
+  k: .5,                       // how dark the deepest part of a pool goes
+  grow: 1.5, min: .55, max: 30,  // a shadow is always a little wider than the thing casting it
+  air: .55,                    // and a walkway overhead is a softer one than a rock
+  S: MOBILE ? 1024 : 2048,
+};
+const _stain = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = STAIN.S;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, STAIN.S, STAIN.S);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.generateMipmaps = false;
+  return { cv, g, tex, dirty: false, n: 0 };
+})();
+// The uniforms the ground shader reads. Shared objects, so every material patched by
+// groundPatch is looking at the same texture and the same dial.
+const STAIN_UNI = {
+  uStainT: { value: _stain.tex },
+  uStainK: { value: 1 },
+  uStainS: { value: .5 / W },        // chart -W..W onto 0..1
+};
+// One pool. `r` is the footprint; multiply, so a second thing over the same ground deepens it
+// rather than replacing it, and a grove ends up darker than one tree without any bookkeeping.
+function groundStain(x, z, r, k) {
+  const R = clamp((r || 1) * STAIN.grow, STAIN.min, STAIN.max);
+  const s = STAIN.S, u = s / (2 * W);
+  const px = (x + W) * u, pz = (z + W) * u, pr = Math.max(1.2, R * u);
+  const dark = clamp(k === undefined ? STAIN.k : k, 0, 1);
+  const g = _stain.g;
+  const grd = g.createRadialGradient(px, pz, 0, px, pz, pr);
+  const v = Math.round(255 * (1 - dark));
+  grd.addColorStop(0, 'rgb(' + v + ',' + v + ',' + v + ')');
+  grd.addColorStop(.45, 'rgb(' + Math.round(255 - (255 - v) * .72) + ',' + Math.round(255 - (255 - v) * .72) + ',' + Math.round(255 - (255 - v) * .72) + ')');
+  grd.addColorStop(1, 'rgb(255,255,255)');
+  g.globalCompositeOperation = 'multiply';
+  g.fillStyle = grd;
+  g.beginPath(); g.arc(px, pz, pr, 0, 6.284); g.fill();
+  g.globalCompositeOperation = 'source-over';
+  _stain.dirty = true;
+}
+function stainFlush() {
+  if (!_stain.dirty) return;
+  _stain.dirty = false; _stain.tex.needsUpdate = true;
+}
+// Everything standing on the ground, taken from the obstacle field -- the one list that
+// already knows where every solid thing is and how wide it is, so this needs no hook in the
+// twenty classes that put something down. `_stained` marks what has been done, which is what
+// makes calling it again cheap: it only picks up what has been built since.
+function stainWorld() {
+  let n = 0;
+  for (const a of OB.map.values()) for (const o of a) {
+    if (o._stained) continue;
+    o._stained = 1;
+    groundStain(o.x, o.z, o.r, STAIN.k * (o.air ? STAIN.air : 1));
+    n++;
+  }
+  _stain.n += n;
+  stainFlush();
+  return n;
+}
+// Anything built, grown or dropped since the last look. Cheap enough at 0.4 Hz that nothing
+// has to remember to call it.
+let stainT = 3;
+function stainTick(dt) {
+  if ((stainT -= dt) > 0) return;
+  stainT = 2.5;
+  stainWorld();
+}
+// Start again at a different strength -- or at zero, which is the A/B.
+function stainSet(k) {
+  if (k !== undefined) {
+    STAIN_UNI.uStainK.value = clamp(+k || 0, 0, 2);
+  }
+  return STAIN_UNI.uStainK.value;
+}
 // The one place the ground's colour can be changed without rebuilding the whole vertex
 // buffer. worldTint does the opposite of this to every prop -- pulls it toward grey and
 // stains it -- and the terrain never went through it at all, which is why turning that off
@@ -3510,6 +3606,21 @@ function groundPatch(sh, patch) {
     return;
   }
   sh.uniforms.uGPatch = GROUND_UNI.uGPatch;
+  // THE CONTACT POOLS. Only on the terrain -- the grass takes the same patch function with
+  // `patch` false and has no chart attribute to look one up with. `chart` is the flat
+  // coordinate the vertex came from, which is the only thing that survives the projection
+  // onto the sphere, and it is already an attribute because the water reads it too.
+  if (patch) {
+    sh.uniforms.uStainT = STAIN_UNI.uStainT; sh.uniforms.uStainK = STAIN_UNI.uStainK; sh.uniforms.uStainS = STAIN_UNI.uStainS;
+    sh.vertexShader = 'attribute vec2 chart;\nvarying vec2 vChartS;\n' + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vChartS = chart;');
+    sh.fragmentShader = 'uniform sampler2D uStainT; uniform float uStainK, uStainS;\nvarying vec2 vChartS;\n' + sh.fragmentShader
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        float st = texture2D(uStainT, vChartS * uStainS + 0.5).r;
+        diffuseColor.rgb *= mix(1.0, st, uStainK);
+      }`);
+  }
   // The world position, because the ground's own vertex colour is the only thing it has and a
   // pattern needs somewhere to live. The terrain is baked onto the sphere so its model matrix
   // is identity; the grass is instanced, and its blades are hundreds of units apart inside one
@@ -11531,6 +11642,14 @@ function populate() {
 }
 
 populate();
+// The pools, once the island is on it. Everything registered an obstacle on the way in, so
+// this needs no per-class hook -- and stainWorld marks what it has done, so calling it again
+// only picks up what has been built since.
+{
+  const t0 = performance.now();
+  const n = stainWorld();
+  console.info('[stain] grounded ' + n + ' things in ' + (performance.now() - t0).toFixed(0) + ' ms');
+}
 
 // ---------- post: bright pass, gaussian bloom, grade ----------
 const rtType = HALF ? THREE.HalfFloatType : THREE.UnsignedByteType;
@@ -13957,7 +14076,7 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
 window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, get chop() { return CHOP; }, get melee() { return MELEE; },
-  dpr: setDpr, perf: profStart, get view() { return VIEW; }, aa: v => { compMat.uniforms.uAA.value = v === false ? 0 : 1; return !!compMat.uniforms.uAA.value; },
+  dpr: setDpr, perf: profStart, stain: stainSet, get view() { return VIEW; }, aa: v => { compMat.uniforms.uAA.value = v === false ? 0 : 1; return !!compMat.uniforms.uAA.value; },
   // isle.outline(0) off, isle.outline(.55) back, isle.outline(.55, {w: 2, lo: .003, hi: .05, col: '#3a4a66'})
   outline: (k, o) => {
     const u = compMat.uniforms;
@@ -17343,11 +17462,15 @@ const VIEW = {
   aa: { label: 'smoothing', cost: '~2%',
     get: () => compMat.uniforms.uAA.value > 0,
     set: v => compMat.uniforms.uAA.value = v ? 1 : 0 },
+  ground: { label: 'grounding', cost: 'free',
+    get: () => stainSet() > 0,
+    set: v => stainSet(v ? (VIEW.ground.k || 1) : 0) },
   sharp: { label: 'sharper', cost: '+27%',
     get: () => Q.dpr > 1.7,
     set: v => setDpr(v ? Math.min(2, devicePixelRatio) : (MOBILE ? 1.5 : 2)) },
 };
 VIEW.outline.k = compMat.uniforms.uOut.value;
+VIEW.ground.k = stainSet();
 VIEW.bloom.k = compMat.uniforms.uStr.value;
 function looksSave() {
   const o = {}; for (const k in VIEW) o[k] = !!VIEW[k].get();
@@ -19326,7 +19449,7 @@ function frame(now) {
   updateWaypoint(dt);
   if (MAP.open) { clampView(); drawMap(); }
   drawMini(dt); showAct();
-  weatherLeavings(dt); cullFar(dt);
+  weatherLeavings(dt); cullFar(dt); stainTick(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
   waterUni.uT.value = world.clock; foamUni.uT.value = world.clock; grassUni.uT.value = world.clock;
