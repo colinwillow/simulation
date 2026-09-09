@@ -2029,7 +2029,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e21';
+const BUILD = 'e22';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -20148,17 +20148,40 @@ const bldEl = document.getElementById('bld');
 // line is 83 kB in, out of 855 -- with cache: no-store and a unique query, so it goes past
 // every cache between here and the origin. Nothing reloads by itself: he is usually mid-test
 // when the answer lands. It puts a chip on screen and waits to be tapped.
+//
+// TWO THINGS WERE WRONG WITH THE FIRST GO AND HE PLAYED FIVE BUILDS ON THE OLD ONE.
+//
+// The range was 96 kB and the BUILD line has since drifted to 150. A range request that ends
+// before the thing it is looking for does not fail -- the regex simply does not match, the
+// function returns, and the check has been quietly dead for however long. So it asks for 256
+// now AND, if the line is not in what came back, asks again for the whole file. That second
+// request is the part that cannot rot: the line can go anywhere and the check still finds it.
+//
+// And a chip you have to notice is no use to a man who is looking at the game. The check
+// fires at load, so at the moment the answer lands he is on the title card with nothing to
+// lose -- it just reloads. Only if the answer is late does it fall back to asking. One reload
+// per build per session, stamped in sessionStorage, so a disagreement between two CDN edges
+// cannot put it in a loop.
 (() => {
   if (!window.fetch) return;
-  fetch(location.pathname + '?cb=' + Date.now(), { cache: 'no-store', headers: { Range: 'bytes=0-98303' } })
+  const url = () => location.pathname + '?cb=' + Date.now() + Math.random();
+  const find = t => { const m = /const BUILD = '([a-z0-9]+)'/.exec(t); return m ? m[1] : null; };
+  fetch(url(), { cache: 'no-store', headers: { Range: 'bytes=0-262143' } })
     .then(r => r.text())
-    .then(t => {
-      const m = /const BUILD = '([a-z0-9]+)'/.exec(t);
-      if (!m || m[1] === BUILD) return;
+    .then(t => find(t) || fetch(url(), { cache: 'no-store' }).then(r => r.text()).then(find))
+    .then(v => {
+      if (!v || v === BUILD) return;
+      let seen = null;
+      try { seen = sessionStorage.getItem('isle.stale'); } catch (e) {}
+      if (seen !== v && performance.now() < 20000) {
+        try { sessionStorage.setItem('isle.stale', v); } catch (e) {}
+        location.replace(location.pathname + '?v=' + v);
+        return;
+      }
       const chip = document.createElement('button');
       chip.className = 'tog icon'; chip.id = 'stale';
-      chip.textContent = m[1] + ' is out \u2014 tap to load';
-      chip.addEventListener('click', e => { e.stopPropagation(); location.replace(location.pathname + '?v=' + m[1]); });
+      chip.textContent = v + ' is out \u2014 tap to load';
+      chip.addEventListener('click', e => { e.stopPropagation(); location.replace(location.pathname + '?v=' + v); });
       document.body.appendChild(chip);
     })
     .catch(() => {});     // offline, or a server with no Range: not worth a word about it
