@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd98';
+const BUILD = 'd99';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -5644,6 +5644,34 @@ function attachRig(parent, cfg, done) {
     (cfg.melee || []).forEach((nm, i) => { const k = 'mel' + i; if ((clips[k] = byName(nm))) meleeK.push(k); });
     (cfg.wmelee || []).forEach((nm, i) => { const k = 'wmel' + i; if ((clips[k] = byName(nm))) wmeleeK.push(k); });
     const oneShot = ['slide', 'equip', 'disarm', 'landRoll', 'throwGo'].concat(meleeK, wmeleeK).filter(k => clips[k]);
+    // NOTHING IN A SWING MAY TRAVEL. Measured hips displacement across the melee set: 14 to 77
+    // units, and weapon_melee_04 at 230 -- which on screen is him leaping a body length out in
+    // front, then sliding back to where he started as the clip unwinds. Nothing in this game
+    // moves him from a clip; the lunge does that, sized to the target, so a clip that also
+    // travels is fighting it and losing in a cheesy way.
+    //
+    // The X and Z of the hips track are pinned to their first keyframe -- pinned, not zeroed,
+    // so he stays wherever the clip starts him rather than snapping to the armature origin --
+    // and Y is left alone, because that is the crouch and the bounce and it is wanted.
+    //
+    // Cloned rather than edited: these clips belong to the cached file and every future
+    // instance of this model would inherit the edit. The NAME is kept, because the stride and
+    // floor caches are keyed on it. New values array too -- KeyframeTrack.clone hands back the
+    // same buffer when it is already the right type, so editing a "clone" edits the original.
+    for (const k of oneShot) {
+      const cl = clips[k]; if (!cl) continue;
+      let cut = false;
+      const c2 = cl.clone(); c2.name = cl.name;
+      for (let i = 0; i < c2.tracks.length; i++) {
+        const tr = c2.tracks[i];
+        if (!/hips/i.test(tr.name) || !/\.position$/.test(tr.name)) continue;
+        const v = new tr.values.constructor(tr.values);
+        for (let j = 0; j < v.length; j += 3) { v[j] = v[0]; v[j + 2] = v[2]; }
+        c2.tracks[i] = new tr.constructor(tr.name, tr.times, v);
+        cut = true;
+      }
+      if (cut) clips[k] = c2;
+    }
     // See RIG.stillFingers for why. Cloned rather than edited in place, because the clips
     // belong to the cached file and every future instance of this model would inherit the
     // edit -- and the clone keeps the ORIGINAL NAME, because the stride and floor caches
@@ -14640,7 +14668,20 @@ const MELEE = {
   // which is a punch. The armed set stays nearer its authored pace -- an axe has weight and
   // a fast one reads as a wand.
   rate: 1.3, bareRate: 1.7,
-  at: .34,           // how far into the swing the blade is actually out in front of him
+  at: .34,           // fallback, for a clip nobody has measured
+  // WHERE THE BLOW ACTUALLY IS, per clip, because one fraction across seven clips of very
+  // different lengths is wrong for most of them. Measured out of the GLB rather than guessed:
+  // for each swing, the peak angular speed of the right hand and forearm, which is the frame
+  // the arm is moving fastest and therefore the frame it connects.
+  //
+  //   melee_punch_01   32%     weapon_melee_01  44%
+  //   melee_slash      48%     weapon_melee_02  48%
+  //   melee_round_kick 31%     weapon_melee_03  55%
+  //   slide            19%     weapon_melee_04  39%
+  //
+  // At a flat .34 the slash and the second weapon swing landed a seventh of a clip early --
+  // which is "it hits them before the middle of the swing", exactly as described.
+  hit: { mel0: .32, mel1: .48, mel2: .31, wmel0: .44, wmel1: .48, wmel2: .55, wmel3: .39, slide: .19 },
   // FINDING WHAT HE MEANT TO HIT. A flick of a thumb on glass is not a bearing, it is a
   // gesture in roughly a direction, and asking it to line a body up inside a cone at the one
   // instant the arm is out is asking too much of it -- which is why he could stand beside a
@@ -14735,7 +14776,8 @@ function meleeFlick(x, y) {
   // THE BLOW LANDS WHERE THE ARM IS. Firing it on the input put the burst and the throw a
   // third of a second before the hand got there, which is what "you cannot actually hit
   // things" looks like from the outside: the swing and the consequence were two events.
-  p.actFire = { t: p.actMax * MELEE.at, fn: () => { p.hitT = MELEE.window; p.hitSlide = slide; } };
+  const at = MELEE.hit[key] !== undefined ? MELEE.hit[key] : MELEE.at;
+  p.actFire = { t: p.actMax * at, fn: () => { p.hitT = MELEE.window; p.hitSlide = slide; } };
   // The combo stays open for the length of what is playing plus the window, so a long clip
   // cannot outlive the chain that is meant to follow it.
   p.melT = MELEE.chain + p.actMax;
