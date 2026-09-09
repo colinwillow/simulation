@@ -1979,7 +1979,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e16';
+const BUILD = 'e17';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -6851,6 +6851,11 @@ const CREATURE_RIGS = {
   },
 };
 
+// THE SECOND POACHER. Read out of both files: identical clip sets, fourteen names each, same
+// rig. So he is the same config with a different body, and the only reason he needs an entry
+// of his own is that the model cache is keyed on the url and the rig table on this key.
+CREATURE_RIGS.Poacher1 = Object.assign({}, CREATURE_RIGS.Poacher, { url: 'models/alien_poacher_01.glb' });
+
 // Getting hit. Nothing in this game kills an animal, and nothing here starts: a hit throws.
 // The creature leaves the ground, tumbles, bounces, lies there a moment and gets up
 // frightened. That is the interaction that was asked for and it is also the honest one --
@@ -7304,7 +7309,7 @@ class Creature {
     // Nothing in the sea casts. The water does not receive shadows, so a shoal's worth of
     // depth-map draws lands on a surface that will never show them.
     if (this.aquatic) noCast(this.g);
-    const rc = CREATURE_RIGS[this.constructor.name];
+    const rc = CREATURE_RIGS[this.rigKey || this.constructor.name];
     if (rc) attachRig(this.g, rc, r => {
       if (!this.alive) { this.g.remove(r.root); return; }   // died while the GLB was in flight
       this.rig = r;
@@ -9095,6 +9100,9 @@ class Poacher extends Creature {
   constructor(x, z) {
     super(x, z, { speed: 4.4, turn: 3.4, rad: .85, look: 7, minObR: 1.1,
       wary: 0, flock: 0, notice: 26, social: 1, thirst: 90 });
+    // Alternated rather than rolled, so seven of them are four and three and never all one
+    // man seven times.
+    this.rigKey = (Poacher._n = (Poacher._n || 0) + 1) % 2 ? 'Poacher' : 'Poacher1';
     this.quarry = null; this.hunt = 0; this.cool = rnd(0, 8);
     this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
