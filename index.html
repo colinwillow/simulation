@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd88';
+const BUILD = 'd89';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12054,6 +12054,26 @@ CHASE.finish = function () {
   this.r = null;
   const d = this.done; this.done = null; if (d) d();
 };
+// THE OUTLINE'S REAL COST IS NOT ITS FOUR TAPS. Attaching a depth TEXTURE to the scene target
+// instead of a depth renderbuffer changes what the GPU is allowed to do with depth: a phone's
+// tile-based renderer can keep a renderbuffer in tile memory and throw it away at the end of
+// the tile, and it cannot do that with a texture something is going to sample -- every frame's
+// depth has to be written out to main memory. That is bandwidth, and bandwidth is the thing
+// this renderer is short of.
+//
+// Which means the profiler was lying about this one. Its 'no outline' step set uOut to zero,
+// which skips the taps and leaves the attachment exactly where it was, so it measured the
+// cheap half and reported ~2%. This switch takes the attachment away, so the number is the
+// whole number.
+function setDepthTex(on) {
+  on = !!on;
+  if (!!rtScene.depthTexture === on) return on;
+  const w = rtScene.width, h = rtScene.height;
+  rtScene.dispose();
+  rtScene = makeRT(w, h, on);
+  compMat.uniforms.tZ.value = rtScene.depthTexture || null;
+  return on;
+}
 function renderPost() {
   renderer.info.reset();
   toonSync();
@@ -12301,7 +12321,13 @@ function updateSky() {
   hemi.position.copy(_plY).applyQuaternion(lq);
   bounce.position.copy(BOUNCE_D).applyQuaternion(lq).add(wt);
   fill.position.copy(FILL_D).applyQuaternion(lq).add(wt);
-  sun.intensity = clamp(e * 1.95, 0, 1.15); sun.castShadow = e > .03;
+  sun.intensity = clamp(e * 1.95, 0, 1.15);
+  // NOT DOWN AT THE HORIZON. At e just over .03 the sun is barely up and every shadow on the
+  // island is a hundred units long -- which is the muddy smear he kept finding, and it is also
+  // when the shadow camera has to cover the most ground for the least legible result. Above
+  // .18 the sun is high enough that a shadow reads as the thing making it. Below that the
+  // contact pools carry the grounding on their own, which is the whole reason they exist.
+  sun.castShadow = e > .18;
   moon.intensity = clamp(-e * 1.3, 0, .4);
   const dayK = smooth(-.05, .35, e), duskK = 1 - Math.abs(clamp(e / .3, -1, 1));
   for (const k in tmpC) { tmpC[k].copy(SKY.night[k]).lerp(SKY.day[k], dayK); tmpC[k].lerp(SKY.dusk[k], duskK * .9); }
@@ -17563,9 +17589,9 @@ const VIEW = {
   grass: { label: 'grass', cost: '13%',
     get: () => grass.length ? grass[0].visible : true,
     set: v => { for (const g of grass) g.visible = !!v; } },
-  outline: { label: 'lines', cost: '~2%',
+  outline: { label: 'lines', cost: 'the depth buffer',
     get: () => compMat.uniforms.uOut.value > 0,
-    set: v => compMat.uniforms.uOut.value = v ? (VIEW.outline.k || .55) : 0 },
+    set: v => { setDepthTex(v); compMat.uniforms.uOut.value = v ? (VIEW.outline.k || .55) : 0; } },
   bloom: { label: 'bloom', cost: '6-20%',
     get: () => compMat.uniforms.uStr.value > 0,
     set: v => compMat.uniforms.uStr.value = v ? (VIEW.bloom.k || .85) : 0 },
@@ -19226,7 +19252,11 @@ function profSteps() {
   add('no post chain at all', () => PROF.noPost = 1, () => PROF.noPost = 0);
   add('no bloom', () => { PROF.noBloom = 1; u.uStr.value = 0; }, () => { PROF.noBloom = 0; u.uStr.value = PROF.str0; });
   add('no FXAA', () => u.uAA.value = 0, () => u.uAA.value = PROF.aa0);
-  add('no outline', () => u.uOut.value = 0, () => u.uOut.value = PROF.out0);
+  // The attachment as well as the taps -- see setDepthTex. Longer settle, because it throws
+  // the scene target away and builds another one.
+  add('no outline (and its depth buffer)',
+    () => { u.uOut.value = 0; setDepthTex(false); },
+    () => { setDepthTex(true); u.uOut.value = PROF.out0; }, 30);
   add('no grass', () => { for (const g of grass) g.visible = false; }, () => { for (const g of grass) g.visible = true; });
   add('no particles', () => { for (const p of world.psys) if (p.pts) p.pts.visible = false; },
                       () => { for (const p of world.psys) if (p.pts) p.pts.visible = true; });
