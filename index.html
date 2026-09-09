@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd84';
+const BUILD = 'd85';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -3871,6 +3871,11 @@ grassMat.onBeforeCompile = s => {
 // The elder willow's two dials. { tall: 1, alien: 0 } is the tree exactly as it was.
 const GREAT = { tall: 2, alien: 1 };
 const GRASS_CELL = 70;
+// OFF BY DEFAULT, and the field is still built so the switch under the ... button can bring it
+// back. His reason is better than the frame time it also saves: a lawn over the whole island
+// is undifferentiated ground, and undifferentiated ground is what makes a world read as
+// things scattered on a surface rather than as places. Tufts belong where something put them.
+const GRASS_SHOW = false;
 const grass = (() => {
   const n = Q.grass;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), q2 = new THREE.Quaternion(), pos = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
@@ -3919,7 +3924,7 @@ const grass = (() => {
     // + 4 for the blade's own height, which the instance origin does not include
     im.geometry.boundingSphere = new THREE.Sphere(c0, rad + 4);
     im.instanceMatrix.needsUpdate = true;
-    im.castShadow = false; im.receiveShadow = true;
+    im.castShadow = false; im.receiveShadow = true; im.visible = GRASS_SHOW;
     im.userData.flat = true; im.userData.xz = gxz;
     scene.add(im); out.push(im);
   }
@@ -4863,6 +4868,7 @@ const MODEL_LIFT = {
   'models/alien_drone.glb': .5,
   'models/drone_rigged.glb': .5,
   'models/alien_axe.glb': .5,
+  'models/alien_orange.glb': .5,
 };
 // One cache per URL. The GLB is fetched once, prepared once, measured once; every user
 // after that gets a clone that shares the geometry and materials. Measuring is the
@@ -13709,6 +13715,18 @@ const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, fre
 // swapping in a differently-scaled export needs no other change.
 const RIG = {
   url: 'models/alien_orange.glb',
+  // HE WAS THE DIMMEST THING IN HIS OWN GAME, and it was an omission rather than a decision.
+  // attachRig only runs a model through worldTint if its config carries a `glow`, and every
+  // creature has one -- the hopper at k 1.5, the mossback 1.7, the mudlark 1.6, the drone 2.4
+  // -- while this object simply never had the key. So he got what prepModel leaves behind: a
+  // flat fifth of his own albedo as emissive, with no dusk ramp and no night term, standing
+  // next to animals whose glow comes up as the light goes down. That is the "he doesn't seem
+  // like he's glowing at all" -- he wasn't, relative to everything around him.
+  //
+  // `lum` is the band of the texture the glow lands on, so it picks out his skin and the lit
+  // parts of the suit rather than washing the whole body; `keep` and the white tint are added
+  // by attachRig, which is what stops a body being stained toward the biome it walks into.
+  glow: { lo: .14, hi: .40, k: 1.8, lum: [.40, .88] },
   height: 2.8,       // world units, feet to crown — head and shoulders over a mossback
   idle: 'idle',
   walk: 'walk_fwd',
