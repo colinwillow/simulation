@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e36';
+const BUILD = 'e37';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -16507,6 +16507,7 @@ class Hut {
     scene.add(p.m);
     p.m.position.set(from.x, from.y + 1.2, from.z);
     p.from = p.m.position.clone(); p.to = this.chartOf(p.home.p);
+    this.obOff(p);                                   // off the ground: it stops being something to stand on
     p.state = 3; p.t = -(delay || 0) / HUT.fly;
   }
   gone() { let n = 0; for (const p of this.parts) if (p.state === 4) n++; return n; }
@@ -16530,6 +16531,19 @@ class Hut {
     p.ob = obAdd(c.x, c.z, this.st.thick * .95, null, c.y + this.st.ch * .5, 'hut', c.y - this.st.ch * .5);
   }
   obOff(p) { if (p.ob) { obRemove(p.ob); p.ob = null; } }
+  // AND A BLOCK ON THE GROUND IS A BLOCK ON THE GROUND. obOn registers a part at its SLOT --
+  // where it belongs in the wall -- which is the right answer while it is in the wall and no
+  // answer at all once it has been shot out of one: it came to rest twenty units away and
+  // nothing in the world knew it was there. This one registers it where it actually lies.
+  //
+  // Its top is a hand's breadth up, well under OB_PLAYER.climb, so resolvePlayer steps over it
+  // and standOn puts him ON it. That is what a block lying in the grass should be -- something
+  // you walk up onto, not a knee-high wall you have to go round.
+  obRest(p) {
+    if (p.ob) return;
+    const q = p.m.position;
+    p.ob = obAdd(q.x, q.z, this.st.thick * 1.15, null, q.y + .34, 'block', q.y - .6);
+  }
   // A local point on the hut, in chart space. The group carries the planet's own tilt as well,
   // but over a building three metres across that is a fraction of a degree, so the heading
   // rotation and the base height are the whole of it.
@@ -16625,8 +16639,10 @@ class Hut {
         const fy = groundY(p.m.position.x, p.m.position.z) + .18;
         if (p.m.position.y <= fy) {
           p.m.position.y = fy;
+          // Every touch says so, the same way a thrown turnip does, and dies away with the drop.
+          snd.plop(p.m.position.x, p.m.position.z, clamp(Math.abs(p.v.y) / 14, .3, 1));
           if (Math.abs(p.v.y) > HUT.rest) { p.v.y = -p.v.y * HUT.bounce; p.v.x *= HUT.fric; p.v.z *= HUT.fric; p.spin *= .5; }
-          else { p.v.set(0, 0, 0); p.spin = 0; p.state = 2; }     // 2: lying there, waiting to be put back
+          else { p.v.set(0, 0, 0); p.spin = 0; p.state = 2; this.obRest(p); }   // 2: lying there, waiting to be put back
         }
       } else if (p.state === 3) {
         // Flying home. It arrives on a curve rather than a straight line, and stands itself
@@ -16674,6 +16690,7 @@ class Hut {
       else logMsg('It is whole again.');
       return;
     }
+    this.obOff(best);
     best.state = 3; best.t = 0;
     best.from = best.m.position.clone();
     best.to = this.chartOf(best.home.p);
