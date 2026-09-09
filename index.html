@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e27';
+const BUILD = 'e28';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -2762,20 +2762,31 @@ function holePatch(sh) {
   sh.uniforms.uHoleC = holeUni.uHoleC; sh.uniforms.uHoleR = holeUni.uHoleR; sh.uniforms.uHoleZ = holeUni.uHoleZ; sh.uniforms.uHoleLo = holeUni.uHoleLo;
   sh.fragmentShader = `
     uniform vec2 uHoleC; uniform float uHoleR, uHoleZ, uHoleLo;
-    float holeDither(vec2 p){ vec2 q = floor(mod(p, 4.0)); return (mod(q.x * 3.0 + q.y * 5.0 + q.x * q.y * 7.0, 16.0) + 0.5) / 16.0; }
+    float holeHash(vec2 p){ return fract(sin(dot(floor(p), vec2(12.9898, 78.233))) * 43758.5453); }
+    // The 4x4 pattern with a per-pixel random in place of its fixed half-step. On its own the
+    // matrix has sixteen levels, so a soft edge steps four or five times and then stops, and a
+    // ramp that only has five values in it reads as a shape with a border. Jittering the
+    // threshold turns those sixteen levels into a continuous one at no cost.
+    float holeDither(vec2 p){ vec2 q = floor(mod(p, 4.0)); return (mod(q.x * 3.0 + q.y * 5.0 + q.x * q.y * 7.0, 16.0) + holeHash(p)) / 16.0; }
   ` + sh.fragmentShader.replace('#include <clipping_planes_fragment>', `
     #include <clipping_planes_fragment>
     if (uHoleR > 0.0) {
       float hd = distance(gl_FragCoord.xy, uHoleC);
-      // NOT THE GROUND HE IS STANDING ON. The test is "closer to the lens than he is", and a
-      // deck he is standing on the far edge of is exactly that -- its near lip is between him
-      // and the camera, so the floor under his feet was dithered away and he stood on a hole.
-      // Nothing BELOW his feet can be hiding him, and uHoleLo is where his feet are on screen,
-      // so the whole class of problem goes with one comparison.
-      if (hd < uHoleR && gl_FragCoord.y > uHoleLo && vViewPosition.z < uHoleZ - 1.5) {
-        float k = smoothstep(1.0, 0.45, hd / uHoleR);     // solid at the rim, open in the middle
-        if (holeDither(gl_FragCoord.xy) < k * 0.92) discard;
-      }
+      // SOFT ON EVERY EDGE IT HAS, and it used to be soft on only one of them. The circle was
+      // faded from 45% of its radius out to the rim -- but the other two tests were pass/fail,
+      // and both of them are STRAIGHT LINES: the cut at his feet is horizontal in screen space
+      // and the depth cut is a plane. Against a broad surface like a trunk the circle never
+      // gets a look in and what you see is the two lines crossing, which is a box.
+      //
+      // NOT THE GROUND HE IS STANDING ON is still why the floor cut exists. A deck he is
+      // standing on the far edge of is closer to the lens than he is -- its near lip is between
+      // him and the camera -- so the floor under his feet was dithered away and he stood on a
+      // hole. Nothing BELOW his feet can be hiding him. The ramp only opens ABOVE uHoleLo, so
+      // that stays as safe as the comparison was and stops being a drawn line.
+      float k = smoothstep(1.0, 0.45, hd / uHoleR);
+      k *= smoothstep(uHoleLo, uHoleLo + 0.06 * uHoleR, gl_FragCoord.y);
+      k *= smoothstep(uHoleZ - 0.6, uHoleZ - 2.8, vViewPosition.z);
+      if (k > 0.004 && holeDither(gl_FragCoord.xy) < k * 0.92) discard;
     }`);
 }
 // ---------- the toon ramp ----------
