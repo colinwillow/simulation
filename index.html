@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd79';
+const BUILD = 'd80';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -4169,6 +4169,17 @@ class Spark {
 }
 
 // ---------- flora ----------
+// How a tree comes down: see chopTree. Declared up here with the tree rather than down with
+// the swing that uses it, because the tree's own update reads it and the diorama builds and
+// steps trees long before the melee section has run.
+const CHOP = {
+  hits: 4, elder: 8,        // cuts to bring one down, and to bring a big one down
+  bolt: 1.5,                // and what a plasma bolt is worth against those
+  sink: .38, lean: .055,    // how far it settles and tips per cut
+  shake: .55, shakeK: .09,  // the shudder after each one
+  logs: 26,                 // and how many loose logs the island will hold before a cut stops shedding them
+};
+const _tqE = new THREE.Euler(), _tqQ = new THREE.Quaternion();
 class LanternTree {
   constructor(x, z, growth = 0, elder = Math.random() < .16) {
     this.alive = true; this.pos = new THREE.Vector3(x, height(x, z), z); this.growth = growth; this.claimed = false; this.falling = -1;
@@ -4268,6 +4279,17 @@ class LanternTree {
     if (this.growth < 1) { this.growth = Math.min(1, this.growth + dt * (1 + WX.wet * .9) / GROW_T); this.applyScale(); }   // rain grows trees
     const sw = Math.sin(world.clock * .8 + this.pos.x * .1) * .012 + Math.sin(world.clock * 1.9 + this.pos.z * .2) * .006;
     this.canopy.rotation.z = sw; this.canopy.rotation.x = sw * .7;
+    // The cut showing on the body of it: a shudder that dies away, over a lean that does not.
+    // `q0` is taken the first time it is needed rather than in the constructor, because the
+    // constructor's quaternion is the one alignTo and the random turn left and nothing that
+    // runs later has any business rebuilding it.
+    if (this.shake > 0 || this.leanX || this.leanZ) {
+      if (!this.q0) this.q0 = this.g.quaternion.clone();
+      this.shake = Math.max(0, (this.shake || 0) - dt);
+      const k = this.shake > 0 ? Math.sin(this.shake * 38) * this.shake * CHOP.shakeK : 0;
+      _tqE.set((this.leanX || 0) + k * (this.shX || 0), 0, (this.leanZ || 0) + k * (this.shZ || 0));
+      this.g.quaternion.copy(this.q0).multiply(_tqQ.setFromEuler(_tqE));
+    }
     const lit = this.growth >= 1 ? world.night : 0;
     this.glow.scale.setScalar(9 * lit);
     this.fruitG.rotation.z = Math.sin(world.clock * 1.4 + this.pos.x) * .12;   // the crop swings as one
@@ -13809,7 +13831,7 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // for the solo switch did not shadow it -- the LATER one in an object literal wins silently,
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
-window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB,
+window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, get chop() { return CHOP; }, get melee() { return MELEE; },
   // isle.axe({roll: 1.57}) -- turn it, slide his grip up or down it, resize it. Prints the set.
   axe: o => { if (o) Object.assign(AXEM, o); fitAxe(); console.log(JSON.stringify(AXEM)); return AXEM; },
   // who is feeling what, right now, nearest first
@@ -14116,7 +14138,10 @@ const MELEE = {
   chain: 1.15,       // how long the combo stays open after a blow
   gap: .16,          // and the least time between two of them
   reach: 3.4, arc: 1.2,
-  push: 9, lift: 2.6,          // what it does to what it hits
+  // WHAT IT DOES TO WHAT IT HITS. A swing that moved an animal a foot read as a nudge; these
+  // send it tumbling a body length or two and put it on its back, which is the difference
+  // between hitting something and touching it.
+  push: 14, lift: 2.6, arcUp: .52,
   // NOTHING IN THESE CLIPS TRAVELS. They are all authored on the spot, so a combo is three
   // blows at the same patch of ground and an animal that backed off half a step is out of
   // reach for the rest of it. Every swing gets a lunge from here: hard at the front, spent by
@@ -14137,6 +14162,7 @@ const MELEE = {
   // which is a punch. The armed set stays nearer its authored pace -- an axe has weight and
   // a fast one reads as a wand.
   rate: 1.3, bareRate: 1.7,
+  at: .34,           // how far into the swing the blade is actually out in front of him
   // WHERE THE NEXT BLOW MAY INTERRUPT THIS ONE, as a fraction of the clip. Without it the
   // second flick was refused for the whole length of the first swing -- and since the armed
   // clips run 1.3 to 1.9 s against a 1.15 s combo window, the window shut before the clip
@@ -14177,16 +14203,54 @@ function meleeFlick(x, y) {
   // spend a place in the list, so the flick that follows it is still swing one.
   if (!slide) p.melN++;
   playAct(key, rate);
+  // THE BLOW LANDS WHERE THE ARM IS. Firing it on the input put the burst and the throw a
+  // third of a second before the hand got there, which is what "you cannot actually hit
+  // things" looks like from the outside: the swing and the consequence were two events.
+  p.actFire = { t: p.actMax * MELEE.at, fn: () => meleeHit(slide) };
   // The combo stays open for the length of what is playing plus the window, so a long clip
   // cannot outlive the chain that is meant to follow it.
   p.melT = MELEE.chain + p.actMax;
   lunge(slide ? MELEE.slideSpeed : MELEE.lunge, slide ? MELEE.slideT : MELEE.lungeT);
   if (slide) { p.slideT = MELEE.slideT; logMsg('He goes in low and takes its legs out.'); }
-  meleeHit(slide);
   cam.idle = 0;
 }
 // What a blow lands on: anything inside a cone in front of him. The slide is wider and
 // throws harder, because it is his whole body rather than an arm.
+// ---------- taking a tree down in pieces ----------
+// ONE HIT USED TO FELL IT, whether that hit was a plasma bolt or a two-second hold on the
+// HACK prompt, and a tree that goes over the first time you touch it is a prop rather than a
+// thing you worked at. Now it takes the cuts: each one settles the trunk into the ground,
+// shakes it, leans it a little further off true, and drops a log out of the cut -- so the
+// wood arrives while you are working rather than all at once at the end -- and the last one
+// puts it over. `sink` and `lean` are what make the progress visible without touching the
+// geometry, which is the honest version of chunking the mesh until the trunk is built in
+// segments that can come off one at a time.
+function chopTree(t, force, hx, hz) {
+  if (!t || !t.alive || t.falling >= 0 || !(t instanceof LanternTree)) return false;
+  t.chop = (t.chop || 0) + (force || 1);
+  t.shake = CHOP.shake;
+  t.shX = rnd(-1, 1); t.shZ = rnd(-1, 1);
+  const need = t.elder ? CHOP.elder : CHOP.hits;
+  const cy = t.pos.y - (t.sunk || 0) + 1.3;
+  world.effects.push(new Burst(t.pos.x + hx * .8, cy, t.pos.z + hz * .8, '#d8c9a8', 9, .55));
+  if (t.chop < need) {
+    t.sunk = (t.sunk || 0) + CHOP.sink;
+    t.g.position.y = t.pos.y - t.sunk;
+    t.leanX = (t.leanX || 0) + hz * CHOP.lean;          // it tips the way the blow went
+    t.leanZ = (t.leanZ || 0) - hx * CHOP.lean;
+    if (count(world.structures, Log) < CHOP.logs) {
+      const a = Math.atan2(hx, hz) + rnd(-.6, .6), d = 2.4 + Math.random() * 1.6;
+      const lx = t.pos.x + Math.sin(a) * d, lz = t.pos.z + Math.cos(a) * d;
+      if (isLand(lx, lz)) world.structures.push(new Log(lx, lz, a + 1.57 + rnd(-.4, .4), t.elder ? 3.4 : 2.6, t.elder ? .58 : .46));
+    }
+    logMsg(t.chop === 1 ? 'The blade bites in and a log rolls clear.'
+      : t.chop >= need - 1 ? 'One more should do it.' : 'Another cut, another log.');
+    return true;
+  }
+  t.fall();
+  logMsg('The last cut goes through. It leans, and goes over.');
+  return true;
+}
 function meleeHit(slide) {
   const p = player, hx = Math.sin(p.heading), hz = Math.cos(p.heading);
   const reach = MELEE.reach * (slide ? 1.35 : 1) + (p.armWant && p.armed > .4 ? .8 : 0);
@@ -14199,7 +14263,7 @@ function meleeHit(slide) {
     if ((dx * hx + dz * hz) / d < arc) continue;
     hit++;
     creatureHurt(o, VIT.melee * (slide ? 1.35 : 1), p.pos);
-    if (o.hurl) o.hurl(dx / d, dz / d, MELEE.push * (slide ? 1.3 : 1), slide ? .55 : .34);
+    if (o.hurl) o.hurl(dx / d, dz / d, MELEE.push * (slide ? 1.3 : 1), slide ? .7 : MELEE.arcUp);
     else if (o.knock) o.knock(p.pos, 1);
     moodShift(o, MOOD.hit);
     world.effects.push(new Burst(o.pos.x, o.pos.y + (o.rad || 1) * .7, o.pos.z, '#ffd2a0', 8, .5));
@@ -14207,6 +14271,33 @@ function meleeHit(slide) {
   // and a hut in front of him comes apart the way a bolt takes it apart
   const fx = p.pos.x + hx * reach * .7, fz = p.pos.z + hz * reach * .7;
   for (const st of world.structures) if (st.alive && st.shatter) st.shatter(fx, p.pos.y + 1, fz, 1.6, 4.5, .5);
+  // A TREE IN FRONT OF HIM TAKES THE CUT. Its trunk has a radius of its own, so the reach is
+  // measured to the bark rather than to the middle of it, and only the nearest one is hit --
+  // a swing is a swing, not an area of effect.
+  {
+    let best = null, bd = 1e9;
+    for (const pl of world.plants) {
+      if (!(pl instanceof LanternTree) || !pl.alive || pl.falling >= 0) continue;
+      const dx = pl.pos.x - p.pos.x, dz = pl.pos.z - p.pos.z, d = Math.hypot(dx, dz);
+      const rad = (pl.elder ? 1.9 : 1) * (pl.growth || 1);
+      if (d > reach + rad + .6 || d < 1e-3) continue;
+      if ((dx * hx + dz * hz) / d < arc) continue;
+      if (d < bd) { bd = d; best = pl; }
+    }
+    // Bare hands sting it; an axe takes it apart. Anything else is somewhere between.
+    if (best) { hit++; chopTree(best, (p.armWant && p.armed > .4 && WEAPONS[p.wpn] && WEAPONS[p.wpn].melee) ? 1 : .34, hx, hz); }
+  }
+  // AND THE DRONE, if he swings at it. It follows him about at head height and there was no
+  // way to tell it to get out of the way; now there is one, and it is the same one that works
+  // on everything else.
+  {
+    const dx = fairy.pos.x - p.pos.x, dz = fairy.pos.z - p.pos.z;
+    const dy = fairy.pos.y - (p.pos.y + RIG.height * .55);
+    if (Math.hypot(dx, dz) < reach + 1.2 && Math.abs(dy) < 2.6) {
+      droneKnock(p.pos.x, p.pos.y + RIG.height * .55, p.pos.z, slide ? 1.4 : 1.1);
+      hit++;
+    }
+  }
   if (!hit) world.effects.push(new Burst(fx, p.pos.y + 1.1, fz, '#e8e2d0', 4, .3));
 }
 // Start a named one-shot. `actT` is how long it owns the body, and stepPlayer walks actK in
@@ -14500,8 +14591,12 @@ function gainMat(kind, n, x, y, z) {
 function harvestPlant(pl) {
   const y = YIELD[pl && pl.constructor && pl.constructor.name]; if (!y || !pl.alive) return 0;
   if (pl instanceof LanternTree) {
-    if (pl.falling >= 0 || pl.elder || pl.growth < .55) return 0;
-    pl.fall(); return -1;                      // -1: felled, and the logs are the payment
+    if (pl.falling >= 0 || pl.growth < .55) return 0;
+    // -1: it took a cut, and the logs are the payment. It goes over on the last one, not the
+    // first -- see CHOP. An elder takes twice as many and is no longer exempt: it was only
+    // exempt because one shot would have taken the island's biggest tree off at the root.
+    const a = rnd(Math.PI * 2);
+    return chopTree(pl, CHOP.bolt, Math.sin(a), Math.cos(a)) ? -1 : 0;
   }
   pl.alive = false; pl.dispose();
   gainMat(y.mat, y.n, pl.pos.x, pl.pos.y + .6, pl.pos.z);
@@ -14864,7 +14959,11 @@ function hackTree(t, dt) {
   t.hackT = (t.hackT || 0) + dt; t.hackAt = world.clock;
   if (((t.hackT * 4) | 0) !== (((t.hackT - dt) * 4) | 0))          // chips fly four times a second
     world.effects.push(new Burst(t.pos.x + rnd(-.5, .5), t.pos.y + 1.1, t.pos.z + rnd(-.5, .5), '#d8c9a8', 3, .35));
-  if (t.hackT >= HACK.T) { t.fall(); logMsg('It leans, and goes over.'); }
+  if (t.hackT >= HACK.T) {
+    t.hackT = 0;
+    const p = player, dx = t.pos.x - p.pos.x, dz = t.pos.z - p.pos.z, d = Math.hypot(dx, dz) || 1;
+    chopTree(t, 1, dx / d, dz / d);            // one cut per hold, and it says how it is going
+  }
 }
 // THE STOOP, and then the hold. It used to be neither: the turnip vanished out of the ground
 // and appeared at his chest on the same frame, with the body still playing whatever gait it
@@ -16277,7 +16376,7 @@ class Bolt {
         if (took >= 4 || !pl.alive) continue;
         if (Math.hypot(pl.pos.x - this.x, pl.pos.z - this.z) > HR + (pl.h ? 1.4 : 0)) continue;
         const got = harvestPlant(pl);
-        if (got) { took++; if (got < 0) logMsg('The shot takes it off at the root and it goes over.'); }
+        if (got) took++;                    // a cut logs its own line; anything smaller is stowed silently
       }
     }
     for (const o of world.creatures) {
