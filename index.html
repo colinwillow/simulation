@@ -555,6 +555,16 @@
   /* covers the one frame where the title's scene is swapped for the world's */
   #veil{position:fixed;inset:0;z-index:9;background:#05070d;opacity:1;pointer-events:none;
     transition:opacity 1.2s ease-out}
+  /* THE CLOUD WIPE. Two banks come in from the sides, meet over the middle, and the world is
+     swapped while they are touching. Each is wider than half the screen so the solid parts
+     overlap: what has to be perfect is the COVER, and the lumpy edges are only ever seen on
+     the way in and on the way out. */
+  #wipe{position:fixed;inset:0;z-index:10;pointer-events:none;overflow:hidden}
+  #wipe b{position:absolute;top:-3%;height:106%;width:64%;display:block;
+    background-repeat:no-repeat;background-size:100% 100%;
+    transition:transform var(--wt,.62s) cubic-bezier(.36,0,.22,1)}
+  #wipe b.l{left:0}
+  #wipe b.r{right:0}
 
   /* ══ THE BRAND PASS ══════════════════════════════════════════════════════════════════
      One language for the whole interface, and it is the title screen's: cream on deep
@@ -1620,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e49';
+const BUILD = 'e50';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -14705,14 +14715,82 @@ function introFrame(dt) {
     if (sh.ob) { obRemove(sh.ob); sh.ob = null; }
   }
 }
+// A CLOUD WIPE, BECAUSE THE TWO PICTURES ARE NOT THE SAME PICTURE. The title screen is a
+// diorama -- its own little planet, sky and props -- and behind it the real island is already
+// standing. Pressing start throws one away and reveals the other in a single frame, and no
+// amount of fading covers a cut between two things that do not line up. A fade says "the same
+// place, later"; what is wanted is "somewhere else".
+//
+// So: two banks come in from the sides, meet over the middle, the swap happens while they are
+// touching, and they part onto the descent already underway. Each bank is 64% of the width
+// with the solid part running well past its own half, so at the meeting the cover is total
+// and the lumpy edge is only ever read on the way in and on the way out -- which is exactly
+// where the Simpsons put it.
+//
+// Drawn, not shipped: the same trick as the slash and the contact blob. A run of overlapping
+// discs down one edge of a canvas, blurred, in the sky's own indigo with a lit rim, so it
+// reads as cloud in this game's palette rather than as a shape crossing the screen.
+const WIPE = { w: .62, hold: .16, out: .8, on: 0, url: null, url2: null };
+function wipeTex(flip) {
+  const W0 = 300, H0 = 560, cv = document.createElement('canvas');
+  cv.width = W0; cv.height = H0;
+  const g = cv.getContext('2d');
+  if (flip) { g.translate(W0, 0); g.scale(-1, 1); }
+  // the body: solid to 62% of the width, then the lumps carry it the rest of the way
+  const grd = g.createLinearGradient(0, 0, W0, 0);
+  grd.addColorStop(0, '#0a0a24'); grd.addColorStop(.62, '#14113a'); grd.addColorStop(1, '#221a4e');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, W0 * .62, H0);
+  // AND THE EDGE IS NOT A LINE. Discs of falling size down the boundary, each one a little
+  // further out than the last is likely to be, so no two runs of it read the same.
+  let seed = 7;
+  const rr = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 26; i++) {
+    const y = (i + .5) / 26 * H0, r = H0 * (.055 + rr() * .075);
+    const x = W0 * .62 - r * .35 + rr() * W0 * .17;
+    g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fill();
+  }
+  // a lit rim along the leading edge, the way the sky lights the top of a cloud here
+  g.globalCompositeOperation = 'source-atop';
+  const lit = g.createLinearGradient(W0 * .45, 0, W0 * .82, 0);
+  lit.addColorStop(0, 'rgba(120,190,255,0)'); lit.addColorStop(1, 'rgba(150,215,255,.42)');
+  g.fillStyle = lit; g.fillRect(0, 0, W0, H0);
+  return cv.toDataURL('image/png');
+}
+// `fn` runs at the moment the banks touch. If anything here goes wrong at all it runs at once
+// instead: a transition is decoration and the start button is not.
+function wipeStart(fn) {
+  if (WIPE.on) return;
+  WIPE.on = 1;
+  let done = 0;
+  const fire = () => { if (done) return; done = 1; try { fn(); } catch (e) { console.warn('start:', e); } };
+  try {
+    if (!WIPE.url) { WIPE.url = wipeTex(0); WIPE.url2 = wipeTex(1); }
+    const g = document.createElement('div'); g.id = 'wipe';
+    const L = document.createElement('b'), R = document.createElement('b');
+    L.className = 'l'; R.className = 'r';
+    L.style.backgroundImage = 'url(' + WIPE.url + ')';
+    R.style.backgroundImage = 'url(' + WIPE.url2 + ')';
+    L.style.transform = 'translateX(-104%)'; R.style.transform = 'translateX(104%)';
+    g.appendChild(L); g.appendChild(R); document.body.appendChild(g);
+    // Two frames before the move, not one: a transform set in the same frame the element was
+    // added has no previous value to animate away from and the banks simply appear shut.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      L.style.transform = 'translateX(0)'; R.style.transform = 'translateX(0)';
+    }));
+    setTimeout(fire, 640);
+    setTimeout(() => {
+      g.style.setProperty('--wt', WIPE.out + 's');
+      L.style.transform = 'translateX(-104%)'; R.style.transform = 'translateX(104%)';
+    }, 640 + WIPE.hold * 1000);
+    setTimeout(() => { g.remove(); WIPE.on = 0; }, 700 + WIPE.hold * 1000 + WIPE.out * 1000);
+  } catch (e) { console.warn('wipe skipped:', e); WIPE.on = 0; fire(); }
+  // and a backstop, because the game starting is not allowed to depend on any of the above
+  setTimeout(fire, 1600);
+}
 function startGame() {
   if (!INTRO.on) return;
-  // The scene swaps underneath in a single frame, so cover it. Black on its way out reads as
-  // an arrival; the same cut uncovered reads as a glitch.
-  const veil = document.createElement('div');
-  veil.id = 'veil'; document.body.appendChild(veil);
-  requestAnimationFrame(() => { veil.style.opacity = '0'; });
-  setTimeout(() => veil.remove(), 1500);
+  // No veil: the cloud banks are already shut over this frame. See wipeStart.
   INTRO.on = false; INTRO.r0 = cam.r; INTRO.dive = INTRO.diveT;
   titleMarkFrame(0);
   // Hand the diorama back. It is a planet, a sky and a couple of dozen props that will never
@@ -19102,7 +19180,7 @@ const keys = {};
 addEventListener('keydown', e => {
   // On the title screen every key is the start key, and none of them is a movement key --
   // the sticks are faded out, so a keyboard should not be walking him around behind them.
-  if (INTRO.on) { startGame(); e.preventDefault(); return; }
+  if (INTRO.on) { wipeStart(startGame); e.preventDefault(); return; }
   keys[e.key.toLowerCase()] = 1; if (e.key === ' ') { player.jump = 1; e.preventDefault(); }
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = 0; });
@@ -19438,7 +19516,7 @@ function doEject(e) {
 document.getElementById('ejectB').addEventListener('click', doEject);
 ejectQ.addEventListener('click', doEject);
 freeB.addEventListener('click', () => { player.free = !player.free; freeB.classList.toggle('on', player.free); player.g.visible = !player.free; player.lamp.visible = !player.free; });
-startB.addEventListener('click', e => { e.stopPropagation(); startGame(); });
+startB.addEventListener('click', e => { e.stopPropagation(); wipeStart(startGame); });
 const _prevP = new THREE.Vector3(), _shipR = new THREE.Vector3();
 function updatePlayer(dt) {
   _prevP.copy(player.pos);
@@ -20458,7 +20536,7 @@ function tappedDrone(cx, cy) {
 
 const ray = new THREE.Raycaster();
 function tap(cx, cy) {
-  if (INTRO.on) { startGame(); return; }             // on the title screen, a tap is the start
+  if (INTRO.on) { wipeStart(startGame); return; }    // on the title screen, a tap is the start
   if (DPAN.open) { dpanClose(); return; }            // a tap anywhere else closes the wheel
   if (tappedDrone(cx, cy)) { dpanOpen(); return; }
   ray.setFromCamera({ x: cx / (_vw || innerWidth) * 2 - 1, y: -(cy / (_vh || innerHeight)) * 2 + 1 }, camera);
