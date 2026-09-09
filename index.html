@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd77';
+const BUILD = 'd78';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -14032,23 +14032,60 @@ const WEAPONS = {
 // or laid flat, and `drop` is a last nudge in joint units if it wants to sit further out of
 // his fist. `lift` and `tilt` are the two other turns, there so nothing here needs a code
 // change to try: isle.axe({ roll: 1.57 }) applies any of them at once and prints the set.
-// roll = pi: half a turn about the shaft, which is what puts the blade on the outside of
-// his fist rather than facing back at him. The order below is ZYX, so the X quarter-turn that
-// stands the model along the weapon axis happens FIRST and the Z turn is then about the shaft
-// itself -- which is why this is one number and not a re-derivation of the whole basis.
-const AXEM = { url: 'models/alien_axe.glb', grip: .40, len: 1.15, roll: Math.PI, lift: 0, tilt: 0, drop: [0, 0, 0] };
+// THE AXE DOES NOT STAND UP ITS OWN Y, which is why a "spin it about the handle" came out as
+// a flip. Its bounding box is taller than it is wide, so a first pass read the model's +Y as
+// the shaft and rolled about that -- and the shaft is thirty-one degrees off Y, so rolling
+// about Y swung the head round a cone instead of spinning it in his fist.
+//
+// Measured instead. A principal-axis fit over all 1597 vertices gives a long axis of
+// (0.504, 0.820, -0.273) and a smallest axis of (0, 0.317, 0.949) -- the blade is a flat
+// plate and that second one is its normal. Sliced along the TRUE long axis rather than along
+// Y, the shape finally reads as an axe: the first third is round and 0.07-0.16 across (round
+// 0.76-0.91) and everything past 0.36 is a plate 0.06-0.14 thick and up to 0.70 wide. So the
+// haft is t = 0 to 0.33 and the head is the rest, and the middle of his grip sits at t = 0.116
+// -- the centroid of the 252 vertices between t 0.05 and 0.28.
+//
+// With the basis built from those numbers, `roll` is a rotation about the shaft itself and
+// nothing else moves: the pencil spinning between two palms.
+const AXE_FIT = {
+  shaft: [0.5038, 0.8196, -0.2729],     // the long axis, from the vertex fit
+  flat: [0, 0.317, 0.949],              // the blade's normal -- its thinnest direction
+  butt: [-0.3950, 0.0009, 0.1536],      // the end of the haft, in model units
+  len: 1.2575,                          // and how long the whole thing is along the shaft
+};
+// `grip` is how far along the shaft from the butt his hand closes, as a fraction of the whole
+// -- 0.116 is the middle of the haft. `len` is the axe's length as a multiple of the haft the
+// primitive was sized to. `roll` spins it about the shaft, `lift` and `tilt` swing it in his
+// grip, `drop` slides it in joint units. isle.axe({roll: 3.1416}) applies any of them.
+const AXEM = { url: 'models/alien_axe.glb', grip: .116, len: 1.15, roll: 0, lift: 0, tilt: 0, drop: [0, 0, 0] };
+const _axF = new THREE.Vector3(), _axU = new THREE.Vector3(), _axR = new THREE.Vector3();
+const _axQ = new THREE.Quaternion(), _axQ2 = new THREE.Quaternion(), _axG = new THREE.Vector3();
+const _axM = new THREE.Matrix4(), _axZ = new THREE.Vector3(0, 0, 1), _axY = new THREE.Vector3(0, 1, 0), _axX = new THREE.Vector3(1, 0, 0);
 function fitAxe() {
   const m = weap.axeM, g = weap.axe;
   if (!m || !g) return AXEM;
-  // The model stands up its own +Y; the joint's weapon axis is +Z and its top is +Y. A
-  // quarter turn about X carries one onto the other, and the three tweaks ride on top of it.
-  m.rotation.set(Math.PI / 2 + AXEM.tilt, AXEM.lift, AXEM.roll, 'ZYX');
-  const s = (weap.axeL || 1) * AXEM.len;                 // the model is one unit tall
+  // Carry the axe's own axes onto the joint's: its shaft onto +Z, where the weapon points,
+  // and the flat of its blade onto +X, so the edge sweeps up and down rather than sideways.
+  _axF.fromArray(AXE_FIT.shaft).normalize();
+  _axR.fromArray(AXE_FIT.flat).normalize().addScaledVector(_axF, -_axR.dot(_axF)).normalize();
+  // AND IN THAT ORDER. makeBasis wants a RIGHT-handed triple, and the obvious pairing --
+  // across = flat x shaft, then flat = shaft x across -- comes out left-handed: its
+  // determinant is -1, setFromRotationMatrix reads a reflection as a rotation, and the shaft
+  // lands at (0.79, -0.13, -0.23) instead of on +Z. Cross the other way and it is 1.0000.
+  _axU.crossVectors(_axF, _axR);                         // so that across x edge = shaft
+  _axQ.setFromRotationMatrix(_axM.makeBasis(_axR, _axU, _axF)).invert();
+  // Now the shaft IS +Z, so these three are what they say they are.
+  if (AXEM.roll) _axQ.premultiply(_axQ2.setFromAxisAngle(_axZ, AXEM.roll));
+  if (AXEM.lift) _axQ.premultiply(_axQ2.setFromAxisAngle(_axY, AXEM.lift));
+  if (AXEM.tilt) _axQ.premultiply(_axQ2.setFromAxisAngle(_axX, AXEM.tilt));
+  m.quaternion.copy(_axQ);
+  const s = (weap.axeL || 1) * AXEM.len / AXE_FIT.len;
   m.scale.setScalar(s);
-  // Bring the grip point to the joint. After the quarter turn the model's height runs along
-  // +Z, so the offset is along Z -- and it is applied in the group's frame, outside the
-  // model's own rotation, which is what keeps `roll` from swinging it out of his hand.
-  m.position.set(0, 0, -AXEM.grip * s);
+  // Where his hand closes, brought to the joint. The grip runs from the butt along the shaft,
+  // so sliding `grip` walks his fist up and down the haft and nothing else changes.
+  _axG.fromArray(AXE_FIT.butt).addScaledVector(_axF, AXEM.grip * AXE_FIT.len)
+    .multiplyScalar(s).applyQuaternion(_axQ).negate();
+  m.position.copy(_axG);
   g.position.set(AXEM.drop[0] + WEAPON.drop[0], AXEM.drop[1] + WEAPON.drop[1], AXEM.drop[2] + WEAPON.drop[2]);
   return AXEM;
 }
@@ -15271,7 +15308,7 @@ function attachWeapon(r) {
       if (weap.axe) weap.axe.visible = false;
       weap.axe = g4; weap.axeM = m4; weap.axeK0 = k; g4.visible = false;
       fitAxe();
-      console.info('[weapon] the axe model is on the joint; isle.axe({grip:.4, len:1.15, roll:0}) to place it.');
+      console.info('[weapon] the axe is on the joint, shaft on +Z; isle.axe({roll: 3.1416}) spins it about the shaft.');
     });
     // THE NET CANNON, the same way. It used to fire out of the blaster, which is a pistol
     // and reads as one. This is a launcher: a short fat barrel that flares to a bell, a drum
