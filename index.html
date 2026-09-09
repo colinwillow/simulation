@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e39';
+const BUILD = 'e40';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -19898,6 +19898,26 @@ function stepClaw(dt) {
   claw.t += dt;
   // A target that is freed, killed or picked up by hand is no longer a job.
   if (claw.tgt && (!claw.tgt.alive || !claw.tgt.net || claw.tgt.carried)) { claw.tgt = null; if (J && J !== 'up') claw.job = 'up'; }
+  // AND THE SAME TEST ON WHAT IT IS ALREADY HOLDING, which is the one that was missing. The
+  // target was dropped when its net went; the CARGO only ever checked `alive`. So an animal
+  // that fought its way out of the net while it was being carried stayed the cargo for ever,
+  // and the block further down went on writing its position every frame -- clamped to the
+  // ground, because there is a floor under that write -- while its own legs walked it away
+  // between writes. Glued to the drone, on the ground, snapping back each time it got loose:
+  // that is exactly the report.
+  //
+  // It is let go rather than switched off. hurl with no speed is a straight drop into the
+  // fling it already has, so it falls, tumbles, lands somewhere it could have walked to and
+  // gets up -- all machinery that exists -- instead of being abandoned mid-air for the next
+  // frame to snap to the floor.
+  if (claw.cargo && (!claw.cargo.alive || !claw.cargo.net || claw.cargo.carried)) {
+    const o = claw.cargo; claw.cargo = null; claw.job = 'up'; claw.tgt = null;
+    if (o.alive && !o.carried && !o.fling && o.hurl) {
+      o.hauled = 0; o.hurl(0, 0, 0, 0);
+      snd.plop(o.pos.x, o.pos.z, .8);
+      logMsg('It works loose and drops out of the claw.');
+    }
+  }
   if (J === 'goto') {
     const o = claw.tgt;
     f.want.set(o.pos.x, groundY(o.pos.x, o.pos.z) + CLAW.overY + o.pivotY(), o.pos.z);
@@ -19921,7 +19941,7 @@ function stepClaw(dt) {
     claw.out = Math.max(CLAW.hold * (claw.cargo ? 1 : 0), claw.out - CLAW.haul * dt);
     if (claw.out <= (claw.cargo ? CLAW.hold : 0) + .02) { claw.out = claw.cargo ? CLAW.hold : 0; claw.job = claw.cargo ? 'carry' : null; }
   } else if (J === 'carry') {
-    if (!claw.cargo || !claw.cargo.alive) { claw.cargo = null; claw.job = 'up'; }
+    if (!claw.cargo) claw.job = 'up';
     else clawLift(f);
   } else {
     claw.shutK = Math.max(0, claw.shutK - dt * 3);
