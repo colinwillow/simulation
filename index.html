@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e50';
+const BUILD = 'e51';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -13015,10 +13015,13 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
     uLift: { value: new THREE.Color(0, 0, 0) }, uKnee: { value: .17 },
     uPx: { value: new THREE.Vector2(1 / 1280, 1 / 720) }, uAA: { value: 1 },
     tZ: { value: null }, uOut: { value: .55 }, uOutW: { value: 1 }, uNear: { value: .5 }, uFar: { value: 1600 },
-    uOutC: { value: new THREE.Color(.30, .34, .46) }, uOutLo: { value: .0045 }, uOutHi: { value: .034 }
+    uOutC: { value: new THREE.Color(.30, .34, .46) }, uOutLo: { value: .0045 }, uOutHi: { value: .034 },
+    // The see-through hole, told to the composite so the outline can stand out of its way.
+    uHoleUV: { value: new THREE.Vector2(-9, -9) }, uHoleRU: { value: 0 }, uHoleZC: { value: 0 }, uHoleLoU: { value: -9 }
   }, vertexShader: VS, fragmentShader: `
   uniform sampler2D tD,tB,tZ; uniform float uStr,uVig,uNight,uT,uKnee,uRush,uAA,uOut,uOutW,uNear,uFar,uOutLo,uOutHi;
-  uniform vec3 uLift,uOutC; uniform vec2 uPx; varying vec2 vUv;
+  uniform float uHoleRU,uHoleZC,uHoleLoU;
+  uniform vec3 uLift,uOutC; uniform vec2 uPx,uHoleUV; varying vec2 vUv;
   // Depth, in units, from the buffer's own non-linear encoding.
   float lz(vec2 uv){ float d = texture2D(tZ,uv).x; return (2.0*uNear*uFar)/(uFar+uNear-(2.0*d-1.0)*(uFar-uNear)); }
   float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
@@ -13078,10 +13081,29 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
     if (uOut > 0.001) {
       vec2 o = uPx * uOutW;
       float z0 = lz(vUv);
-      float g = abs(lz(vUv-vec2(o.x,0.0)) + lz(vUv+vec2(o.x,0.0)) - 2.0*z0)
-              + abs(lz(vUv-vec2(0.0,o.y)) + lz(vUv+vec2(0.0,o.y)) - 2.0*z0);
+      float zl = lz(vUv-vec2(o.x,0.0)), zr = lz(vUv+vec2(o.x,0.0));
+      float zd = lz(vUv-vec2(0.0,o.y)), zu = lz(vUv+vec2(0.0,o.y));
+      float g = abs(zl + zr - 2.0*z0) + abs(zd + zu - 2.0*z0);
       float e = smoothstep(uOutLo, uOutHi, g / max(z0, 1.0));
       e *= texture2D(tD,vUv).a;             // grass writes 0 here; everything else writes 1
+      // NOT OVER THE HOLE. A discarded fragment writes no depth, so every one the hole throws
+      // away leaves the depth of whatever was behind it -- and a 4x4 dither pattern of
+      // near and far is, to a second derivative, thousands of tiny silhouettes. The outline
+      // was not drawing the rock; it was drawing the dither.
+      //
+      // The mask is the hole's own three tests, rebuilt from its uniforms: inside the disc,
+      // above his feet, and something in the NEIGHBOURHOOD nearer to the lens than he is --
+      // the minimum of the five samples already taken, because at a discarded pixel the depth
+      // belongs to the far side and testing only the centre would keep half the checkerboard.
+      // He himself sits at uHoleZC and keeps his line; so does everything behind him.
+      if (uHoleRU > 0.0) {
+        vec2 hd = (vUv - uHoleUV) * vec2(uPx.y / max(uPx.x, 1e-6), 1.0);
+        float disc = 1.0 - smoothstep(uHoleRU * 0.70, uHoleRU * 1.02, length(hd));
+        float above = smoothstep(uHoleLoU, uHoleLoU + 0.06 * uHoleRU, vUv.y);
+        float zmin = min(min(zl, zr), min(zd, min(zu, z0)));
+        float front = 1.0 - smoothstep(uHoleZC - 2.8, uHoleZC - 0.6, zmin);
+        e *= 1.0 - disc * above * front;
+      }
       c *= mix(vec3(1.0), uOutC, e * uOut);
     }
     vec3 b = texture2D(tB,vUv).rgb;
@@ -21690,15 +21712,19 @@ function frame(now) {
     p.project(camera);
     if (!INTRO.on && INTRO.dive <= 0 && !player.free && !player.aboard && vz < -1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1) {
       holeUni.uHoleC.value.set((p.x * .5 + .5) * rtScene.width, (p.y * .5 + .5) * rtScene.height);
+      compMat.uniforms.uHoleUV.value.set(p.x * .5 + .5, p.y * .5 + .5);
       // Wider when the boom is short. A pinched camera is a camera with something big and
       // close in front of it, and a porthole seventeen percent of the screen across is not
       // much use when the other eighty-three are the inside of a canopy.
       holeUni.uHoleR.value = rtScene.height * lerp(.34, .17, smooth(8, 24, camS.r));
+      compMat.uniforms.uHoleRU.value = holeUni.uHoleR.value / Math.max(1, rtScene.height);
+      compMat.uniforms.uHoleZC.value = -vz;
       holeUni.uHoleZ.value = -vz;
       // and where his feet are, projected the same way, with a little slack under them
       planetPos(player.pos.x, player.pos.y + .05, player.pos.z, _holeF).project(camera);
       holeUni.uHoleLo.value = (_holeF.y * .5 + .5) * rtScene.height - rtScene.height * .02;
-    } else holeUni.uHoleR.value = 0;
+      compMat.uniforms.uHoleLoU.value = holeUni.uHoleLo.value / Math.max(1, rtScene.height);
+    } else { holeUni.uHoleR.value = 0; compMat.uniforms.uHoleRU.value = 0; }
   }
   drawReticle(); drawHud2();
 
