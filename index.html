@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd92';
+const BUILD = 'd93';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2047,7 +2047,16 @@ const skyRig = new THREE.Group(); skyRig.userData.flat = true; scene.add(skyRig)
 // true off mobile because it costs nothing and would matter again if the post chain ever went
 // away. The antialiasing that actually happens is the FXAA folded into compMat.
 const renderer = new THREE.WebGLRenderer({ antialias: !MOBILE, powerPreference: 'high-performance', stencil: false });
-renderer.setPixelRatio(Q.dpr);
+// TWO RESOLUTIONS, NOT ONE. `dpr` is what the WORLD is drawn at -- the scene target and the
+// bloom targets, which is where all the expensive shading and all the overdraw live. `present`
+// is what the CANVAS is, which only the final composite pass writes to. Tying them together,
+// as this did, means the only way to make the world cheaper was to make the whole picture
+// blurrier; split, the world can be drawn at three quarters and still be laid down on a full
+// resolution canvas with a filtered upscale and the FXAA and the outline running over it. The
+// HUD is DOM and was never affected by either.
+Q.dpr0 = Q.dpr;
+Q.present = Q.dpr;
+renderer.setPixelRatio(Q.present);
 // THE THIRD ARGUMENT, AND IT IS THE WHOLE OF THE BLACK BAND.
 // setSize's updateStyle defaults to TRUE, so this one call -- the only one in the file that
 // omitted it -- wrote `style.width:462px; style.height:932px` INLINE on the canvas, once, at
@@ -17643,9 +17652,15 @@ const VIEW = {
   ground: { label: 'grounding', cost: 'free',
     get: () => stainSet() > 0,
     set: v => stainSet(v ? (VIEW.ground.k || 1) : 0) },
-  sharp: { label: 'sharper', cost: '+27%',
-    get: () => Q.dpr > 1.7,
-    set: v => setDpr(v ? Math.min(2, devicePixelRatio) : (MOBILE ? 1.5 : 2)) },
+  // Only the canvas -- the world stays where it is. This is the cheap half of sharpening: one
+  // full-resolution composite pass, and the upscale of the world is filtered rather than
+  // blocky. The expensive half is the `low world` switch below, in reverse.
+  sharp: { label: 'crisper', cost: 'one pass',
+    get: () => Q.present > Q.dpr0 + .01,
+    set: v => setDpr(undefined, v ? Math.min(3, devicePixelRatio || 2) : Q.dpr0) },
+  low: { label: 'low world', cost: '-40% pixels',
+    get: () => Q.dpr < Q.dpr0 - .01,
+    set: v => setDpr(v ? Q.dpr0 * .75 : Q.dpr0) },
 };
 VIEW.outline.k = compMat.uniforms.uOut.value;
 VIEW.ground.k = stainSet();
@@ -18795,7 +18810,11 @@ function syncSize(probe) {
   }
   rtA.setSize(w * Q.dpr / Q.bloomDiv, h * Q.dpr / Q.bloomDiv);
   rtB.setSize(w * Q.dpr / Q.bloomDiv, h * Q.dpr / Q.bloomDiv);
-  motesUni.uScale.value = h * .5;
+  // gl_PointSize is in pixels of the target being drawn into, so halving the world's
+  // resolution would otherwise make every mote half again as big on screen. Held against the
+  // resolution the game started at, so today's look is unchanged and stays unchanged while
+  // the render scale is being played with.
+  motesUni.uScale.value = h * .5 * (Q.dpr / (Q.dpr0 || Q.dpr));
   // Streaks share the psys list but are instanced quads with no uScale — the old
   // resize handler assumed every psys was a point sprite and threw on every resize.
   for (const ps of world.psys) { const u = ps.mat.uniforms.uScale; if (u) u.value = h * .5; }
@@ -18806,10 +18825,16 @@ addEventListener('resize', syncSize);
 // FXAA puts back detail that was never drawn. It is 1.5 because at 2 the frame was 95 ms when
 // that number was last measured, and a lot has changed since. This makes it a thing to look at
 // rather than a thing to argue about: isle.dpr(2) and watch the counter.
-function setDpr(v) {
-  Q.dpr = clamp(+v || 1, .75, 3);
+function setDpr(v, present) {
+  if (v !== undefined) Q.dpr = clamp(+v || 1, .5, 3);
+  if (present !== undefined) {
+    Q.present = clamp(+present || 1, .5, 3);
+    renderer.setPixelRatio(Q.present);
+  }
   _vw = _vh = -1; syncSize();
-  console.log('[dpr] ' + Q.dpr.toFixed(2) + ' — scene target now ' + rtScene.width + 'x' + rtScene.height);
+  console.log('[res] world ' + rtScene.width + 'x' + rtScene.height + ' (dpr ' + Q.dpr.toFixed(2)
+    + '), canvas dpr ' + Q.present.toFixed(2) + ' — ' + (Q.dpr * Q.dpr / (Q.dpr0 * Q.dpr0) * 100).toFixed(0)
+    + '% of the pixels it started with');
   return Q.dpr;
 }
 addEventListener('orientationchange', syncSize);
