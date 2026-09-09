@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd91';
+const BUILD = 'd92';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -2221,20 +2221,25 @@ const std = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color:
 // that is both closer to the camera than he is and within a circle around him on screen.
 // It lives in the shared material shader rather than per object because the trees are
 // merged into a few big meshes on shared materials — there is no object to fade.
-const holeUni = { uHoleC: { value: new THREE.Vector2(-1e5, -1e5) }, uHoleR: { value: 0 }, uHoleZ: { value: 0 } };
+const holeUni = { uHoleC: { value: new THREE.Vector2(-1e5, -1e5) }, uHoleR: { value: 0 }, uHoleZ: { value: 0 }, uHoleLo: { value: -1e5 } };
 // Pulled out of the prototype hook so a material with an onBeforeCompile of its own can
 // still take the hole. Assigning one to an instance shadows the prototype's completely --
 // which is how the glowing plants ended up as the only solid things on the island.
 function holePatch(sh) {
-  sh.uniforms.uHoleC = holeUni.uHoleC; sh.uniforms.uHoleR = holeUni.uHoleR; sh.uniforms.uHoleZ = holeUni.uHoleZ;
+  sh.uniforms.uHoleC = holeUni.uHoleC; sh.uniforms.uHoleR = holeUni.uHoleR; sh.uniforms.uHoleZ = holeUni.uHoleZ; sh.uniforms.uHoleLo = holeUni.uHoleLo;
   sh.fragmentShader = `
-    uniform vec2 uHoleC; uniform float uHoleR, uHoleZ;
+    uniform vec2 uHoleC; uniform float uHoleR, uHoleZ, uHoleLo;
     float holeDither(vec2 p){ vec2 q = floor(mod(p, 4.0)); return (mod(q.x * 3.0 + q.y * 5.0 + q.x * q.y * 7.0, 16.0) + 0.5) / 16.0; }
   ` + sh.fragmentShader.replace('#include <clipping_planes_fragment>', `
     #include <clipping_planes_fragment>
     if (uHoleR > 0.0) {
       float hd = distance(gl_FragCoord.xy, uHoleC);
-      if (hd < uHoleR && vViewPosition.z < uHoleZ - 1.5) {
+      // NOT THE GROUND HE IS STANDING ON. The test is "closer to the lens than he is", and a
+      // deck he is standing on the far edge of is exactly that -- its near lip is between him
+      // and the camera, so the floor under his feet was dithered away and he stood on a hole.
+      // Nothing BELOW his feet can be hiding him, and uHoleLo is where his feet are on screen,
+      // so the whole class of problem goes with one comparison.
+      if (hd < uHoleR && gl_FragCoord.y > uHoleLo && vViewPosition.z < uHoleZ - 1.5) {
         float k = smoothstep(1.0, 0.45, hd / uHoleR);     // solid at the rim, open in the middle
         if (holeDither(gl_FragCoord.xy) < k * 0.92) discard;
       }
@@ -13616,7 +13621,7 @@ const GIMBAL = {
   // would pitch just as hard running along a contour as straight up the face.
   pitch: { ahead: 17, k: .34, max: .30, rate: 1.8 },
 };
-const _camWant = new THREE.Vector3(), _holeP = new THREE.Vector3(), _holeV = new THREE.Vector3();
+const _camWant = new THREE.Vector3(), _holeP = new THREE.Vector3(), _holeV = new THREE.Vector3(), _holeF = new THREE.Vector3();
 const _camQ = new THREE.Quaternion(), _camW = new THREE.Vector3();
 // Treat the terrain as a heightfield and march the boom: if the shot is blocked,
 // first climb (a drone lifting over a ridge), and only pull in if climbing can't clear it.
@@ -14802,10 +14807,28 @@ const LAND = { roll: 15, rollRate: 1.15, rollGo: 5.5 };
 // fallback for a rig with no roll at all.
 // The two feels, so switching is one call and neither is buried in a diff.
 const MOVE_SETS = {
-  weighted: { acc: 24, accFall: .93, drag: 46, turn: 52, airAcc: 11, airTurn: 9 },
-  direct:   { acc: 95, accFall: .35, drag: 200, turn: 150, airAcc: 26, airTurn: 20 },
+  weighted: { acc: 24, accFall: .93, drag: 46, turn: 52, airAcc: 11, airTurn: 9, airDrag: 1.2 },
+  // AND THE AIR IS PART OF IT. airDrag 1.2 means a jump keeps nearly all of whatever it left
+  // the ground with, whichever way the thumb has gone since -- which is the "momentum flying
+  // around", and it is worse on a phone than anywhere else, because a thumb on glass cannot
+  // make the small correction a stick can. At 6 he still arcs; he just stops arcing at the
+  // mercy of the last thing he did.
+  direct:   { acc: 95, accFall: .35, drag: 200, turn: 150, airAcc: 30, airTurn: 22, airDrag: 6 },
 };
-function setMove(m) { const st = MOVE_SETS[m] || MOVE_SETS.weighted; Object.assign(MOVE, st); return m in MOVE_SETS ? m : 'weighted'; }
+function setMove(m) {
+  const ok = m in MOVE_SETS;
+  Object.assign(MOVE, MOVE_SETS[ok ? m : 'weighted']);
+  MOVE.set = ok ? m : 'weighted';
+  try { localStorage.setItem('isle.move', MOVE.set); } catch (e) {}
+  return MOVE.set;
+}
+// DIRECT, and it took two goes to get here honestly. The first time it went in, the sliding it
+// was meant to cure turned out to be the camera aiming its lead along his facing rather than
+// his travel -- so it was reverted and the camera fixed instead, which was right on the
+// evidence at the time. This is a second judgement on top of that one: with the drift gone he
+// has now played both, and weighted momentum is not what he wants a thumb to be steering.
+// isle.move('weighted') is the way back, and the choice sticks across a reload.
+(() => { let m = 'direct'; try { m = localStorage.getItem('isle.move') || 'direct'; } catch (e) {} setMove(m); })();
 const ROLL = { speed: 32, skip: .12, end: 1.30, rate: 1.35, go: .88, time: .7, cool: .28, turn: 1 };
 // THE RUN. `k` is how much faster than his own top speed a sprint is; `at` is how far up the
 // right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
@@ -19599,6 +19622,9 @@ function frame(now) {
       // much use when the other eighty-three are the inside of a canopy.
       holeUni.uHoleR.value = rtScene.height * lerp(.34, .17, smooth(8, 24, camS.r));
       holeUni.uHoleZ.value = -vz;
+      // and where his feet are, projected the same way, with a little slack under them
+      planetPos(player.pos.x, player.pos.y + .05, player.pos.z, _holeF).project(camera);
+      holeUni.uHoleLo.value = (_holeF.y * .5 + .5) * rtScene.height - rtScene.height * .02;
     } else holeUni.uHoleR.value = 0;
   }
   drawReticle(); drawHud2();
