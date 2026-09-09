@@ -1616,7 +1616,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e42';
+const BUILD = 'e43';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -4290,7 +4290,10 @@ function stainWorld(hold) {
 //
 // A pool of fourteen rather than one each: at any moment only a handful are near enough to
 // read, and fourteen draw calls is a price worth paying where four hundred would not be.
-const BLOB = { n: 14, show: 42, k: .5, fade: 9, spread: .16, lift: .07, col: '#0d1826' };
+// `fade` was 9 and a standing jump reaches 9.8, so the mark went out at exactly the moment he
+// was highest and had least idea where he was. 20 keeps it under him for the whole arc,
+// spreading and thinning as he rises, which is the read: how big and how faint IS the height.
+const BLOB = { n: 14, show: 42, k: .5, fade: 20, spread: .13, lift: .07, col: '#0d1826' };
 const _blob = { list: [], geo: null, tex: null };
 function blobTex() {
   const cv = document.createElement('canvas'); cv.width = cv.height = 128;
@@ -4336,7 +4339,11 @@ function blobStep() {
     const m = _blob.list[i] || (w ? blobMake() : null);
     if (!m) break;
     if (!w) { m.visible = false; continue; }
-    const gy = groundY(w.x, w.z);
+    // THE FLOOR HE IS OVER, not the terrain under it. This asked groundY, which is the ground
+    // and nothing else -- so standing on a platform up a tree put the blob on the earth twenty
+    // units below and then faded it out for being twenty units away. No grounding anywhere off
+    // the ground, which is exactly where you need it most, and none while jumping either.
+    const gy = Math.max(groundY(w.x, w.z), standOn(w.x, w.z, w.y), deckY(w.x, w.z, w.y, w.y));
     const h = Math.max(0, w.y - gy);
     const k = 1 - smooth(0, BLOB.fade, h);
     if (k < .03 || gy < SEA - .5) { m.visible = false; continue; }
@@ -10766,15 +10773,24 @@ function updateMotes(dt) {
         // parked there for good: a ring of specks that hung beside you and never moved.
         // Steer the velocity instead of pushing on it. Each mote circles the light and
         // breathes in and out on its own clock, so the pool is always streaming.
+        // A SHELL, NOT A HOOP. Every one of them sprang to the lamp's exact height and circled
+        // it there, so the swarm was a flat ring that slid up and down as he climbed -- which
+        // is precisely what reads as the ground moving with him. Each keeps its own place on a
+        // sphere instead: a latitude of its own that breathes on its own clock, the orbit
+        // radius falling away toward the poles the way it does on a ball, and the height it
+        // wants following from that latitude rather than from him. The orbital speed varies
+        // per mote too, so it is a swarm rather than a carousel.
         const dh = dh0 + .01, rx = dx / dh, rz = dz / dh;
-        const want = 3 + Math.sin(t * .55 + mseed[i] * 1.7) * 2.2;
-        const radial = clamp((dh0 - want) * .9, -2.4, 2.4), orb = 3.4;
+        const lat = Math.sin(t * .37 + mseed[i] * 2.3) * 1.2;
+        const R = 3.6 + Math.sin(t * .55 + mseed[i] * 1.7) * 1.7;
+        const want = Math.max(.5, Math.cos(lat) * R), wantY = best.y + Math.sin(lat) * R;
+        const radial = clamp((dh0 - want) * .9, -2.4, 2.4);
+        const orb = 2.2 + (mseed[i] % 1) * 2.4;
         ax += (-rz * orb + rx * radial - vx) * 3.2;
         az += (rx * orb + rz * radial - vz) * 3.2;
-        // and held at the lamp's height rather than merely bobbing at whatever height the
-        // ground band happened to leave them: underdamped on purpose, so the swirl arrives
-        // a beat after he does and overshoots a little on the way down
-        ay += (dy * 2.8 - vy * 1.3) + Math.sin(t * .8 + mseed[i]) * 1.2;
+        // Underdamped on purpose, so the swarm arrives a beat after he does and overshoots a
+        // little on the way down.
+        ay += ((wantY - y) * 2.8 - vy * 1.3) + Math.sin(t * .8 + mseed[i]) * 1.2;
       } else {
         const pull = d < 4 ? -.5 : best.w * 1.4; ax += dx / d * pull; ay += dy / d * pull; az += dz / d * pull;
         if (d < 9) { ax += -dz / d * 1.6; az += dx / d * 1.6; }
@@ -10788,7 +10804,8 @@ function updateMotes(dt) {
     // lamp, when it belongs to the lamp. The ceiling used to hold regardless, so a jump
     // took him up and left the whole swirl standing in the grass underneath him.
     const gy = groundY(x, z); let lo = gy + 1.6, hi = gy + 9;
-    if (best && best.out) { lo = Math.min(lo, best.y - 4.5); hi = Math.max(hi, best.y + 4.5); }
+    // Wide enough for the whole shell, or the band would flatten the thing it is meant to leave alone.
+    if (best && best.out) { lo = Math.min(lo, best.y - 6.5); hi = Math.max(hi, best.y + 6.5); }
     if (y < lo) ay += (lo - y) * 4; else if (y > hi) ay -= (y - hi) * 1.2; ay -= vy * .5;
     const rr = Math.hypot(x, z); if (rr > W * .8) { ax -= x / rr * 3; az -= z / rr * 3; }
     if (!isLand(x, z) && !best) { ax -= x * .02; az -= z * .02; }
@@ -15084,6 +15101,7 @@ const MOVE = {
   // face is still in front of him; eased at 4.5 a second, the slowing takes about a fifth of
   // a second instead of one frame.
   look: 2.4, gradeEase: 4.5,
+  dead: .12, curve: 1.85,      // the stick's dead zone, and how much of the pad is the slow end
   slipAt: 1.15, slipFull: 1.9, slipDrag: .05,
   // And he leans into it. Radians of forward pitch per unit of gradient, scaled by how hard
   // he is actually pushing -- standing on a slope is not climbing one -- and less going down,
@@ -19374,7 +19392,13 @@ function updatePlayer(dt) {
     } else {
       let dx = sa * ly + ca * lx, dz = ca * ly - sa * lx;
       const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
-      player.wx = dx; player.wz = dz; player.wmag = Math.min(1, mag);
+      // A CURVE, NOT THE RAW THUMB. The stick pad is 52px across and this took its magnitude
+      // straight, so the whole range from a crawl to a sprint lived in about forty pixels and
+      // the first touch was usually most of the way out already: he had two speeds, stopped
+      // and going. Rescaled off the dead zone so the full travel is usable, then squared-ish,
+      // which puts half the pad under a third of top speed and leaves room to place a foot.
+      const w = clamp((mag - MOVE.dead) / (1 - MOVE.dead), 0, 1);
+      player.wx = dx; player.wz = dz; player.wmag = Math.pow(w, MOVE.curve);
       player.heading = Math.atan2(dx, dz);
     }
   }
