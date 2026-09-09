@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e51';
+const BUILD = 'e52';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -9557,6 +9557,7 @@ class Walker extends Creature {
 // he comes round and gets up. All of it hangs off the vigour and daze the whole island already
 // runs on -- see VIT -- so none of it is a second damage system.
 const POACHER = {
+  airAt: 5.5,        // upward launch below this is a shove, not a flight -- see knock
   see: 34,           // how far off he notices a creature worth having
   creep: 13,         // and inside this he stops walking and starts creeping
   grab: 2.6,
@@ -9615,9 +9616,16 @@ class Poacher extends Creature {
   knock(from, force = 1) {
     const h = this.hitFrom(from);
     super.knock(from, force);
-    // He is in the air now: leaning away from a blow he saw coming, folded forward over one
-    // he did not. Held for the flight rather than for the clip's own length.
-    if (this.fling) this.play(h.front > .1 ? 'airBwd' : 'airFwd', 1, 2.2);
+    // ONLY IF HE ACTUALLY LEFT THE GROUND. knock is not only what a blow does -- walking into
+    // a creature above KNOCK.bodyAt calls it too, as a body check -- and this played the full
+    // flight pose for a flat 2.2 seconds on every one of them. Brush past him and he stands
+    // there, on the floor, in mid-air. A shove gets the hit reaction it deserves instead.
+    //
+    // And the flight is held for the FLIGHT: 2.2 was a guess at how long a tumble lasts and it
+    // outlived most of them, which is the other half of the same report. See update.
+    if (!this.fling) { this.quarry = null; this.hunt = 0; return; }
+    if (this.fling.vy > POACHER.airAt) this.play(h.front > .1 ? 'airBwd' : 'airFwd', 1, 2.6);
+    else this.play(Math.abs(h.right) < .45 ? 'hitC' : (h.right > 0 ? 'hitL' : 'hitR'), 1.35, POACHER.react);
     this.quarry = null; this.hunt = 0;
   }
   think(dt) {
@@ -9669,6 +9677,9 @@ class Poacher extends Creature {
   }
   update(dt) {
     if (this.daze > 0) this._wasDown = 1;
+    // FEET DOWN, POSE DOWN. The air clips are the one pair whose truth is not a length of time
+    // but a state, so they end when the tumble does rather than when their timer says so.
+    if (!this.fling && this.actT > .12 && (this.act === 'airFwd' || this.act === 'airBwd')) this.actT = .12;
     this.stepAct(dt);
     super.update(dt);
   }
@@ -15947,6 +15958,7 @@ const MELEE = {
   // is exactly what "he just slides in place" looks like. `lunge` floors the start at a little
   // over whatever he was already doing, so it can only ever be a gain.
   slideAt: 4.2, slideSpeed: 22, slideT: .70,
+  slideFar: 5.2,     // closer than this and the opening move is a punch, not a tackle
   // THE CLIPS PLAY HOT, and the bare-handed three play hotter than the armed four. A punch
   // is a jab: 0.92 s of authored swing is a man deciding to hit something. At 1.7 it is 0.54,
   // which is a punch. The armed set stays nearer its authored pace -- an axe has weight and
@@ -16049,7 +16061,13 @@ function meleeFlick(x, y) {
   if (tgt) p.faceH = p.heading = Math.atan2(tgt.dx / tgt.d, tgt.dz / tgt.d);
   p.melId = (p.melId || 0) + 1;
   // Running, and this is the first of the combo: he goes in low.
-  const slide = p.melN === 0 && r.acts.slide && Math.hypot(p.vx, p.vz) > MELEE.slideAt;
+  // A TACKLE IS FOR CLOSING GROUND. This asked only whether he was moving -- and 4.2 against a
+  // top speed of 17 means walking at all qualifies -- so the FIRST flick of nearly every fight
+  // was a slide, launched at 22 a second at something already an arm's length away. It carries
+  // him past, and from the outside that is the opening swing missing a man he is standing on
+  // top of. Now it also has to be worth closing.
+  const slide = p.melN === 0 && r.acts.slide && Math.hypot(p.vx, p.vz) > MELEE.slideAt
+    && (!tgt || tgt.d > MELEE.slideFar);
   const key = slide ? 'slide' : list[p.melN % list.length];
   const armed = p.armWant && p.armed > .4;
   const rate = slide ? MELEE.rate * .9 : (armed ? MELEE.rate : MELEE.bareRate);
