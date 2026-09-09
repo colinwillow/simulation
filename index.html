@@ -2029,7 +2029,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e20';
+const BUILD = 'e21';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -15811,7 +15811,7 @@ function meleeHit(slide, first) {
 }
 // Start a named one-shot. `actT` is how long it owns the body, and stepPlayer walks actK in
 // and out of it so the blend is a ramp rather than a switch.
-function playAct(key, rate, from) {
+function playAct(key, rate, from, end) {
   const p = player, r = p.rigH, a = r && r.acts[key];
   if (!a) return false;
   // Only an arm move owns the weapon's hand-off. Without this a melee flick with the blaster
@@ -15821,7 +15821,12 @@ function playAct(key, rate, from) {
   p.actFire = null;                      // a new move cancels whatever the last one was waiting to do
   p.actN = key; p.actRate = rate || 1;
   p.actFrom = from || 0;
-  p.actT = p.actMax = Math.max(.05, a.getClip().duration - p.actFrom) / (rate || 1);
+  // `end` cuts the tail the same way `from` cuts the front. A clip that finishes moving and
+  // then stands there for a third of a second was holding the body for a third of a second
+  // in which nothing was happening -- and that is what a move you cannot get out of feels
+  // like from the outside.
+  const dur = a.getClip().duration, to = end === undefined ? dur : Math.min(end, dur);
+  p.actT = p.actMax = Math.max(.05, to - p.actFrom) / (rate || 1);
   a.timeScale = rate || 1;
   return true;
 }
@@ -15836,10 +15841,14 @@ function playAct(key, rate, from) {
 const THROWA = { clip: 'throwGo', at: .417, rate: 1.7, windIn: 9 };
 function throwPlay(quick, fn) {
   const p = player, r = p.rigH;
-  if (!r || !r.acts.throwGo) { fn(); return; }
+  // The arm through the air is the same noise the arm through the air makes on a swing, and
+  // it goes on the release frame rather than on the input, for the reason everything else in
+  // this file does: the sound and the moment have to be the same event.
+  const go = () => { snd.swing(p.pos.x, p.pos.z); fn(); };
+  if (!r || !r.acts.throwGo) { go(); return; }
   const from = quick ? 0 : THROWA.at;
   playAct('throwGo', THROWA.rate, from);
-  p.actFire = { t: Math.max(0, (THROWA.at - from) / THROWA.rate), fn };
+  p.actFire = { t: Math.max(0, (THROWA.at - from) / THROWA.rate), fn: go };
 }
 // A move that carries him. Speed at the front, spent by the end, steering off for its length
 // -- the same shape the dodge already had, factored out because the melee, the slide and the
@@ -15882,7 +15891,25 @@ const FLICK = { at: .72, within: .28 };     // what counts: this much travel, re
 // How hard a landing has to be before he goes over his shoulder instead of taking it on his
 // knees, how fast that clip plays, and the least forward he carries through it -- a roll on
 // the spot is a man falling over.
-const LAND = { roll: 15, rollRate: 1.15, rollGo: 5.5 };
+// TWO LANDINGS, AND THE ROLL WAS TAKING BOTH. A jump leaves at vy 25 and gravity is 32, so
+// he arrives back at about -25 from FLAT GROUND -- under a threshold of 15, which means every
+// hop in the game was a tumble. The ordinary landing existed and was never once reached.
+//
+// So `roll` is a real drop now: 31 is a jump off something five units up, or a fall from
+// sixteen standing. Below it a landing at speed still rolls -- running into one reads as a
+// tumble whatever the height -- which is `rollFast` against `rollSpeed`.
+//
+// AND THE CLIP IS TRIMMED TO THE PART THAT ROLLS. Measured off landing_to_roll, hips Y in
+// centimetres: 65 at the top, still RISING to 73 at 0.125 because the clip opens with him
+// airborne, down through 61 to a crouch at 50 held from 0.29 to 0.46, the hips on the floor
+// at 11 by 0.79, back up through 43 at 1.21, standing at 70 by 1.54 -- and then 71, 72, 72,
+// 72 for the last third of a second, which is a man standing still. 1.875 s long and about
+// 1.1 of it is the move.
+//
+// He hits the ground at the crouch, not at the first frame, so the clip starts at `skip`; it
+// ends where he is upright rather than where the file does; and 1.5 puts what is left at
+// three quarters of a second of ownership against the one and two thirds it was.
+const LAND = { roll: 31, rollFast: 24, rollSpeed: 11, rollRate: 1.5, rollGo: 5.5, skip: .40, end: 1.52 };
 // Measured off the clip, re-measured when the export dropped it, and measured a third time
 // now that the real one is back. `roll` is 1.208 s and, read out of its hips channel in
 // centimetres, it is all dodge: 67 at the top, a crouch to 51 by 0.21, the tumble from 0.54
@@ -19148,6 +19175,10 @@ function updatePlayer(dt) {
     if (player.jump && player.swim > .5 && player.pos.y > waveY(player.pos.x, player.pos.z) - 1.6) {
       player.vy = 15; player.grounded = 0; player.hang = 1; snd.leap(player.pos.x, player.pos.z);
     } else if (player.jump && player.grounded && player.swim < .5 && player.leadT <= 0) {
+      // Jumping out of a tumble should END the tumble. Left alone the roll keeps the body for
+      // its whole length and the jump plays underneath it, which is the "I jumped while he was
+      // rolling" -- the input took and the picture did not.
+      if (player.actN === 'landRoll') player.actT = 0;
       // ON THE LAUNCH, NOT ON THE BUTTON. With a crouch clip the push-off is a beat after the
       // press, and a whoosh that arrives while he is still bending reads as a different action.
       if (canLead) player.leadT = RIG.jumpLead;             // crouch first, launch when it lands
@@ -19166,10 +19197,12 @@ function updatePlayer(dt) {
     // anything real it reads as a man absorbing a fall with his knees. `landing_to_roll` takes
     // over past LAND.roll of downward speed, carries whatever forward he had, and the ordinary
     // landing stands down so the two are not both playing.
-    if (player.grounded && !wasGrounded && fell < -LAND.roll && player.swim < .5 && player.actT <= 0
+    const hardLand = fell < -LAND.roll
+      || (fell < -LAND.rollFast && Math.hypot(player.vx, player.vz) > LAND.rollSpeed);
+    if (player.grounded && !wasGrounded && hardLand && player.swim < .5 && player.actT <= 0
         && player.rigH && player.rigH.acts.landRoll) {
       player.landT = 0;
-      playAct('landRoll', LAND.rollRate);
+      playAct('landRoll', LAND.rollRate, LAND.skip, LAND.end);
       addTrauma(.13); hitStop(2);
       const sp = Math.hypot(player.vx, player.vz);
       if (sp < LAND.rollGo) { player.vx = Math.sin(player.faceH) * LAND.rollGo; player.vz = Math.cos(player.faceH) * LAND.rollGo; }
@@ -19177,7 +19210,7 @@ function updatePlayer(dt) {
     }
     // One landing noise for both, after the roll has had its say about which it was, so a
     // hop and a fall are the same event at two weights rather than two sounds.
-    if (touched && (player.airT > .12 || fell < -LAND.roll)) snd.land(player.pos.x, player.pos.z, fell < -LAND.roll);
+    if (touched && (player.airT > .12 || hardLand)) snd.land(player.pos.x, player.pos.z, hardLand);
     if (player.landT > 0 && player.speed > 7) player.landT = 0;   // running landings roll into the run instead
     player.airT = player.grounded ? 0 : player.airT + dt;
     if (player.landT > 0) player.landT -= dt;
