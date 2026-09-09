@@ -555,16 +555,16 @@
   /* covers the one frame where the title's scene is swapped for the world's */
   #veil{position:fixed;inset:0;z-index:9;background:#05070d;opacity:1;pointer-events:none;
     transition:opacity 1.2s ease-out}
-  /* THE CLOUD WIPE. Two banks come in from the sides, meet over the middle, and the world is
-     swapped while they are touching. Each is wider than half the screen so the solid parts
-     overlap: what has to be perfect is the COVER, and the lumpy edges are only ever seen on
-     the way in and on the way out. */
+  /* THE CLOUD WIPE. A sky's worth of them, at their own sizes and depths, drifting in from
+     both sides -- they meet, the world is swapped inside them, and they carry on across and
+     out the far side. Not two shutters. `u` is the inside of a cloud, up for the instant of
+     the swap only, so the cover is guaranteed without the clouds having to tile the frame. */
   #wipe{position:fixed;inset:0;z-index:10;pointer-events:none;overflow:hidden}
-  #wipe b{position:absolute;top:-3%;height:106%;width:64%;display:block;
-    background-repeat:no-repeat;background-size:100% 100%;
-    transition:transform var(--wt,.62s) cubic-bezier(.36,0,.22,1)}
-  #wipe b.l{left:0}
-  #wipe b.r{right:0}
+  #wipe i{position:absolute;display:block;background-repeat:no-repeat;background-size:100% 100%;
+    will-change:transform;transform:translate3d(0,0,0)}
+  #wipe u{position:absolute;inset:-2%;display:block;opacity:0;
+    background:radial-gradient(120% 90% at 50% 45%,#ffffff 0%,#eaf3fb 45%,#cfe0ef 100%);
+    transition:opacity .30s ease}
 
   /* ══ THE BRAND PASS ══════════════════════════════════════════════════════════════════
      One language for the whole interface, and it is the title screen's: cream on deep
@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e53';
+const BUILD = 'e54';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -14784,34 +14784,41 @@ function introFrame(dt) {
 // Drawn, not shipped: the same trick as the slash and the contact blob. A run of overlapping
 // discs down one edge of a canvas, blurred, in the sky's own indigo with a lit rim, so it
 // reads as cloud in this game's palette rather than as a shape crossing the screen.
-const WIPE = { w: .62, hold: .16, out: .8, on: 0, url: null, url2: null };
-function wipeTex(flip) {
-  const W0 = 300, H0 = 560, cv = document.createElement('canvas');
+const WIPE = { n: 16, inT: .80, hold: .24, outT: 1.0, on: 0, url: null };
+// A CLOUD, DRAWN. Puffs along a baseline with a couple riding on top, filled with a vertical
+// gradient so the crown is white and the belly takes the sky's blue -- which is the whole of
+// what makes a cartoon cloud read as lit from above. Three layouts off a seeded generator, so
+// the sky is not the same shape sixteen times and is the same sky on every load.
+function cloudTex(v) {
+  const W0 = 440, H0 = 260, cv = document.createElement('canvas');
   cv.width = W0; cv.height = H0;
   const g = cv.getContext('2d');
-  if (flip) { g.translate(W0, 0); g.scale(-1, 1); }
-  // the body: solid to 62% of the width, then the lumps carry it the rest of the way
-  const grd = g.createLinearGradient(0, 0, W0, 0);
-  grd.addColorStop(0, '#0a0a24'); grd.addColorStop(.62, '#14113a'); grd.addColorStop(1, '#221a4e');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, W0 * .62, H0);
-  // AND THE EDGE IS NOT A LINE. Discs of falling size down the boundary, each one a little
-  // further out than the last is likely to be, so no two runs of it read the same.
-  let seed = 7;
+  let seed = 11 + v * 977;
   const rr = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let i = 0; i < 26; i++) {
-    const y = (i + .5) / 26 * H0, r = H0 * (.055 + rr() * .075);
-    const x = W0 * .62 - r * .35 + rr() * W0 * .17;
-    g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fill();
+  const puffs = [];
+  const n = 6 + (v % 3);
+  for (let i = 0; i < n; i++) {
+    const t = (i + .5) / n;
+    // fat in the middle of the run, tapering at both ends, the way a bank of cloud sits
+    const swell = Math.sin(Math.PI * t) ** .7;
+    puffs.push([W0 * (.08 + t * .84), H0 * (.66 - swell * .12 + rr() * .06),
+                H0 * (.16 + swell * .21 + rr() * .05)]);
   }
-  // a lit rim along the leading edge, the way the sky lights the top of a cloud here
-  g.globalCompositeOperation = 'source-atop';
-  const lit = g.createLinearGradient(W0 * .45, 0, W0 * .82, 0);
-  lit.addColorStop(0, 'rgba(120,190,255,0)'); lit.addColorStop(1, 'rgba(150,215,255,.42)');
-  g.fillStyle = lit; g.fillRect(0, 0, W0, H0);
+  for (let i = 0; i < 3; i++) {
+    const t = .26 + rr() * .48;
+    puffs.push([W0 * t, H0 * (.40 + rr() * .10), H0 * (.13 + rr() * .10)]);
+  }
+  const grd = g.createLinearGradient(0, H0 * .16, 0, H0 * .95);
+  grd.addColorStop(0, '#ffffff'); grd.addColorStop(.55, '#f2f8fd'); grd.addColorStop(1, '#c9dcee');
+  g.fillStyle = grd;
+  g.beginPath();
+  for (const [x, y, r] of puffs) { g.moveTo(x + r, y); g.arc(x, y, r, 0, 6.2832); }
+  g.fill();
+  // and a flat base, so it sits on its own line rather than hanging as a bunch of grapes
+  g.fillRect(W0 * .10, H0 * .60, W0 * .80, H0 * .22);
   return cv.toDataURL('image/png');
 }
-// `fn` runs at the moment the banks touch. If anything here goes wrong at all it runs at once
+// `fn` runs at the moment the sky is shut. If anything here goes wrong at all it runs at once
 // instead: a transition is decoration and the start button is not.
 function wipeStart(fn) {
   if (WIPE.on) return;
@@ -14819,28 +14826,61 @@ function wipeStart(fn) {
   let done = 0;
   const fire = () => { if (done) return; done = 1; try { fn(); } catch (e) { console.warn('start:', e); } };
   try {
-    if (!WIPE.url) { WIPE.url = wipeTex(0); WIPE.url2 = wipeTex(1); }
+    if (!WIPE.url) WIPE.url = [cloudTex(0), cloudTex(1), cloudTex(2)];
     const g = document.createElement('div'); g.id = 'wipe';
-    const L = document.createElement('b'), R = document.createElement('b');
-    L.className = 'l'; R.className = 'r';
-    L.style.backgroundImage = 'url(' + WIPE.url + ')';
-    R.style.backgroundImage = 'url(' + WIPE.url2 + ')';
-    L.style.transform = 'translateX(-104%)'; R.style.transform = 'translateX(104%)';
-    g.appendChild(L); g.appendChild(R); document.body.appendChild(g);
+    const veil = document.createElement('u'); g.appendChild(veil);
+    let seed = 4;
+    const rr = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const els = [];
+    for (let i = 0; i < WIPE.n; i++) {
+      const el = document.createElement('i');
+      // DEPTH. One number picks the size, and everything else follows it the way it does in a
+      // real sky: the near ones are big, opaque, quick and low; the far ones are small, hazy,
+      // slow and high. Without that they all arrive together and it is a shutter again.
+      const dep = rr(), side = i % 2 ? 1 : -1;
+      const h = 26 + dep * dep * 86;                 // vh
+      const w = h * (2.1 + rr() * .8);
+      el.style.height = h + 'vh'; el.style.width = w + 'vh';
+      el.style.top = (-14 + rr() * 104) + 'vh';
+      el.style.opacity = (.66 + dep * .34).toFixed(2);
+      if (dep < .4) el.style.filter = 'blur(' + ((.4 - dep) * 5).toFixed(1) + 'px)';
+      el.style.backgroundImage = 'url(' + WIPE.url[i % 3] + ')';
+      if (side > 0) el.style.transform = 'scaleX(-1)';
+      // start off its own side, meet somewhere across the middle, carry on out the far one
+      const x0 = side < 0 ? -(w + 12) : (100 + 12);
+      const x1 = side < 0 ? (-6 + rr() * 46) : (60 - rr() * 46 - w * .3);
+      const x2 = side < 0 ? (120 + rr() * 30) : -(w + 30 + rr() * 30);
+      el.style.left = '0';
+      el.dataset.x1 = x1; el.dataset.x2 = x2;
+      el.style.transform = 'translate3d(' + x0 + 'vw,0,0)' + (side > 0 ? ' scaleX(-1)' : '');
+      el._flip = side > 0 ? ' scaleX(-1)' : '';
+      // the near ones lead, so the frame fills from the front
+      el._lag = (1 - dep) * .16;
+      g.appendChild(el); els.push(el);
+    }
+    document.body.appendChild(g);
     // Two frames before the move, not one: a transform set in the same frame the element was
-    // added has no previous value to animate away from and the banks simply appear shut.
+    // added has no previous value to animate away from and the sky simply appears shut.
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      L.style.transform = 'translateX(0)'; R.style.transform = 'translateX(0)';
+      for (const el of els) {
+        el.style.transition = 'transform ' + (WIPE.inT + el._lag) + 's cubic-bezier(.20,.62,.24,1)';
+        el.style.transform = 'translate3d(' + el.dataset.x1 + 'vw,0,0)' + el._flip;
+      }
     }));
-    setTimeout(fire, 640);
+    setTimeout(() => { veil.style.opacity = '1'; }, (WIPE.inT - .22) * 1000);
+    setTimeout(fire, WIPE.inT * 1000 + 30);
     setTimeout(() => {
-      g.style.setProperty('--wt', WIPE.out + 's');
-      L.style.transform = 'translateX(-104%)'; R.style.transform = 'translateX(104%)';
-    }, 640 + WIPE.hold * 1000);
-    setTimeout(() => { g.remove(); WIPE.on = 0; }, 700 + WIPE.hold * 1000 + WIPE.out * 1000);
+      veil.style.transition = 'opacity .42s ease';
+      veil.style.opacity = '0';
+      for (const el of els) {
+        el.style.transition = 'transform ' + (WIPE.outT + el._lag) + 's cubic-bezier(.42,0,.66,1)';
+        el.style.transform = 'translate3d(' + el.dataset.x2 + 'vw,0,0)' + el._flip;
+      }
+    }, (WIPE.inT + WIPE.hold) * 1000);
+    setTimeout(() => { g.remove(); WIPE.on = 0; }, (WIPE.inT + WIPE.hold + WIPE.outT + .4) * 1000);
   } catch (e) { console.warn('wipe skipped:', e); WIPE.on = 0; fire(); }
   // and a backstop, because the game starting is not allowed to depend on any of the above
-  setTimeout(fire, 1600);
+  setTimeout(fire, 1800);
 }
 function startGame() {
   if (!INTRO.on) return;
