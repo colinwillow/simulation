@@ -1620,7 +1620,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e46';
+const BUILD = 'e47';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -1639,6 +1639,35 @@ const SFXV = 2;
 // fail. At twelve seconds the splash comes off whatever else is or is not happening, and the
 // build tag says what state it went off in -- whether the loop ever ran (t), and how many
 // models arrived (m). That turns a silent hang into one photograph.
+// AND WHAT KILLED IT, IN WORDS. The floor below can say the loop never ran; it cannot say
+// why, because a throw during module EVALUATION happens outside every try/catch in this file
+// -- the frame loop's own handler never gets a turn -- and the only trace is in a console no
+// phone will show. This puts the first error on the build tag, one photograph away.
+addEventListener('error', e => {
+  try {
+    if (window.__sawErr) return; window.__sawErr = 1;
+    const t = document.getElementById('bldTag');
+    const m = (e && (e.message || (e.error && e.error.message))) || 'error';
+    if (t) t.textContent = BUILD + ' \u00b7 ' + m + (e && e.lineno ? ' @' + e.lineno : '');
+    if (window._majiaFinish) window._majiaFinish();
+  } catch (_) {}
+});
+addEventListener('unhandledrejection', e => {
+  try {
+    if (window.__sawErr) return; window.__sawErr = 1;
+    const t = document.getElementById('bldTag');
+    if (t) t.textContent = BUILD + ' \u00b7 reject \u00b7 ' + ((e && e.reason && (e.reason.message || e.reason)) || '?');
+  } catch (_) {}
+});
+// THE LOOP STARTS EVEN IF THE FILE DID NOT FINISH. requestAnimationFrame(frame) is the very
+// last statement in the script, so ANY throw at module scope above it -- and the world is
+// built long before it is reached -- means the loop is never armed at all. That is a silent,
+// total stop with the mark still on screen, and it is where this one ended up: t0.0 with all
+// sixty models in hand. `frame` is a hoisted declaration, so it can be armed from here
+// whatever went wrong on the way down.
+setTimeout(() => {
+  try { if (!window.__loopOn) requestAnimationFrame(frame); } catch (_) {}
+}, 2500);
 setTimeout(() => {
   try {
     if (window.__bootOK) return;
@@ -1651,7 +1680,7 @@ setTimeout(() => {
       + (typeof world !== 'undefined' && world ? (world.clock || 0).toFixed(1) : 'no-loop')
       + ' \u00b7 m' + ready + '/' + total;
   } catch (_) {}
-}, 12000);
+}, 9000);
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -19355,7 +19384,14 @@ function looksBuild() {
   // Whatever he settled on last time, before he has to ask for it again.
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem('isle.looks') || 'null'); } catch (e) {}
-  if (saved) for (const k in VIEW) if (saved[k] !== undefined && !!saved[k] !== !!VIEW[k].get()) VIEW[k].set(!!saved[k]);
+  // ONE BAD SETTING MUST NOT COST THE WHOLE FILE. These setters reach into the renderer --
+  // setDpr resizes four render targets and a depth texture -- and this runs at module scope,
+  // above the line that arms the frame loop. A throw in any one of them and the game never
+  // starts, with a saved preference from some earlier build as the cause.
+  if (saved) for (const k in VIEW) {
+    try { if (saved[k] !== undefined && !!saved[k] !== !!VIEW[k].get()) VIEW[k].set(!!saved[k]); }
+    catch (e) { console.warn('look skipped:', k, e); }
+  }
   looksDraw();
 }
 looksBuild();
@@ -21411,6 +21447,7 @@ function bootFail(e) {
 }
 function frame(now) {
   requestAnimationFrame(frame);
+  window.__loopOn = 1;                 // the net above stands down
   // See FPS. Skipped frames cost nothing; `last` is left alone so the next one gets real dt.
   // 2.5 ms of slack, because rAF timestamps land a hair early and a strict test at a 60 Hz
   // display would let every third frame through and stutter.
@@ -21643,13 +21680,12 @@ function frame(now) {
       // this runs; the two models are a courtesy so the runners do not pop in mid-stride, and
       // four seconds is longer than that courtesy is worth. _play is idempotent, so whichever
       // gets there first wins and the other does nothing.
-      setTimeout(_play, 4000);
       setTimeout(_play, 4000);          // a cameo never holds the boot
     }
   }
   } catch (e) { bootFail(e); }
 }
-buildSkyBodies();
+try { buildSkyBodies(); } catch (e) { console.warn('sky skipped:', e); }
 requestAnimationFrame(frame);
 })();
 </script>
