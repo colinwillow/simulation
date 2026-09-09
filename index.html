@@ -1613,7 +1613,7 @@ const SND_FILES = {
   spare: ['laser_01', 'laser_02', 'beam_01', 'electricity_beam_01', 'plasma_canon', 'phase_warp_01', 'helix_blaster_air', 'fire_burn_01'],
   // Half a minute of continuous walking. It is not a pool and it is never played by
   // SFX.play -- FOOT owns it. See there for why it is one long file rather than six short ones.
-  steps: ['foot_steps_01'],
+  steps: ['footsteps_sound_01'],
 };
 // How far he goes between footfalls. Measured off nothing -- it is a taste number, and the
 // only thing that makes it wrong is a foot landing visibly out of time with the sound, which
@@ -2074,7 +2074,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e23';
+const BUILD = 'e24';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
