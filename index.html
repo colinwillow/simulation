@@ -1629,7 +1629,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e56';
+const BUILD = 'e57';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7555,8 +7555,9 @@ const VIT = {
   // and he goes over on the spot, gets up in his own time on the clip he has for it. Without
   // it `daze` could only ever be reached by arithmetic, and being knocked flat is a thing you
   // should be able to DO rather than accumulate.
-  drop: .62,
+  drop: .55,
   chargeK: 1.4,                            // and what a held shot adds to a bolt's damage
+  tackle: .72,                             // and a slide tackle is a knockdown, not a nudge
   ire: .6, ireEase: .085,                  // what a hit adds to an animal's own temper, per second back down
   ireAt: .5,                               // above this it comes at him instead of running
   bold: 2.2,                               // and anything this big answers a blow whatever its temper
@@ -8057,7 +8058,13 @@ class Creature {
     this.fling = {
       x: this.pos.x, y: this.pos.y, z: this.pos.z,
       vx: hx * f, vz: hz * f, vy: f * lift,
-      ax: -hz, az: hx, ang: 0, spin: rnd(.55, 1) * THROW.spin,
+      // WHICH WAY IT GOES OVER, and it was backwards. The body turns about a horizontal axis
+      // A, and the top of it moves along A x Y -- for A = (ax, 0, az) that is (-az, 0, ax).
+      // For the top to travel WITH the blow, that has to point along (hx, hz), so ax = hz and
+      // az = -hx. It was the negative of both, which turns the top back toward whoever swung:
+      // a man tripped by you falling into you. Away, now, the way a hit actually throws
+      // somebody, and the way it reads in every game that has ever done this well.
+      ax: hz, az: -hx, ang: 0, spin: rnd(.55, 1) * THROW.spin,
       hops: 0, rest: 0,
     };
     this.holeOff(1); this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
@@ -9697,9 +9704,13 @@ class Poacher extends Creature {
   }
   update(dt) {
     if (this.daze > 0) this._wasDown = 1;
-    // FEET DOWN, POSE DOWN. The air clips are the one pair whose truth is not a length of time
-    // but a state, so they end when the tumble does rather than when their timer says so.
-    if (!this.fling && this.actT > .12 && (this.act === 'airFwd' || this.act === 'airBwd')) this.actT = .12;
+    // FEET DOWN, POSE DOWN -- and "down" is not "the fling object is gone". A fling has a REST
+    // phase: it lands, stops, and lies there gathering itself up with this.fling still set for
+    // another second or so. Testing for the object meant the air pose ran through the whole of
+    // that, on the floor, which is the report. The question is whether he is off the ground.
+    const k = this.fling;
+    const up = k && k.rest <= 0 && k.y > this.flingFloor(k.x, k.z) + .3;
+    if (!up && this.actT > .12 && (this.act === 'airFwd' || this.act === 'airBwd')) this.actT = .12;
     this.stepAct(dt);
     super.update(dt);
   }
@@ -16377,7 +16388,10 @@ function meleeHit(slide, first) {
     hitStop(slide ? 6 : 4);
     addTrauma(slide ? .22 : .15);
     snd.hit(o.pos.x, o.pos.z, (o.rad || 1) > 1.4 || slide, p.armWant && p.armed > .4 && WEAPONS[p.wpn] && WEAPONS[p.wpn].melee);
-    creatureHurt(o, VIT.melee * (slide ? 1.35 : 1), p.pos, 1);
+    // THE TACKLE PUTS THEM DOWN. It is the one committed move he has -- he has to be running,
+    // it costs him the whole combo and it cannot be steered once it is out -- so it earns the
+    // thing an ordinary swing cannot do. VIT.tackle clears VIT.drop on its own.
+    creatureHurt(o, slide ? VIT.tackle : VIT.melee, p.pos, 1);
     if (o.hurl) o.hurl(h.dx / h.d, h.dz / h.d, MELEE.push * (slide ? 1.3 : 1), slide ? .7 : MELEE.arcUp);
     else if (o.knock) o.knock(p.pos, 1);
     moodShift(o, MOOD.hit);
@@ -18655,7 +18669,7 @@ class Bolt {
       if (o.net && d < BL * .6) { o.net.cut(); continue; }
       // Right where it went off, it throws. Out at the edge of the blast it only startles.
       if (d < R + (o.rad || 1) + 1.6 && o.knock) { creatureHurt(o, VIT.bolt * (1 + this.c * VIT.chargeK), this, 1); o.knock(this, 1); punched = punched || o; }
-      else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * f, this, 1); o.knock(this, f); punched = punched || o; }
+      else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * (1 + this.c * VIT.chargeK) * f, this, 1); o.knock(this, f); punched = punched || o; }
       else if (o.spook) o.spook(this, 10);
     }
     // The same noise a bare-handed melee makes when it connects, and nothing at all when the
