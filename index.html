@@ -1608,6 +1608,9 @@ const SND_FILES = {
   power: ['powerup_01'],
   // Carried for auditioning, bound to nothing yet.
   spare: ['laser_01', 'beam_01', 'electricity_beam_01', 'plasma_canon', 'phase_warp_01', 'helix_blaster_air', 'fire_burn_01'],
+  // Half a minute of continuous walking. It is not a pool and it is never played by
+  // SFX.play -- FOOT owns it. See there for why it is one long file rather than six short ones.
+  steps: ['foot_steps_01'],
 };
 // How far he goes between footfalls. Measured off nothing -- it is a taste number, and the
 // only thing that makes it wrong is a foot landing visibly out of time with the sound, which
@@ -1743,6 +1746,69 @@ const snd = {
   daze: (x, z) => SFX.play('ping', .5, rnd(.5, .6), x, z)
     || (SFX.blip(300, .22, 'sine', .10, 120, x, z), SFX.blip(450, .26, 'triangle', .06, 170, x, z)),
 };
+// WALKING IS ONE LONG RECORDING THAT PAUSES, not a stride fired every 1.55 units.
+//
+// He cut a single stride out of his half-minute of footsteps and got the same stride every
+// time -- which is the exact thing a pool of samples exists to avoid, arrived at from the
+// other direction. So the whole file is played as a loop, it only runs while he is actually
+// walking, and when he stops it REMEMBERS WHERE IT GOT TO. The next time he sets off it
+// carries on from that point in the recording, so the phrase he hears is different every time
+// he starts moving, out of one file and no randomisation at all. Stop and start a few times
+// and it has wandered somewhere else in the half minute.
+//
+// A BufferSource cannot be paused and cannot be restarted, so `off` is bookkeeping: how far
+// into the buffer we are, worked out from how long the last source ran and at what rate, and
+// handed to the next source's start(). Every rate change folds the elapsed time into `off`
+// first, because that sum is only valid while the rate is constant.
+const FOOT = {
+  vol: .5, ref: 8.5,        // the speed at which the recording runs at its own pitch
+  bend: .7,                 // sub-linear, so a full run speeds it up half again rather than double
+  min: .85, max: 1.55, fade: .06,
+  buf: null, src: null, g: null, off: 0, t0: 0, rate: 1, on: false,
+  ready() {
+    if (this.buf) return !!(SFX.ctx && SFX.on);
+    const b = (SFX.buf.steps || [])[0];
+    if (b && b.duration) this.buf = b;
+    return !!(this.buf && SFX.ctx && SFX.on);
+  },
+  // Where in the buffer the source playing right now has reached.
+  at() { return (this.off + (SFX.ctx.currentTime - this.t0) * this.rate) % this.buf.duration; },
+  // Returns false when there is no recording yet, so the caller can fall back to the synth.
+  go(speed) {
+    if (!this.ready()) { if (this.on) this.hush(); return false; }
+    const r = clamp(Math.pow(Math.max(speed, .01) / this.ref, this.bend), this.min, this.max);
+    const v = this.vol * (.72 + .28 * clamp(speed / this.ref, 0, 1.3));
+    const now = SFX.ctx.currentTime;
+    if (this.on) {
+      if (Math.abs(r - this.rate) > .02) {
+        this.off = this.at(); this.t0 = now; this.rate = r;
+        this.src.playbackRate.setTargetAtTime(r, now, .09);
+      }
+      this.g.gain.setTargetAtTime(v, now, .12);
+      return true;
+    }
+    if (SFX.ctx.state !== 'running') SFX.wake();
+    const src = SFX.ctx.createBufferSource();
+    src.buffer = this.buf; src.loop = true;
+    src.loopStart = 0; src.loopEnd = this.buf.duration;
+    src.playbackRate.value = r;
+    const g = SFX.ctx.createGain(); g.gain.value = 0;
+    g.gain.setTargetAtTime(v, now, this.fade);
+    src.connect(g); g.connect(SFX.master);
+    src.start(now, this.off % this.buf.duration);
+    this.src = src; this.g = g; this.t0 = now; this.rate = r; this.on = true;
+    return true;
+  },
+  hush() {
+    if (!this.on) return;
+    const now = SFX.ctx.currentTime;
+    this.off = this.at();                         // the whole point: kept, not reset
+    this.g.gain.cancelScheduledValues(now);
+    this.g.gain.setTargetAtTime(0, now, this.fade);
+    try { this.src.stop(now + this.fade * 6); } catch (e) {}
+    this.src = null; this.g = null; this.on = false;
+  },
+};
 SFX.fetchAll();
 // ---------- music ----------
 // ITS OWN BUS, so it can duck under a fight or be turned off without taking the sound effects
@@ -1864,7 +1930,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e11';
+const BUILD = 'e12';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -12650,12 +12716,16 @@ CHASE.tick = function () {
     // yet at four seconds into the boot. On a warm load -- a reload, or a return to an
     // installed app in the same session -- the context is already there and they land. So
     // this is written to work when it can rather than not written at all.
-    this._st = (this._st || 0) + dt;
-    if (this._st > .17) {
-      this._st = 0;
-      snd.step(); setTimeout(() => snd.step(undefined, undefined, 1), 60);
+    // The recording if it is there -- it is two animals running, and a real one sells that
+    // better than two oscillators can -- and the synthesised pair if it is not.
+    if (!FOOT.go(14)) {
+      this._st = (this._st || 0) + dt;
+      if (this._st > .17) {
+        this._st = 0;
+        snd.step(); setTimeout(() => snd.step(undefined, undefined, 1), 60);
+      }
     }
-  }
+  } else FOOT.hush();
   this.r.render(this.scene, this.cam);
   // Across, AND the mark has had its full run. Both are measured from the same instant -- the
   // moment the load finished and everything was seeded -- so they cannot drift apart.
@@ -12663,6 +12733,7 @@ CHASE.tick = function () {
 };
 CHASE.finish = function () {
   this.on = false;
+  FOOT.hush();                    // it loops forever; nothing else here would ever stop it
   if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
   try {
     const cv = this.r && this.r.domElement; if (cv) cv.hidden = true;
@@ -18960,14 +19031,20 @@ function updatePlayer(dt) {
   // a stride's worth of distance is the same answer for a tenth of the work, and it stays
   // right when the clip is played at a different rate. `hard` is a run rather than a walk,
   // which is only a different filter and a different weight on the same two oscillators.
+  // The recording runs whenever he is on his feet and moving, and stops the instant he does.
+  // The stride-counted synth is what happens when the file has not loaded or the browser has
+  // no context yet -- FOOT.go says so by returning false rather than by going quiet.
   if (player.grounded && player.swim < .5 && !player.aboard && !player.free && !player.fly && player.speed > .6) {
-    player.stepD = (player.stepD || 0) + player.speed * dt;
-    const hard = player.speed > MOVE.max * .55;
-    if (player.stepD > (hard ? STEP.run : STEP.walk)) {
-      player.stepD = 0;
-      snd.step(player.pos.x, player.pos.z, hard);
+    if (FOOT.go(player.speed)) player.stepD = 0;
+    else {
+      player.stepD = (player.stepD || 0) + player.speed * dt;
+      const hard = player.speed > MOVE.max * .55;
+      if (player.stepD > (hard ? STEP.run : STEP.walk)) {
+        player.stepD = 0;
+        snd.step(player.pos.x, player.pos.z, hard);
+      }
     }
-  } else player.stepD = 0;
+  } else { FOOT.hush(); player.stepD = 0; }
   updateRig(dt);
   // airborne: tuck the legs, then squash a little on landing
   player.hang = lerp(player.hang || 0, player.grounded ? 0 : 1, Math.min(1, dt * 10));
