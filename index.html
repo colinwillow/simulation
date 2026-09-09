@@ -1830,49 +1830,81 @@ const MUSIC = {
   // His own naming, so dropping plutopia_song_02.mp3 in and adding a line here is the whole
   // job. Anything missing is skipped rather than erroring, and everything falls back to the
   // theme -- so one file plays everywhere until there are more.
-  files: { theme: 'plutopia_song_01', night: 'plutopia_song_02', battle: 'plutopia_song_03', flight: 'plutopia_song_04' },
+  // A value can be one stem or a LIST of them. With a list the pieces are not looped: one
+  // plays through, and when it ends another of the set that is not the one just heard takes
+  // over. So a night is two pieces trading rather than one going round for six minutes.
+  files: {
+    theme: 'plutopia_song_01',
+    night: ['plutopia_song_nighttime_01', 'plutopia_song_nighttime_02'],
+    battle: 'plutopia_song_03',
+    flight: 'plutopia_song_04',
+  },
+  has(k) { const t = this.track[k]; return !!(t && t.length); },
   bus() {
     if (!SFX.ctx) return null;
     if (!this.gain) { this.gain = SFX.ctx.createGain(); this.gain.gain.value = this.vol; this.gain.connect(SFX.master); }
     return this.gain;
   },
   fetchAll() {
+    this.raw = this.raw || {};
     for (const k in this.files) {
-      fetch('audio/' + this.files[k] + '.mp3').then(r => r.ok ? r.arrayBuffer() : null)
-        .then(b => { if (b) { this.raw = this.raw || {}; this.raw[k] = b; this.decode(); } })
-        .catch(() => {});
+      const set = [].concat(this.files[k]);
+      this.raw[k] = this.raw[k] || [];
+      set.forEach((f, i) => {
+        fetch('audio/' + f + '.mp3').then(r => r.ok ? r.arrayBuffer() : null)
+          .then(b => { if (b) { this.raw[k][i] = b; this.decode(); } })
+          .catch(() => {});
+      });
     }
   },
   decode() {
     if (!SFX.ctx || !this.raw) return;
     for (const k in this.raw) {
-      const b = this.raw[k]; if (!b) continue;
-      this.raw[k] = null;
-      SFX.ctx.decodeAudioData(b.slice(0), out => { this.track[k] = out; if (this.want === k) this.go(k); }, () => {});
+      (this.raw[k] || []).forEach((b, i) => {
+        if (!b) return;
+        this.raw[k][i] = null;
+        SFX.ctx.decodeAudioData(b.slice(0), out => {
+          (this.track[k] = this.track[k] || [])[i] = out;
+          if (this.want === k && !this.cur) this.go(k);
+        }, () => {});
+      });
     }
   },
   // Start `k`, fading whatever is playing out underneath it.
-  go(k) {
+  // `again` is the same set coming round to its next piece rather than a change of mood, so
+  // it is the one case where being on `k` already is not a reason to do nothing.
+  go(k, again) {
     const ctx = SFX.ctx, bus = this.bus();
     if (!ctx || !bus || !this.on) return;
-    const buf = this.track[k]; if (!buf) { this.want = k; return; }
-    if (this.curName === k && this.cur) return;
+    const list = (this.track[k] || []).filter(Boolean);
+    if (!list.length) { this.want = k; return; }
+    if (this.curName === k && this.cur && !again) return;
+    // Not the one just heard, when there is anything else to reach for.
+    const other = list.filter(b => b !== this.curBuf);
+    const buf = (other.length ? other : list)[(Math.random() * (other.length ? other.length : list.length)) | 0];
     const t = ctx.currentTime;
     if (this.cur) {
       const old = this.cur, og = this.curGain;
+      old.onended = null;                 // it is being faded out, not finishing
       try { og.gain.cancelScheduledValues(t); og.gain.setValueAtTime(og.gain.value, t);
         og.gain.linearRampToValueAtTime(.0001, t + this.fade); old.stop(t + this.fade + .05); } catch (e) {}
     }
     const src = ctx.createBufferSource(); src.buffer = buf;
-    src.loop = true; src.loopStart = .02; src.loopEnd = Math.max(.1, buf.duration - .02);
+    // One piece in the set loops, because there is nothing to hand over to. Two or more play
+    // through and hand over, which is why a night does not become a six-minute round.
+    const solo = list.length < 2;
+    src.loop = solo;
+    if (solo) { src.loopStart = .02; src.loopEnd = Math.max(.1, buf.duration - .02); }
+    else src.onended = () => { if (this.cur === src && this.curName === k && this.on) this.go(k, true); };
     const g = ctx.createGain(); g.gain.setValueAtTime(.0001, t);
     g.gain.linearRampToValueAtTime(1, t + this.fade);
     src.connect(g); g.connect(bus); src.start(t);
-    this.cur = src; this.curGain = g; this.curName = k; this.want = k;
+    this.cur = src; this.curGain = g; this.curName = k; this.curBuf = buf; this.want = k;
   },
   stop() {
     const ctx = SFX.ctx; if (!ctx || !this.cur) return;
     const t = ctx.currentTime;
+    this.cur.onended = null;
     try { this.curGain.gain.linearRampToValueAtTime(.0001, t + 1); this.cur.stop(t + 1.1); } catch (e) {}
     this.cur = null; this.curName = null;
   },
@@ -1883,9 +1915,9 @@ const MUSIC = {
     if (!this.on) return null;
     const p = player;
     if (INTRO.on) return 'theme';
-    if (this.track.battle && (p.down > 0 || world.clock - (p.hurtAt || -99) < 12)) return 'battle';
-    if (this.track.flight && (p.aboard || p.fly)) return 'flight';
-    if (this.track.night && world.night > .55) return 'night';
+    if (this.has('battle') && (p.down > 0 || world.clock - (p.hurtAt || -99) < 12)) return 'battle';
+    if (this.has('flight') && (p.aboard || p.fly)) return 'flight';
+    if (this.has('night') && world.night > .55) return 'night';
     return 'theme';
   },
   step(dt) {
@@ -1930,7 +1962,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e12';
+const BUILD = 'e13';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
