@@ -211,8 +211,12 @@
   /* ALWAYS VISIBLE, EVERY SCREEN, INCLUDING THE TITLE. #bld lives inside #ui, which is hidden
      on the title screen, so the one number he needs to tell builds apart is missing from
      exactly the screenshots he takes. Twice now he has had to say he cannot read it. */
-  #bldTag{position:fixed;left:7px;bottom:5px;z-index:9998;pointer-events:none;font-size:10px;
-    letter-spacing:.08em;opacity:.5;font-family:ui-monospace,Menlo,monospace;
+  /* ABOVE THE STUDIO SPLASH, which sits at 100200 and was simply burying this. The number has
+     been in the corner all along and could not be read until the splash lifted and the world
+     card came off -- which is most of the wait, and exactly the part where "did the new build
+     load" is the only question worth answering. */
+  #bldTag{position:fixed;left:7px;bottom:5px;z-index:100300;pointer-events:none;font-size:11px;
+    letter-spacing:.08em;opacity:.62;font-family:ui-monospace,Menlo,monospace;
     text-shadow:0 1px 3px rgba(0,0,0,.9)}
   /* ONE BUILD OF PAINT, TO END TWENTY-FIVE ROUNDS OF ARITHMETIC.
      Every theory about the band has been about which box is short, and each fix has been
@@ -1616,7 +1620,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e43';
+const BUILD = 'e44';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
