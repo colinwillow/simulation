@@ -1979,7 +1979,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e14';
+const BUILD = 'e15';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -14720,7 +14720,18 @@ const MOVE = {
   // because leaning back down a hill is a brace rather than an effort.
   lean: .34, leanMax: .40, leanDown: .5,
 };
-const player = { pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1, leadT: 0, landT: 0, airT: 0, vx: 0, vz: 0, pushX: 0, pushZ: 0 };
+// HOW HE STANDS, AS A THING THAT EASES RATHER THAN AS A LOOKUP.
+// alignTo() re-derived his whole attitude from normalAt() every frame, which has two faults
+// and he has hit both. normalAt is a central difference over 2.4 units of a height field, so
+// at a ridge or a peak the normal does not turn, it FLIPS -- and with no smoothing anywhere
+// between the field and the quaternion that flip is a teleport into a new rotation. And it
+// was read whether or not his feet were on anything, so sailing over a hump rotated him in
+// the air, which nothing does. Now the ground only ever sets a TARGET; the attitude he is
+// actually drawn at chases it. Off the ground the target is upright and the chase is slow, so
+// a hop keeps the attitude he left with and a long fall straightens him out on the way down.
+const FOOTING = { on: 8, air: 2.2, swim: 14, fly: 12 };
+const _ftN = new THREE.Vector3(), _ftU = new THREE.Vector3(0, 1, 0);
+const player = { footQ: new THREE.Quaternion(), footT: new THREE.Quaternion(), pos: new THREE.Vector3(), heading: 0, faceH: 0, fly: false, free: false, moving: 0, rad: 1.2, swim: 0, alive: true, vy: 0, gy: 0, jump: 0, grounded: 1, leadT: 0, landT: 0, airT: 0, vx: 0, vz: 0, pushX: 0, pushZ: 0 };
 // The rig: a real model stands in for the placeholder. RIG.height is the only
 // number worth touching — the model is measured at load and normalised to it, so
 // swapping in a differently-scaled export needs no other change.
@@ -19069,16 +19080,25 @@ function updatePlayer(dt) {
       * clamp(player.moving, 0, 1) * (player.swim > .5 || player.fly ? 0 : 1);
     player.leanK = lerp(player.leanK || 0, want, Math.min(1, dt * 4));
   }
-  if (!player.fly && player.swim < .5) {
-    alignTo(g, player.pos.x, player.pos.z, .4); g.rotateY(player.faceH);
-    if (Math.abs(player.leanK) > 1e-4) g.rotateX(player.leanK);
+  // WHAT HE IS STANDING ON WANTS -- the target only. See FOOTING for why this is not applied
+  // straight to him. The blend of .6 toward up is what alignTo(.4) was doing.
+  if (player.fly) player.footT.identity();
+  else if (player.swim > .5) {                 // lie along the wave, a little more so at speed
+    _ftN.copy(waveNormal(player.pos.x, player.pos.z)).lerp(_wup, 1 - lerp(.4, .8, player.moving)).normalize();
+    player.footT.setFromUnitVectors(_wup, _ftN);
   }
-  else if (!player.fly) {   // in the water: lie along the wave, a little more so at speed
-    const n = waveNormal(player.pos.x, player.pos.z);
-    g.quaternion.setFromUnitVectors(_wup, n.lerp(_wup, 1 - lerp(.4, .8, player.moving)).normalize());
-    g.rotateY(player.faceH);
+  else if (player.grounded) {
+    _ftN.copy(normalAt(player.pos.x, player.pos.z)).lerp(_ftU, .6).normalize();
+    player.footT.setFromUnitVectors(_ftU, _ftN);
   }
-  else g.rotation.set(0, player.faceH, 0);
+  else player.footT.identity();                // in the air there is nothing under him to lie along
+  const fRate = player.fly ? FOOTING.fly : player.swim > .5 ? FOOTING.swim
+    : player.grounded ? FOOTING.on : FOOTING.air;
+  // Frame-rate independent, so the settle takes the same tenth of a second at 30 as at 120.
+  player.footQ.slerp(player.footT, 1 - Math.exp(-dt * fRate));
+  g.quaternion.copy(player.footQ);
+  g.rotateY(player.faceH);
+  if (!player.fly && player.swim < .5 && Math.abs(player.leanK) > 1e-4) g.rotateX(player.leanK);
   const bobT = world.clock * 9;
   // A walk clip carries its own bounce. Without one — the placeholder, or a model exported
   // with no animation at all — the bob is the only thing keeping it from gliding.
