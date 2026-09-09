@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd97';
+const BUILD = 'd98';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -13998,7 +13998,10 @@ const MOVE = {
   // differently, which is the whole point -- a slope you would not notice on foot stays
   // free, and one you would have to lean into really does stop him: .71 of flat at 22
   // degrees, .35 at 37, and the floor at 46.
-  hill: .58, hill2: .34, hillMin: .22, dip: .13, dipMax: 1.12,
+  // hillMin was .22 -- a fifth of top speed on ANY face, which is what made a wall walkable.
+  // The curve above already reaches zero near a gradient of 1.05 on its own; it only ever
+  // needed to stop being clamped up off it.
+  hill: .58, hill2: .34, hillMin: 0, dip: .13, dipMax: 1.12,
   // AND THERE IS A TOP TO IT. hillMin is a FLOOR -- a fifth of top speed, always -- so however
   // steep a face was he still made headway up it, and a mesa wall was a slow staircase rather
   // than a wall. Which quietly costs the map everything: nothing is out of reach, so nothing
@@ -14008,8 +14011,24 @@ const MOVE = {
   // nothing; past `slipAt` it starts taking, and gravity walks him back down the way he came.
   // The numbers are gradients -- rise over run -- so 1 is forty-five degrees. Creatures already
   // refuse to path above 1.25, so a face he slides off is a face nothing walks on either.
-  climbAt: .95, climbMax: 1.55,
-  slipAt: 1.30, slipFull: 2.10, slipAcc: 15, slipDrag: .55,
+  // AND THE FIRST GO AT IT WAS A WALL, which is what a speed cap always is. Multiplying the
+  // target speed to zero, on a movement model whose whole job is to reach the target speed
+  // NOW, is an invisible pane of glass across the hill -- he arrives at it and stops dead,
+  // with none of the run-up, none of the slowing, and none of the sliding back.
+  //
+  // What a hill actually is, is a force. `pull` is gravity along the slope, applied every
+  // frame he is on dirt and scaled by the SINE of the angle, so it is nothing on the flat and
+  // most of itself on a wall. It fights his drive rather than capping it, which gives all
+  // three behaviours for free: he walks up a gentle rise, crawls up a steep one, and on
+  // something too steep his own momentum carries him a little way further before the pull
+  // eats it and hands him back down -- which is the "you can almost get higher each time".
+  //
+  // `hillBrake` is the other half. The steering rate is 95 in direct mode, so the moment the
+  // hill lowered his target speed he was slammed to it in a frame. A hill taking speed off a
+  // man is not a brake being applied; it is him coasting. So when the SLOPE is what lowered
+  // the target, the speed comes off at this rate instead, and the run-up survives.
+  pull: 19, hillBrake: 5.5,
+  slipAt: 1.15, slipFull: 1.9, slipDrag: .05,
   // And he leans into it. Radians of forward pitch per unit of gradient, scaled by how hard
   // he is actually pushing -- standing on a slope is not climbing one -- and less going down,
   // because leaning back down a hill is a brace rather than an effort.
@@ -18011,10 +18030,6 @@ function updatePlayer(dt) {
       const up = Math.max(0, grade);
       hillK = clamp(1 - up * MOVE.hill - up * up * MOVE.hill2 + Math.max(0, -grade) * MOVE.dip,
         MOVE.hillMin, MOVE.dipMax);
-      // ...and then the top of it. Under the floor rather than through it: he still gets his
-      // fifth of a top speed on anything he CAN climb, and above climbMax he gets none of it,
-      // so a face reads as a face instead of as slow ground.
-      hillK *= 1 - smooth(MOVE.climbAt, MOVE.climbMax, up);
       player.grade = grade;
     } else player.grade = 0;
     // AND THE GROUND TAKES OVER. Measured off the terrain rather than off the way he is
@@ -18024,22 +18039,23 @@ function updatePlayer(dt) {
     {
       const gy = groundY(player.pos.x, player.pos.z);
       const onDirt = onG && Math.abs(player.pos.y - gy) < .4 && player.swim < .5;
-      const st = onDirt ? slope(player.pos.x, player.pos.z) : 0;
-      player.slope = st;
-      const k = onDirt ? smooth(MOVE.slipAt, MOVE.slipFull, st) : 0;
-      player.slip = k > player.slip ? k : Math.max(k, player.slip - dt * 3.5);
-      if (k > .01) {
-        // downhill is the way the height field falls, which is the gradient negated
-        const e = 1.3, x0 = player.pos.x, z0 = player.pos.z;
-        const gx = height(x0 + e, z0) - height(x0 - e, z0);
-        const gz = height(x0, z0 + e) - height(x0, z0 - e);
-        const m = Math.hypot(gx, gz) || 1;
-        player.vx -= gx / m * MOVE.slipAcc * k * dt;
-        player.vz -= gz / m * MOVE.slipAcc * k * dt;
-        hillK *= 1 - k * .85;                      // and pushing up it stops being worth much
-        if (Math.random() < dt * 14 * k)
-          world.effects.push(new Burst(player.pos.x + rnd(-.4, .4), gy + .2, player.pos.z + rnd(-.4, .4), '#cdbf9c', 3, .3));
+      const e = 1.3, x0 = player.pos.x, z0 = player.pos.z;
+      const gx = onDirt ? height(x0 + e, z0) - height(x0 - e, z0) : 0;
+      const gz = onDirt ? height(x0, z0 + e) - height(x0, z0 - e) : 0;
+      const m = Math.hypot(gx, gz) / (2 * e);                 // rise over run
+      player.slope = m;
+      // GRAVITY ALONG THE SLOPE, always, not past a threshold. sin of the angle, so it is
+      // nothing underfoot on level ground and nearly all of `pull` on a wall.
+      if (onDirt && m > 1e-3) {
+        const sinT = m / Math.sqrt(1 + m * m), f = MOVE.pull * sinT * dt / Math.hypot(gx, gz);
+        player.vx -= gx * f; player.vz -= gz * f;
       }
+      // `slip` is only the READ-OUT of that -- how much the ground has taken over -- and what
+      // the friction and the dust and a future clip hang off. It is not what moves him.
+      const k = onDirt ? smooth(MOVE.slipAt, MOVE.slipFull, m) : 0;
+      player.slip = k > player.slip ? k : Math.max(k, player.slip - dt * 3.5);
+      if (k > .02 && Math.random() < dt * 14 * k)
+        world.effects.push(new Burst(player.pos.x + rnd(-.4, .4), gy + .2, player.pos.z + rnd(-.4, .4), '#cdbf9c', 3, .3));
     }
     const max = (inW ? MOVE.swimMax : MOVE.max * (1 + SPRINT.k * player.sprint)) * hillK;
     const want = player.wmag > .1 ? max * player.wmag : 0;
@@ -18063,7 +18079,10 @@ function updatePlayer(dt) {
       const along = ax * ux + az * uz;                       // how much faster or slower
       const lx = ax - ux * along, lz = az - uz * along;      // and how much to the side
       const alat = Math.hypot(lx, lz);
-      const sA = Math.min(Math.abs(along), rate * dt) * Math.sign(along);
+      // Losing speed because the HILL lowered the target is coasting, not braking. At the
+      // direct set's rate of 95 that loss lands in a single frame, which is the wall.
+      const aRate = (along < 0 && want > 0 && hillK < .92) ? Math.min(rate, MOVE.hillBrake) : rate;
+      const sA = Math.min(Math.abs(along), aRate * dt) * Math.sign(along);
       const turn = (inW ? MOVE.swimTurn : onG ? MOVE.turn : MOVE.airTurn) * dt;
       const sL = alat > 1e-4 ? Math.min(alat, turn) / alat : 0;
       player.vx += ux * sA + lx * sL; player.vz += uz * sA + lz * sL;
