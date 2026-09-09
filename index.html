@@ -1620,7 +1620,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e47';
+const BUILD = 'e48';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -1665,9 +1665,7 @@ addEventListener('unhandledrejection', e => {
 // total stop with the mark still on screen, and it is where this one ended up: t0.0 with all
 // sixty models in hand. `frame` is a hoisted declaration, so it can be armed from here
 // whatever went wrong on the way down.
-setTimeout(() => {
-  try { if (!window.__loopOn) requestAnimationFrame(frame); } catch (_) {}
-}, 2500);
+setTimeout(() => { try { startLoop(); } catch (_) {} }, 2500);
 setTimeout(() => {
   try {
     if (window.__bootOK) return;
@@ -20737,7 +20735,14 @@ const bldEl = document.getElementById('bld');
       if (!v || v === BUILD) return;
       let seen = null;
       try { seen = sessionStorage.getItem('isle.stale'); } catch (e) {}
-      if (seen !== v && performance.now() < 20000) {
+      // WHILE HE IS STILL ON THE TITLE, and not merely early. This was a twenty-second
+      // stopwatch, on the reasoning that the answer lands during the boot -- but the fetch is
+      // a quarter-megabyte with no-store and the boot itself is not quick, so on a phone it
+      // comes back somewhere in the middle of the first minute of play and takes the page out
+      // from under him. Thirty seconds in, mid-game, "it glitched and started over". INTRO.on
+      // is the actual question: reload freely while nothing has been played, and once he is in
+      // the world put the chip up and let him choose the moment.
+      if (seen !== v && INTRO.on && performance.now() < 45000) {
         try { sessionStorage.setItem('isle.stale', v); } catch (e) {}
         location.replace(location.pathname + '?v=' + v);
         return;
@@ -21445,9 +21450,17 @@ function bootFail(e) {
   msg.textContent = ((e && e.stack) || e || 'unknown') + '';
   b.appendChild(msg);
 }
+// ONE CHAIN, EVER. The net near the top of the file and the last line of the file both want
+// to arm the loop, and if they ever both got there -- a tab backgrounded during the boot is
+// enough, since rAF pauses and setTimeout does not -- there would be two chains, each
+// re-arming itself, and the whole game would run at double speed with every step taken twice.
+function startLoop() {
+  if (window.__loopOn) return;
+  window.__loopOn = 1;
+  requestAnimationFrame(frame);
+}
 function frame(now) {
   requestAnimationFrame(frame);
-  window.__loopOn = 1;                 // the net above stands down
   // See FPS. Skipped frames cost nothing; `last` is left alone so the next one gets real dt.
   // 2.5 ms of slack, because rAF timestamps land a hair early and a strict test at a 60 Hz
   // display would let every third frame through and stutter.
@@ -21686,7 +21699,7 @@ function frame(now) {
   } catch (e) { bootFail(e); }
 }
 try { buildSkyBodies(); } catch (e) { console.warn('sky skipped:', e); }
-requestAnimationFrame(frame);
+startLoop();
 })();
 </script>
 </body>
