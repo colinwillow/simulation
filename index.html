@@ -1587,16 +1587,27 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // will happily fetch: the bytes come down at page load, and they are decoded on the first
 // touch when the context finally exists. So the first swing has sound rather than being the
 // thing that starts the download.
+// A POOL IS RIGHT FOR AN IMPACT AND WRONG FOR A GUN. Four clangs in rotation is what stops a
+// dozen hits reading as one sound repeated; two different lasers alternating is a gun that
+// cannot decide what it is, which is what "a bunch of different stuff, most of it mechanical"
+// means. Impacts get pools, the blaster gets one voice.
+//
+// And the palette is meant to be LIGHT. This is a world of glass and bioluminescence, not a
+// machine shop, so the heavy end of the robits set is here to be auditioned rather than used:
+// isle.hear() lists every file, isle.hear('beam_01') plays one, isle.hear('beam_01', .8) plays
+// it slower. Pick the one that sounds right and I will bind it.
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
   wood: ['bamboo_01', 'bamboo_02'],
   crack: ['box_break_01', 'box_break_02'],
-  laser: ['laser_01', 'laser_02'],
+  laser: ['laser_02'],              // the lighter of the two; laser_01 is the mechanical one
   boom: ['explosion_small'],
   ping: ['metal_ping_01'],
   jewel: ['jewel_noise_01'],
   power: ['powerup_01'],
+  // Carried for auditioning, bound to nothing yet.
+  spare: ['laser_01', 'beam_01', 'electricity_beam_01', 'plasma_canon', 'phase_warp_01', 'helix_blaster_air'],
 };
 const SFX = {
   ctx: null, master: null, on: true, vol: .8,
@@ -1650,6 +1661,7 @@ const SFX = {
     this.master = this.ctx.createGain(); this.master.gain.value = this.vol;
     this.master.connect(this.ctx.destination);
     this.decode();
+    try { MUSIC.decode(); MUSIC.step(99); } catch (e) {}
   },
   wake() { if (!this.ctx) this.init(); else if (this.ctx.state !== 'running') try { this.ctx.resume(); } catch (e) {} },
   // Anything with a position in the world is quieter for being away from the lens, and never
@@ -1701,7 +1713,9 @@ const snd = {
     || (SFX.noise(.16, .30, 700, x, z), SFX.blip(190, .13, 'sawtooth', .13, 90, x, z)),
   fell: (x, z) => SFX.play('crack', .85, rnd(.72, .85), x, z) || SFX.noise(.5, .3, 500, x, z),
   whiff: (x, z) => SFX.play('swing', .22, rnd(1.15, 1.3), x, z) || SFX.noise(.15, .09, 1700, x, z),
-  shot: (x, z) => SFX.play('laser', .55, rnd(.94, 1.08), x, z)
+  // One voice, pitched by the charge: a tap is a quick high snap, a held shot drops and
+  // lengthens. That is the difference between two guns without being two sounds.
+  shot: (x, z, c) => SFX.play('laser', .38 + (c || 0) * .22, 1.14 - (c || 0) * .30, x, z)
     || (SFX.blip(1150, .10, 'square', .12, 380, x, z), SFX.noise(.07, .10, 2600, x, z)),
   boom: (x, z) => SFX.play('boom', .7, rnd(.9, 1.1), x, z) || SFX.noise(.4, .3, 700, x, z),
   net: (x, z) => SFX.play('swing', .55, rnd(.55, .68), x, z)
@@ -1715,6 +1729,90 @@ const snd = {
     || (SFX.blip(300, .22, 'sine', .10, 120, x, z), SFX.blip(450, .26, 'triangle', .06, 170, x, z)),
 };
 SFX.fetchAll();
+// ---------- music ----------
+// ITS OWN BUS, so it can duck under a fight or be turned off without taking the sound effects
+// with it, and a CROSSFADE rather than a cut, because a hard switch between two pieces of
+// music is the most obvious thing in a game.
+//
+// The loop points are pulled a fiftieth of a second inside the buffer at both ends. An MP3
+// encoder pads the start and the end with silence -- it has no choice, the format works in
+// frames -- and a loop that runs to the true end of the file therefore ticks. Nothing needs
+// doing to the files; this skips the padding.
+//
+// `MUSIC.pick` is the whole state machine and it is deliberately one function: when there are
+// tracks for a fight, for flying, for night, that is where it is decided, and nothing else has
+// to know music exists.
+const MUSIC = {
+  gain: null, cur: null, curName: null, want: null, vol: .55, on: true,
+  fade: 2.2, track: {}, list: [], t: 0,
+  // Named tracks. Drop a file in audio/ and add it here; the value is the file's stem.
+  files: { theme: 'music_01', night: 'music_02', battle: 'music_03', flight: 'music_04' },
+  bus() {
+    if (!SFX.ctx) return null;
+    if (!this.gain) { this.gain = SFX.ctx.createGain(); this.gain.gain.value = this.vol; this.gain.connect(SFX.master); }
+    return this.gain;
+  },
+  fetchAll() {
+    for (const k in this.files) {
+      fetch('audio/' + this.files[k] + '.mp3').then(r => r.ok ? r.arrayBuffer() : null)
+        .then(b => { if (b) { this.raw = this.raw || {}; this.raw[k] = b; this.decode(); } })
+        .catch(() => {});
+    }
+  },
+  decode() {
+    if (!SFX.ctx || !this.raw) return;
+    for (const k in this.raw) {
+      const b = this.raw[k]; if (!b) continue;
+      this.raw[k] = null;
+      SFX.ctx.decodeAudioData(b.slice(0), out => { this.track[k] = out; if (this.want === k) this.go(k); }, () => {});
+    }
+  },
+  // Start `k`, fading whatever is playing out underneath it.
+  go(k) {
+    const ctx = SFX.ctx, bus = this.bus();
+    if (!ctx || !bus || !this.on) return;
+    const buf = this.track[k]; if (!buf) { this.want = k; return; }
+    if (this.curName === k && this.cur) return;
+    const t = ctx.currentTime;
+    if (this.cur) {
+      const old = this.cur, og = this.curGain;
+      try { og.gain.cancelScheduledValues(t); og.gain.setValueAtTime(og.gain.value, t);
+        og.gain.linearRampToValueAtTime(.0001, t + this.fade); old.stop(t + this.fade + .05); } catch (e) {}
+    }
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    src.loop = true; src.loopStart = .02; src.loopEnd = Math.max(.1, buf.duration - .02);
+    const g = ctx.createGain(); g.gain.setValueAtTime(.0001, t);
+    g.gain.linearRampToValueAtTime(1, t + this.fade);
+    src.connect(g); g.connect(bus); src.start(t);
+    this.cur = src; this.curGain = g; this.curName = k; this.want = k;
+  },
+  stop() {
+    const ctx = SFX.ctx; if (!ctx || !this.cur) return;
+    const t = ctx.currentTime;
+    try { this.curGain.gain.linearRampToValueAtTime(.0001, t + 1); this.cur.stop(t + 1.1); } catch (e) {}
+    this.cur = null; this.curName = null;
+  },
+  // WHICH PIECE, AND THE ONLY PLACE THAT DECIDES. Ordered by urgency: what is happening to him
+  // beats where he is, and where he is beats what time it is. Falls back to the theme, so a
+  // world with one file in it plays that file everywhere.
+  pick() {
+    if (!this.on) return null;
+    const p = player;
+    if (INTRO.on) return 'theme';
+    if (this.track.battle && (p.down > 0 || world.clock - (p.hurtAt || -99) < 12)) return 'battle';
+    if (this.track.flight && (p.aboard || p.fly)) return 'flight';
+    if (this.track.night && world.night > .55) return 'night';
+    return 'theme';
+  },
+  step(dt) {
+    if ((this.t -= dt) > 0) return;
+    this.t = 1.5;                        // a music decision is not a per-frame question
+    if (!SFX.ctx || !this.on) return;
+    const k = this.pick();
+    if (k && k !== this.curName) this.go(k);
+  },
+};
+MUSIC.fetchAll();
 // ---------- hitstop and the shake ----------
 // A HIT IS NOT AN EVENT, IT IS A PAUSE. Four frames at five per cent of speed is the whole
 // trick: the picture stops on the frame of contact for about seventy milliseconds, which the
@@ -1740,7 +1838,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e4';
+const BUILD = 'e5';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -14661,7 +14759,24 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
 window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, get chop() { return CHOP; }, get melee() { return MELEE; },
   dpr: setDpr, perf: profStart, stain: stainSet, get view() { return VIEW; },
-  sfx: SFX, snd, fx: FX,
+  sfx: SFX, snd, fx: FX, music: MUSIC,
+  // AUDITION. isle.hear() lists every file that is loaded; isle.hear('beam_01') plays it, and
+  // a second argument re-pitches it -- .7 is slower and heavier, 1.3 lighter. This is how the
+  // right blaster gets chosen instead of guessed at.
+  hear: (name, rate, v) => {
+    SFX.wake();
+    if (!name) { const out = []; for (const k in SND_FILES) for (const f of SND_FILES[k]) out.push(f); console.log(out.join('\n')); return out; }
+    for (const k in SND_FILES) {
+      const i = SND_FILES[k].indexOf(name);
+      if (i < 0) continue;
+      const b = SFX.buf[k] && SFX.buf[k][i];
+      if (!b) { console.warn(name + ' has not decoded yet — tap the screen once and try again'); return false; }
+      const src = SFX.ctx.createBufferSource(); src.buffer = b; src.playbackRate.value = rate || 1;
+      const g = SFX.ctx.createGain(); g.gain.value = v === undefined ? .8 : v;
+      src.connect(g); g.connect(SFX.master); src.start(); return true;
+    }
+    console.warn('no file called ' + name); return false;
+  },
   // isle.time('day') / 'night' / 'dawn' / 'dusk', or a fraction: 0 is midnight, .5 is noon.
   // Judging shadows at night is judging the drone's lamp, which is why the last look was
   // inconclusive -- this pins the sun so the same ground can be seen twice.
@@ -17165,7 +17280,7 @@ function fireBolt(charge) {
   // height of an animal's chest wherever the animal happens to be standing. The bigger the
   // charge, the bigger and harder the bolt, and the bigger the muzzle flash.
   world.effects.push(new Bolt(_wmz.x, _wmz.y, _wmz.z, Math.sin(p.aimH), 0, Math.cos(p.aimH), c));
-  snd.shot(p.pos.x, p.pos.z); addTrauma(.05 + c * .07);
+  snd.shot(p.pos.x, p.pos.z, c); addTrauma(.03 + c * .07);
   world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#dff4ff', 1.8 + c * 1.6, .14 + c * .06));
   world.effects.push(new Burst(_wmz.x, _wmz.y, _wmz.z, '#6fc8ff', 2.6 + c * 2.4, .2 + c * .1));
 }
@@ -17435,7 +17550,9 @@ class Bolt {
     }
     // Buildings first: a shot into a wall is spent on the wall, and the animals behind it
     // only hear it.
-    snd.boom(this.x, this.z); addTrauma(.10 + this.c * .12);
+    // Only a CHARGED shot lands with a bang. A small explosion on every bolt is what turns a
+    // sidearm into a machine gun, and the shot itself already has a voice.
+    if (this.c > .45) { snd.boom(this.x, this.z); addTrauma(.06 + this.c * .14); } else addTrauma(.05);
     for (const st of world.structures) {
       if (st.alive && st.shatter) st.shatter(this.x, this.y, this.z, R, BL, this.c);
     }
@@ -18289,6 +18406,9 @@ const VIEW = {
   sound: { label: 'sound', cost: 'free',
     get: () => SFX.on,
     set: v => { SFX.on = !!v; if (v) SFX.wake(); } },
+  music: { label: 'music', cost: 'free',
+    get: () => MUSIC.on,
+    set: v => { MUSIC.on = !!v; if (v) { SFX.wake(); MUSIC.step(99); } else MUSIC.stop(); } },
   ground: { label: 'grounding', cost: 'free',
     get: () => stainSet() > 0,
     set: v => stainSet(v ? (VIEW.ground.k || 1) : 0) },
@@ -20395,7 +20515,7 @@ function frame(now) {
   updateWaypoint(dt);
   if (MAP.open) { clampView(); drawMap(); }
   drawMini(dt); showAct();
-  weatherLeavings(dt); cullFar(dt); stainTick(dt); blobStep(); stepSlash(dt);
+  weatherLeavings(dt); cullFar(dt); stainTick(dt); blobStep(); stepSlash(dt); MUSIC.step(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
   waterUni.uT.value = world.clock; foamUni.uT.value = world.clock; grassUni.uT.value = world.clock;
