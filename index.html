@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd90';
+const BUILD = 'd91';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -5697,9 +5697,17 @@ function attachRig(parent, cfg, done) {
     // THE COCKED ARM IS AN UPPER-BODY POSE, for the same reason the carry is: he can walk
     // about with a rock over his shoulder, and a full-body pose would have him sliding across
     // the ground on a frozen stance. Spine-up only, and the legs come from the same clones.
+    // AND THE TURN IS IN THE PELVIS, not the spine. Read out of the GLB: throw_state_back
+    // rotates the hips -58.2 degrees and Spine2 only -1.8, and throw_object still holds -55.7
+    // at the frame the two join before unwinding to -2.6 through the follow-through. So the
+    // whole side-on stance -- the thing that makes it read as a man about to throw rather
+    // than a man reaching left -- lives in exactly the one track CARRY.upper filters away.
+    // Hips is excluded from that test on purpose, because hips carries the walk's bounce and
+    // travel; but that is its POSITION. Its rotation belongs to whichever pose is up.
+    const isHipTurn = n => /hips/i.test(n) && /\.quaternion$/.test(n);
     if (clips.throwBack) {
       const tw = clips.throwBack.clone(); tw.name = 'throw__upper';
-      tw.tracks = tw.tracks.filter(t => CARRY.upper.test(t.name));
+      tw.tracks = tw.tracks.filter(t => CARRY.upper.test(t.name) || isHipTurn(t.name));
       if (tw.tracks.length) clips.throwUpper = tw;
     }
     // idleLegs / walkLegs / runLegs: the same gait with every spine-up track dropped, so it
@@ -5708,7 +5716,11 @@ function attachRig(parent, cfg, done) {
     if (clips.holdUpper || clips.throwUpper) for (const g of ['idle', 'walk', 'run']) {
       if (!clips[g]) continue;
       const legs = clips[g].clone(); legs.name = clips[g].name + '__legs';
-      legs.tracks = legs.tracks.filter(t => !CARRY.upper.test(t.name));
+      // The pelvis TURN goes with the upper pose; its position stays here, which is what
+      // carries the stride and the bounce. Left in both, the mixer averages the gait's square
+      // hips against the throw's fifty-eight degrees and he ends up turned half way, which
+      // reads as neither. holding_item keys the hips at zero yaw, so the carry is unchanged.
+      legs.tracks = legs.tracks.filter(t => !CARRY.upper.test(t.name) && !isHipTurn(t.name));
       if (legs.tracks.length) clips[g + 'Legs'] = legs;
     }
     for (const k of ['walk', 'run', 'rifleWalk', 'rifleRun']) if (clips[k] && e.strides[clips[k].name] === undefined) e.strides[clips[k].name] = measureStride(e.root, clips[k]);
