@@ -1513,7 +1513,12 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
   <!-- THE PILE. How many parts he is carrying. Hidden at zero, so it only exists once there is
        something to build with. -->
   <div id="pile" class="tog" hidden></div>
-  <div id="btns" hidden><button id="ejectB" class="tog">eject</button><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button></div>
+  <div id="btns" hidden><button id="ejectB" class="tog">eject</button><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button>
+    <!-- HE IS THE ONE WITH EYES, and every one of these costs frame time as well as look, so
+         they belong where he can reach them rather than in a console he has to plug a laptop
+         in to get at. Each remembers itself across a reload, which is the whole point: an A/B
+         you have to re-type after every refresh is one you do twice and then stop doing. -->
+    <div id="looks"></div></div>
 </div>
 <div id="mapv" hidden><h2>Plutopia<span id="mapera"></span></h2>
 <div id="mapwrap"><canvas id="mapc"></canvas><div id="mapzoom"></div></div><button id="mapclose" class="tog icon">close</button>
@@ -1572,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd83';
+const BUILD = 'd84';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -3827,6 +3832,14 @@ grassMat.onBeforeCompile = s => {
   // overdraw that is the most expensive place in the file to put a branch. Blades are ankle
   // height -- they were never what stands between the lens and his chest.
   toonPatch(s); groundPatch(s, false);
+  // AND IT TELLS THE OUTLINE TO LEAVE IT ALONE. A depth outline cannot tell a blade of grass
+  // from the edge of a rock -- it only sees that depth broke -- and a blade is two pixels
+  // wide, so a one-pixel line on each side turns the whole blade into a line. The field went
+  // scribbly. So the blades write zero into the scene target's alpha, which nothing else in
+  // the chain reads, and the composite multiplies the outline by it: a rock outlines, a blade
+  // does not, and it costs one channel that was being thrown away anyway.
+  s.fragmentShader = s.fragmentShader.replace('#include <dithering_fragment>',
+    '#include <dithering_fragment>\n  gl_FragColor.a = 0.0;');
   s.uniforms.uT = grassUni.uT; s.uniforms.uWind = grassUni.uWind;
   s.vertexShader = 'uniform float uT; uniform vec3 uWind;\n' + s.vertexShader.replace('#include <begin_vertex>', `
     #include <begin_vertex>
@@ -11639,6 +11652,7 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
       float g = abs(lz(vUv-vec2(o.x,0.0)) + lz(vUv+vec2(o.x,0.0)) - 2.0*z0)
               + abs(lz(vUv-vec2(0.0,o.y)) + lz(vUv+vec2(0.0,o.y)) - 2.0*z0);
       float e = smoothstep(uOutLo, uOutHi, g / max(z0, 1.0));
+      e *= texture2D(tD,vUv).a;             // grass writes 0 here; everything else writes 1
       c *= mix(vec3(1.0), uOutC, e * uOut);
     }
     vec3 b = texture2D(tB,vUv).rgb;
@@ -13925,7 +13939,7 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
 window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, get chop() { return CHOP; }, get melee() { return MELEE; },
-  dpr: setDpr, perf: profStart, aa: v => { compMat.uniforms.uAA.value = v === false ? 0 : 1; return !!compMat.uniforms.uAA.value; },
+  dpr: setDpr, perf: profStart, get view() { return VIEW; }, aa: v => { compMat.uniforms.uAA.value = v === false ? 0 : 1; return !!compMat.uniforms.uAA.value; },
   // isle.outline(0) off, isle.outline(.55) back, isle.outline(.55, {w: 2, lo: .003, hi: .05, col: '#3a4a66'})
   outline: (k, o) => {
     const u = compMat.uniforms;
@@ -17290,6 +17304,64 @@ const fold = (btn, panel, startOpen) => {
 };
 fold('hudHead', 'hudBody', false);
 fold('ctlT', 'btns', false);
+// ---------- what the picture is made of, on switches ----------
+// The frame breakdown says there is no single villain: half the pixels saves 17-27%, shadows
+// 13-23%, grass 13%, and the entire post chain only 6-17%. Nothing here is going to be fixed
+// by one clever change -- so the useful thing is to let the person who can see it decide what
+// each one is worth, with the cost printed next to it.
+const VIEW = {
+  shadows: { label: 'shadows', cost: '13-23%',
+    get: () => renderer.shadowMap.enabled,
+    set: v => { renderer.shadowMap.enabled = !!v; scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); } },
+  grass: { label: 'grass', cost: '13%',
+    get: () => grass.length ? grass[0].visible : true,
+    set: v => { for (const g of grass) g.visible = !!v; } },
+  outline: { label: 'lines', cost: '~2%',
+    get: () => compMat.uniforms.uOut.value > 0,
+    set: v => compMat.uniforms.uOut.value = v ? (VIEW.outline.k || .55) : 0 },
+  bloom: { label: 'bloom', cost: '6-20%',
+    get: () => compMat.uniforms.uStr.value > 0,
+    set: v => compMat.uniforms.uStr.value = v ? (VIEW.bloom.k || .85) : 0 },
+  aa: { label: 'smoothing', cost: '~2%',
+    get: () => compMat.uniforms.uAA.value > 0,
+    set: v => compMat.uniforms.uAA.value = v ? 1 : 0 },
+  sharp: { label: 'sharper', cost: '+27%',
+    get: () => Q.dpr > 1.7,
+    set: v => setDpr(v ? Math.min(2, devicePixelRatio) : (MOBILE ? 1.5 : 2)) },
+};
+VIEW.outline.k = compMat.uniforms.uOut.value;
+VIEW.bloom.k = compMat.uniforms.uStr.value;
+function looksSave() {
+  const o = {}; for (const k in VIEW) o[k] = !!VIEW[k].get();
+  try { localStorage.setItem('isle.looks', JSON.stringify(o)); } catch (e) {}
+}
+function looksDraw() {
+  const el = document.getElementById('looks'); if (!el) return;
+  for (const b of el.children) { const k = b.dataset.k; b.classList.toggle('on', !!VIEW[k].get()); }
+}
+function looksBuild() {
+  const el = document.getElementById('looks'); if (!el) return;
+  for (const k in VIEW) {
+    const b = document.createElement('button');
+    b.className = 'tog'; b.dataset.k = k;
+    b.textContent = VIEW[k].label;
+    b.title = VIEW[k].label + ' — ' + VIEW[k].cost + ' of the frame';
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      const on = !VIEW[k].get();
+      VIEW[k].set(on);
+      if (k === 'shadows') logMsg(on ? 'Shadows back on. It takes a moment to rebuild them.' : 'Shadows off.');
+      looksDraw(); looksSave();
+    });
+    el.appendChild(b);
+  }
+  // Whatever he settled on last time, before he has to ask for it again.
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('isle.looks') || 'null'); } catch (e) {}
+  if (saved) for (const k in VIEW) if (saved[k] !== undefined && !!saved[k] !== !!VIEW[k].get()) VIEW[k].set(!!saved[k]);
+  looksDraw();
+}
+looksBuild();
 fold('logT', 'log', true);
 const hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
 addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm(); if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'n') doArm(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.eject(); else world.ship.board(); } });
