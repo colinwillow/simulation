@@ -1629,7 +1629,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e55';
+const BUILD = 'e56';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -14840,39 +14840,64 @@ function wipeStart(fn) {
     const veil = document.createElement('u'); g.appendChild(veil);
     let seed = 4;
     const rr = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const rng = (lo, hi) => lo + rr() * (hi - lo);
+    // THREE BANDS, ON PURPOSE. The first go rolled one random number per cloud and let
+    // everything follow it, which gives ten variations on one cloud rather than a composed
+    // sky -- and because the timings were all within a sixth of a second of each other they
+    // still arrived as a wall. A band decides its own size, speed, height, opacity and
+    // entrance, and the three read as three distances:
+    //
+    //   far  -- small, pale, slow, high in the frame, and ALREADY DRIFTING when the tap lands
+    //   mid  -- the body of the sky, ordinary pace
+    //   near -- big, opaque, quick, low, a beat late, and swelling as they arrive, which is
+    //           the one cue that says the camera went into them rather than they slid past
+    //
+    // A two-to-one spread of speed across the bands is what makes it read as depth. A sixth
+    // of a second did not.
+    const BANDS = [
+      { n: 4, h: [12, 17], w: [2.0, 2.6], sp: 1.30, op: [.46, .62], y: [-12, 78], lead: 0,    from: .34, sc: 1 },
+      { n: 3, h: [20, 27], w: [1.9, 2.4], sp: .94,  op: [.72, .86], y: [-16, 84], lead: .06, from: 0,   sc: 1.05 },
+      { n: 3, h: [30, 38], w: [1.7, 2.1], sp: .60,  op: [.94, 1.0], y: [-24, 76], lead: .17, from: 0,   sc: 1.14 },
+    ];
     const els = [];
-    for (let i = 0; i < WIPE.n; i++) {
-      const el = document.createElement('i');
-      // DEPTH. One number picks the size, and everything else follows it the way it does in a
-      // real sky: the near ones are big, opaque, quick and low; the far ones are small, hazy,
-      // slow and high. Without that they all arrive together and it is a shutter again.
-      const dep = rr(), side = i % 2 ? 1 : -1;
-      const h = 15 + dep * dep * 22;                 // vh -- see WIPE for why this is capped
-      const w = h * (1.8 + rr() * .7);
-      el.style.height = h + 'vh'; el.style.width = w + 'vh';
-      el.style.top = (-10 + rr() * 96) + 'vh';
-      el.style.opacity = (.58 + dep * .42).toFixed(2);
-      el.style.backgroundImage = 'url(' + WIPE.url[i % 3] + ')';
-      if (side > 0) el.style.transform = 'scaleX(-1)';
-      // start off its own side, meet somewhere across the middle, carry on out the far one
-      const x0 = side < 0 ? -(w + 12) : (100 + 12);
-      const x1 = side < 0 ? (-6 + rr() * 46) : (60 - rr() * 46 - w * .3);
-      const x2 = side < 0 ? (120 + rr() * 30) : -(w + 30 + rr() * 30);
-      el.style.left = '0';
-      el.dataset.x1 = x1; el.dataset.x2 = x2;
-      el.style.transform = 'translate3d(' + x0 + 'vw,0,0)' + (side > 0 ? ' scaleX(-1)' : '');
-      el._flip = side > 0 ? ' scaleX(-1)' : '';
-      // the near ones lead, so the frame fills from the front
-      el._lag = (1 - dep) * .16;
-      g.appendChild(el); els.push(el);
+    let k = 0;
+    for (let bi = 0; bi < BANDS.length; bi++) {
+      const B = BANDS[bi];
+      for (let j = 0; j < B.n; j++, k++) {
+        const el = document.createElement('i');
+        // Not i % 2. Alternating strictly is a pattern the eye picks up in ten objects; this
+        // keeps both sides fed without being a rhythm.
+        const side = (rr() < .5 ? -1 : 1) * (j === 0 ? (bi % 2 ? 1 : -1) : 1);
+        const h = rng(B.h[0], B.h[1]), w = h * rng(B.w[0], B.w[1]);
+        el.style.height = h + 'vh'; el.style.width = w + 'vh';
+        el.style.top = rng(B.y[0], B.y[1]) + 'vh';
+        el.style.opacity = rng(B.op[0], B.op[1]).toFixed(2);
+        el.style.backgroundImage = 'url(' + WIPE.url[k % 3] + ')';
+        el.style.left = '0';
+        // A cloud is not a spirit level, and the near ones drift down across the frame as
+        // they come, which is the parallax a camera moving forward actually produces.
+        const rot = rng(-4, 4), dy = (bi === 2 ? rng(2, 7) : bi === 1 ? rng(1, 3.5) : rng(-1, 1)) * side * -1;
+        const off = side < 0 ? -(w + 6) : (100 + 6);
+        const x0 = off + (side < 0 ? w * B.from : -w * B.from);   // the far band is part-way in already
+        const x1 = side < 0 ? rng(-14, 44) : rng(58 - w * .35, 74 - w * .1);
+        const x2 = side < 0 ? rng(116, 150) : -(w + rng(26, 60));
+        el._t = [x0, x1, x2, dy, rot, B.sc, side > 0 ? -1 : 1];
+        el.style.transform = 'translate3d(' + x0 + 'vw,0,0) rotate(' + rot + 'deg) scaleX(' + el._t[6] + ')';
+        el._lag = B.lead;
+        el._sp = B.sp;
+        g.appendChild(el); els.push(el);
+      }
     }
+    const put = (el, x, y, sc) => 'translate3d(' + x + 'vw,' + y + 'vh,0) rotate(' + el._t[4]
+      + 'deg) scale(' + sc + ') scaleX(' + el._t[6] + ')';
     document.body.appendChild(g);
     // Two frames before the move, not one: a transform set in the same frame the element was
     // added has no previous value to animate away from and the sky simply appears shut.
     requestAnimationFrame(() => requestAnimationFrame(() => {
       for (const el of els) {
-        el.style.transition = 'transform ' + (WIPE.inT + el._lag) + 's cubic-bezier(.20,.62,.24,1)';
-        el.style.transform = 'translate3d(' + el.dataset.x1 + 'vw,0,0)' + el._flip;
+        el.style.transitionDelay = el._lag + 's';
+        el.style.transition = 'transform ' + (WIPE.inT * el._sp) + 's cubic-bezier(.18,.64,.24,1) ' + el._lag + 's';
+        el.style.transform = put(el, el._t[1], el._t[3] * .5, el._t[5]);
       }
     }));
     setTimeout(() => { veil.style.opacity = '1'; }, (WIPE.inT - .30) * 1000);
@@ -14881,8 +14906,8 @@ function wipeStart(fn) {
       veil.style.transition = 'opacity .42s ease';
       veil.style.opacity = '0';
       for (const el of els) {
-        el.style.transition = 'transform ' + (WIPE.outT + el._lag) + 's cubic-bezier(.42,0,.66,1)';
-        el.style.transform = 'translate3d(' + el.dataset.x2 + 'vw,0,0)' + el._flip;
+        el.style.transition = 'transform ' + (WIPE.outT * el._sp) + 's cubic-bezier(.40,0,.70,1)';
+        el.style.transform = put(el, el._t[2], el._t[3] * 1.6, el._t[5] * 1.06);
       }
     }, (WIPE.inT + WIPE.hold) * 1000);
     setTimeout(() => { g.remove(); WIPE.on = 0; }, (WIPE.inT + WIPE.hold + WIPE.outT + .4) * 1000);
