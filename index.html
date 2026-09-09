@@ -1746,7 +1746,10 @@ const MUSIC = {
   gain: null, cur: null, curName: null, want: null, vol: .55, on: true,
   fade: 2.2, track: {}, list: [], t: 0,
   // Named tracks. Drop a file in audio/ and add it here; the value is the file's stem.
-  files: { theme: 'music_01', night: 'music_02', battle: 'music_03', flight: 'music_04' },
+  // His own naming, so dropping plutopia_song_02.mp3 in and adding a line here is the whole
+  // job. Anything missing is skipped rather than erroring, and everything falls back to the
+  // theme -- so one file plays everywhere until there are more.
+  files: { theme: 'plutopia_song_01', night: 'plutopia_song_02', battle: 'plutopia_song_03', flight: 'plutopia_song_04' },
   bus() {
     if (!SFX.ctx) return null;
     if (!this.gain) { this.gain = SFX.ctx.createGain(); this.gain.gain.value = this.vol; this.gain.connect(SFX.master); }
@@ -1838,7 +1841,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e5';
+const BUILD = 'e6';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
