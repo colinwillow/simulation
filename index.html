@@ -1620,7 +1620,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e44';
+const BUILD = 'e45';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -5900,11 +5900,27 @@ function setSkin(model, skinUrl) {
   for (const [, m] of TINTED) { m.needsUpdate = true; }
   return skinUrl;
 }
-function loadModel(url, cb) {
+// `fail` IS NOT OPTIONAL POLISH. The error path below sets `failed`, empties `waiting` and
+// calls nothing -- which is right for every caller that just keeps its placeholder, and fatal
+// for the one that is COUNTING callbacks. The boot holds the studio splash until two models
+// have arrived; one failed fetch and that count never completes, so _play never runs, the
+// runners never set off, _majiaFinish is never called, and the mark sits on screen for ever
+// with no error anywhere. A stuck splash is the worst failure this file has and this was a
+// silent path straight to it.
+//
+// So a caller that needs to know either way passes `fail` and is told either way. The default
+// contract is unchanged: no `fail`, and a failure is still silence, because a caller reading
+// e.root off a model that never loaded would only throw somewhere less obvious.
+function loadModel(url, cb, fail) {
   let e = MODELS[url];
-  if (e) { if (e.ready) cb(e); else if (!e.failed) e.waiting.push(cb); return; }
-  if (!THREE.GLTFLoader) return;                        // no loader: callers keep their placeholder
-  e = MODELS[url] = { ready: false, failed: false, waiting: [cb] };
+  if (e) {
+    if (e.ready) cb(e);
+    else if (e.failed) { if (fail) fail(e); }
+    else { e.waiting.push(cb); if (fail) e.failing.push(fail); }
+    return;
+  }
+  if (!THREE.GLTFLoader) { if (fail) fail(null); return; }   // no loader: callers keep their placeholder
+  e = MODELS[url] = { ready: false, failed: false, waiting: [cb], failing: fail ? [fail] : [] };
   const draco = new THREE.DRACOLoader(); draco.setDecoderPath('vendor/draco/');
   const loader = new THREE.GLTFLoader(); loader.setDRACOLoader(draco);
   loader.load(url, gltf => {
@@ -5920,7 +5936,12 @@ function loadModel(url, cb) {
     e.ready = true;
     for (const f of e.waiting) f(e);
     e.waiting.length = 0;
-  }, undefined, err => { e.failed = true; e.waiting.length = 0; console.warn('model failed, keeping placeholder:', url, err); });
+  }, undefined, err => {
+    e.failed = true; e.waiting.length = 0;
+    for (const f of e.failing) { try { f(e); } catch (_) {} }
+    e.failing.length = 0;
+    console.warn('model failed, keeping placeholder:', url, err);
+  });
 }
 
 // THE WRIST. Measured out of the file, not guessed at: in alien_orange.glb, EVERY clip carries
@@ -21577,8 +21598,15 @@ function frame(now) {
         });
       };
       const _one = () => { if (--_pend <= 0) _play(); };
-      try { loadModel('models/purple_horny.glb', _one); loadModel('models/alien_orange.glb', _one); }
+      try { loadModel('models/purple_horny.glb', _one, _one); loadModel('models/alien_orange.glb', _one, _one); }
       catch (_) { _play(); }
+      // AND A CLOCK OVER THE TOP OF IT. A failed load now reports, but a STALLED one reports
+      // nothing to anybody -- no error fires on a request that simply never comes back, and on
+      // a phone that is the ordinary way a fetch dies. The world is already built by the time
+      // this runs; the two models are a courtesy so the runners do not pop in mid-stride, and
+      // four seconds is longer than that courtesy is worth. _play is idempotent, so whichever
+      // gets there first wins and the other does nothing.
+      setTimeout(_play, 4000);
       setTimeout(_play, 4000);          // a cameo never holds the boot
     }
   }
