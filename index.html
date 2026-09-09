@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e33';
+const BUILD = 'e34';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -1797,6 +1797,15 @@ const snd = {
   chop: (x, z) => SFX.play('wood', .8, rnd(1.05, 1.2), x, z)
     || (SFX.noise(.16, .30, 700, x, z), SFX.blip(190, .13, 'sawtooth', .13, 90, x, z)),
   fell: (x, z) => sndOnce('fell', 160) && (SFX.play('crack', .85, rnd(.72, .85), x, z) || SFX.noise(.5, .3, 500, x, z)),
+  // AND THE OTHER HALF OF FELLING ONE. `fell` is the cut -- the trunk letting go, which is
+  // where it already plays. This is the tree ARRIVING, a second and a half later, and it is
+  // the same wood with a great deal more of it: the same pool most of an octave down and
+  // longer, with a low sine underneath for the weight. A crack on its own has no mass in it.
+  timber: (x, z) => {
+    if (!sndOnce('timber', 220)) return;
+    SFX.play('crack', .95, rnd(.46, .58), x, z) || SFX.noise(.5, .34, 420, x, z);
+    SFX.blip(56, .28, 'sine', .22, 32, x, z);
+  },
   whiff: (x, z) => SFX.play('swing', .22, rnd(1.15, 1.3), x, z) || SFX.noise(.15, .09, 1700, x, z),
   // One voice, pitched by the charge: a tap is a quick high snap, a held shot drops and
   // lengthens. That is the difference between two guns without being two sounds.
@@ -5143,6 +5152,12 @@ class LanternTree {
       if (k >= 1) {
         this.alive = false;
         const dir = this.fallDir || new THREE.Vector3(1, 0, 0);
+        // Where the CROWN lands, not where the stump is: that is the end that hits, and it is
+        // most of the tree away from the roots. The shake falls off with distance -- a tree
+        // coming down across the island is a sound, and one coming down beside him is an
+        // event -- which is the one thing addTrauma cannot know on its own.
+        snd.timber(this.pos.x + dir.x * this.h * .7, this.pos.z + dir.z * this.h * .7);
+        addTrauma(clamp(.3 * (1 - Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) / 55), 0, .3));
         const rotY = Math.atan2(dir.x, dir.z);
         const nSeg = (this.elder ? 4 : 2) + (Math.random() * 2 | 0);
         const segLen = Math.max(2.2, this.h * .82 / nSeg);
