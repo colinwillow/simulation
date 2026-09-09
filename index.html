@@ -1620,7 +1620,38 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e45';
+const BUILD = 'e46';
+// Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
+// and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
+// rest of the script -- the fourteenth time -- and a script that dies here never starts the
+// frame loop, never boots, and leaves the studio splash on screen for ever with no error.
+const SFXV = 2;
+// A HARD FLOOR UNDER THE STUDIO SPLASH, answering to nothing above it.
+//
+// Every other way out of that mark runs through the world booting: the frame loop sets
+// `booted`, that starts the runners, the runners call _majiaFinish. Any one of those three
+// failing leaves the mark on screen for ever, and -- this is the part that costs cycles --
+// with NO ERROR VISIBLE, because the boot card that would say "it did not grow" sits at
+// z-index 5 underneath a splash at 100200. Twice now the only thing anyone can report is
+// "it stays there".
+//
+// So: a timer armed the moment this line is reached, before anything else in the file can
+// fail. At twelve seconds the splash comes off whatever else is or is not happening, and the
+// build tag says what state it went off in -- whether the loop ever ran (t), and how many
+// models arrived (m). That turns a silent hang into one photograph.
+setTimeout(() => {
+  try {
+    if (window.__bootOK) return;
+    if (window._majiaFinish) window._majiaFinish();
+    const b = document.getElementById('boot'); if (b) b.style.opacity = .35;
+    let ready = 0, total = 0;
+    try { for (const u in MODELS) { total++; if (MODELS[u].ready || MODELS[u].failed) ready++; } } catch (_) {}
+    const t = document.getElementById('bldTag');
+    if (t) t.textContent = BUILD + ' \u00b7 forced \u00b7 t'
+      + (typeof world !== 'undefined' && world ? (world.clock || 0).toFixed(1) : 'no-loop')
+      + ' \u00b7 m' + ready + '/' + total;
+  } catch (_) {}
+}, 12000);
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -1659,11 +1690,16 @@ const SFX = {
   // under a megabyte; the music is fifteen and carries its own key below, bumped by hand when
   // a track is actually replaced.
   miss: [],
+  // ITS OWN VERSION, NOT BUILD -- and BUILD was a mistake. Stamping the push number on thirty
+  // sound files means every build re-downloads all of them, at page load, against the same
+  // connection the models are coming down. That is most of "it takes a really long time to
+  // load", and it made a model fetch far likelier to be the one that lost. Bump SFXV by hand
+  // when a sound is replaced in place; that is the only time the cache is wrong.
   fetchAll() {
     for (const k in SND_FILES) {
       this.raw[k] = [];
       SND_FILES[k].forEach((f, i) => {
-        fetch('audio/' + f + '.mp3?v=' + BUILD).then(r => r.ok ? r.arrayBuffer() : null)
+        fetch('audio/' + f + '.mp3?v=' + SFXV).then(r => r.ok ? r.arrayBuffer() : null)
           .then(b => { if (b) { this.raw[k][i] = b; this.got++; if (this.ctx) this.decode(); } else this.miss.push(f); })
           .catch(() => this.miss.push(f));
       });
@@ -21577,6 +21613,7 @@ function frame(now) {
       // splash's own two models. They are almost certainly already cached -- the world uses
       // both -- but "almost certainly" is what leaves a frame hitching mid-assembly, and the
       // whole point of holding the timeline is that nothing loads while it runs.
+      window.__bootOK = 1;                 // the floor above stands down: this got there on its own
       const bar = document.getElementById('majia-bar'); if (bar) bar.style.width = '100%';
       const b = document.getElementById('boot'); b.style.opacity = 0; setTimeout(() => b.remove(), 600);
       let _pend = 2, _went = false;
