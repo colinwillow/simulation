@@ -569,6 +569,16 @@
   .tog.on{background:rgba(157,247,255,.16);border-color:var(--cy);color:#dbfbff;
     box-shadow:0 0 18px var(--cyd),0 4px 14px rgba(0,0,0,.42)}
   .tog:active{transform:scale(.95)}
+  /* Down the left edge and centred on it: clear of the title above and the sticks below, and
+     it grows from the middle outward as materials are picked up rather than pushing anything. */
+  #pile{position:fixed;left:calc(12px + env(safe-area-inset-left));top:50%;transform:translateY(-50%);
+    z-index:4;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+  #pile .mat{width:38px;height:38px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    border-radius:11px;background:var(--glass);border:1.5px solid var(--rim);
+    box-shadow:0 4px 14px rgba(0,0,0,.42),inset 0 0 0 1px rgba(255,255,255,.04);
+    -webkit-backdrop-filter:blur(8px) saturate(1.2);backdrop-filter:blur(8px) saturate(1.2)}
+  #pile .mat i{font-style:normal;font-size:15px;line-height:1;text-shadow:0 0 8px currentColor}
+  #pile .mat b{font-family:var(--disp);font-weight:700;font-size:11px;line-height:1;letter-spacing:.02em;color:var(--ink)}
   #hud h1{font-family:var(--disp);font-weight:700;font-size:25px;letter-spacing:.05em;color:var(--ink);
     text-shadow:0 2px 0 rgba(20,110,140,.55),0 0 20px rgba(120,238,255,.35),0 2px 6px rgba(0,0,0,.95)}
   #hud .era{color:var(--ink2);font-size:14.5px}
@@ -1510,9 +1520,11 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
        different intentions and tying them together meant you could never have one without
        the other. -->
   <button id="armQ" class="tog" hidden>drop arm</button>
-  <!-- THE PILE. How many parts he is carrying. Hidden at zero, so it only exists once there is
-       something to build with. -->
-  <div id="pile" class="tog" hidden></div>
+  <!-- THE PILE. What he is carrying. Hidden at zero, so it only exists once there is something
+       to build with. A COLUMN DOWN THE LEFT rather than a sentence across the top: the words
+       cost most of the width of a phone to say a number, and the mark already says which
+       material it is. Fixed, so it escapes this column's layout entirely. -->
+  <div id="pile" hidden></div>
   <div id="btns" hidden><button id="ejectB" class="tog">eject</button><button id="flyB" class="tog">fly</button><button id="freeB" class="tog">free cam</button>
     <!-- HE IS THE ONE WITH EYES, and every one of these costs frame time as well as look, so
          they belong where he can reach them rather than in a console he has to plug a laptop
@@ -1604,7 +1616,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e40';
+const BUILD = 'e41';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -21215,12 +21227,23 @@ function updateHUD() {
   {   // the pile
     const el = _pileEl || (_pileEl = document.getElementById('pile'));
     if (el) {
-      const bits = [];
-      for (const k in MATS) { const n = INV[k] || 0; if (n) bits.push(MATS[k].mark + ' ' + n + ' ' + MATS[k].label + (n === 1 ? '' : 's')); }
-      const on = bits.length > 0;
+      // The signature is what decides whether anything is rebuilt, so the innerHTML is only
+      // touched on the frames a count actually changes rather than every sixth of a second.
+      let sig = '';
+      for (const k in MATS) { const n = INV[k] || 0; if (n) sig += k + n + '.'; }
+      const on = sig.length > 0;
       if (el.hidden === on) el.hidden = !on;
-      const txt = bits.join('  \u00b7  ');
-      if (on && el.textContent !== txt) el.textContent = txt;
+      if (on && el.dataset.sig !== sig) {
+        el.dataset.sig = sig;
+        let h = '';
+        for (const k in MATS) {
+          const n = INV[k] || 0; if (!n) continue;
+          const m = MATS[k];
+          h += '<div class="mat" title="' + n + ' ' + m.label + (n === 1 ? '' : 's') + '">'
+             + '<i style="color:' + m.col + '">' + m.mark + '</i><b>' + n + '</b></div>';
+        }
+        el.innerHTML = h;
+      }
     }
   }
   {   // the eject chip is only ever offered when there is something to get out of
