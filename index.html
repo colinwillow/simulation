@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd86';
+const BUILD = 'd87';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -3507,11 +3507,26 @@ const terrainGeo = polarGeo(TSPOKE, TRING, ringR);
 // would have got a hard triangular blob. At 2048 the stain map is 0.39 units a texel -- seven
 // times finer -- and every pool is a real circle whatever the mesh underneath is doing.
 const STAIN = {
-  k: .5,                       // how dark the deepest part of a pool goes
-  grow: 1.5, min: .55, max: 30,  // a shadow is always a little wider than the thing casting it
-  air: .55,                    // and a walkway overhead is a softer one than a rock
+  k: .52,                      // how dark the deepest part of a pool goes
+  grow: 1.15, min: 1.1, max: 34,
+  air: .55,                    // a walkway overhead casts a softer one than a rock
   S: MOBILE ? 1024 : 2048,
 };
+// HOW WIDE THE POOL IS, and the first version got this badly wrong by taking the obstacle's
+// radius at face value. That radius is a COLLIDER -- the thing you walk into -- and on a tree
+// it is the trunk: 0.95 units under a canopy six units across. Every pool in the world was
+// about a metre wide, under objects five to twenty times that, which is why turning it on and
+// off looked like nothing happening. The collider is a floor here, not the answer; the real
+// footprint comes off whatever the object knows about its own size.
+function stainR(o) {
+  const w = o.owner || {};
+  return Math.max(
+    o.r * 1.9,
+    (w.H || 0) * .30,          // the elderwillow, which is its own scale of thing
+    (w.h || 0) * .34,          // a lantern tree: canopy about a third of its height
+    (w.cap || 0) * .80,        // a mushroom, which is nearly all cap
+    (w.rad || 0) * 1.6);
+}
 const _stain = (() => {
   const cv = document.createElement('canvas');
   cv.width = cv.height = STAIN.S;
@@ -3519,6 +3534,12 @@ const _stain = (() => {
   g.fillStyle = '#fff'; g.fillRect(0, 0, STAIN.S, STAIN.S);
   const tex = new THREE.CanvasTexture(cv);
   tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  // NOT FLIPPED. A CanvasTexture flips on upload by default, because that is what an image
+  // wants -- and this is not an image, it is a coordinate system. With flipY the pool drawn
+  // for an object at +z was sampled from -z, so every shadow in the world was mirrored onto
+  // empty ground and nothing was standing on one. It reads as the feature doing nothing at
+  // all, because on the ground you are looking at, it is.
+  tex.flipY = false;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.generateMipmaps = false;
   return { cv, g, tex, dirty: false, n: 0 };
@@ -3562,7 +3583,7 @@ function stainWorld() {
   for (const a of OB.map.values()) for (const o of a) {
     if (o._stained) continue;
     o._stained = 1;
-    groundStain(o.x, o.z, o.r, STAIN.k * (o.air ? STAIN.air : 1));
+    groundStain(o.x, o.z, stainR(o), STAIN.k * (o.air ? STAIN.air : 1));
     n++;
   }
   _stain.n += n;
