@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e35';
+const BUILD = 'e36';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -16198,7 +16198,16 @@ function setMove(m) {
 // has now played both, and weighted momentum is not what he wants a thumb to be steering.
 // isle.move('weighted') is the way back, and the choice sticks across a reload.
 (() => { let m = 'direct'; try { m = localStorage.getItem('isle.move') || 'direct'; } catch (e) {} setMove(m); })();
-const ROLL = { speed: 32, skip: .12, end: 1.30, rate: 1.35, go: .88, time: .7, cool: .28, turn: 1 };
+// HOW FAR THE DODGE ACTUALLY CARRIES HIM, worked out rather than nudged, because the clip is
+// in place -- its hips run out to 66 and come back, which is the tuck, not travel -- so this
+// number IS the distance and nothing on screen is tied to it.
+//
+// The roll owns him for (1.208 - skip) / rate = 0.806 s, and the speed is spent on a 1 - k^2
+// curve that reaches zero at `go` of the way through. The integral of that curve is 0.587 of
+// its peak, so at 32 he covered 32 * 0.806 * 0.587 = 15.1 units -- five and a half body
+// lengths, and nearly a full second of running done in eight tenths. At 23 it is 10.9, which
+// is four, and still further than a step.
+const ROLL = { speed: 23, skip: .12, end: 1.30, rate: 1.35, go: .88, time: .7, cool: .28, turn: 1 };
 // THE RUN. `k` is how much faster than his own top speed a sprint is; `at` is how far up the
 // right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
 // most of what a game does to say "fast" and costs nothing. in/out are how quickly it comes on
