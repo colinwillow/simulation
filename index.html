@@ -1629,7 +1629,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e57';
+const BUILD = 'e58';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -8007,7 +8007,15 @@ class Creature {
       // The tumble axis: horizontal and at right angles to the way it is going, so it turns
       // end over end along its own arc. Stored once at the hit; nothing about it changes in
       // flight except how fast it is being turned.
-      ax: -dz / d, az: dx / d, ang: 0, spin: rnd(.55, 1) * KNOCK.spin,
+      // AWAY FROM WHOEVER DID IT. Same derivation as hurl, and it needs writing down once
+      // because this sign has now been wrong in two places and in both of them it was the
+      // same mistake. The body turns about a horizontal axis A, and the TOP of it moves along
+      // A x Y, which for A = (ax, 0, az) works out as (-az, 0, ax). (dx, dz) here already
+      // points away from the attacker. For the top to travel that way: -az = dx and ax = dz.
+      // So ax = +dz, az = -dx. The negative of that -- which is what was here, and what hurl
+      // had until e57 -- rotates the top back INTO the blow, and reads as a man you tripped
+      // falling towards you.
+      ax: dz / d, az: -dx / d, ang: 0, spin: rnd(.55, 1) * KNOCK.spin,
       hops: 0, rest: 0,
     };
     this.holeOff(1); this.abandon(); this.wp = null; this.target = null; this.ghost = KNOCK.ghost; this.stall = 0;
