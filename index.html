@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd81';
+const BUILD = 'd82';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -11515,8 +11515,22 @@ populate();
 
 // ---------- post: bright pass, gaussian bloom, grade ----------
 const rtType = HALF ? THREE.HalfFloatType : THREE.UnsignedByteType;
-function makeRT(w, h) { return new THREE.WebGLRenderTarget(Math.max(2, w | 0), Math.max(2, h | 0), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, type: rtType, depthBuffer: true, stencilBuffer: false }); }
-let rtScene = makeRT(innerWidth * Q.dpr, innerHeight * Q.dpr);
+function makeRT(w, h, depth) {
+  const o = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, type: rtType, depthBuffer: true, stencilBuffer: false };
+  const rt = new THREE.WebGLRenderTarget(Math.max(2, w | 0), Math.max(2, h | 0), o);
+  // THE OUTLINE NEEDS TO READ THE DEPTH IT WAS DRAWN WITH, which means the depth attachment
+  // has to be a texture rather than a renderbuffer. Only the scene target gets one -- the two
+  // bloom targets are full-screen quads with nothing in front of anything. 24-bit, because a
+  // far plane of 1600 through a 16-bit buffer quantises the middle distance into visible steps
+  // and the edge test is a second derivative, which is exactly what steps look like.
+  if (depth) {
+    rt.depthTexture = new THREE.DepthTexture(rt.width, rt.height, THREE.UnsignedIntType);
+    rt.depthTexture.format = THREE.DepthFormat;
+    rt.depthTexture.minFilter = rt.depthTexture.magFilter = THREE.NearestFilter;
+  }
+  return rt;
+}
+let rtScene = makeRT(innerWidth * Q.dpr, innerHeight * Q.dpr, true);
 let rtA = makeRT(innerWidth * Q.dpr / Q.bloomDiv, innerHeight * Q.dpr / Q.bloomDiv);
 let rtB = makeRT(innerWidth * Q.dpr / Q.bloomDiv, innerHeight * Q.dpr / Q.bloomDiv);
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -11557,9 +11571,14 @@ const DARK = { col: [.0113, .0004, .0333], k: 1.0, knee: .028 };
 const compMat = new THREE.ShaderMaterial({ uniforms: {
     tD: { value: null }, tB: { value: null }, uStr: { value: .85 }, uVig: { value: .5 }, uNight: { value: 0 }, uT: { value: 0 }, uRush: { value: 0 },
     uLift: { value: new THREE.Color(0, 0, 0) }, uKnee: { value: .17 },
-    uPx: { value: new THREE.Vector2(1 / 1280, 1 / 720) }, uAA: { value: 1 }
+    uPx: { value: new THREE.Vector2(1 / 1280, 1 / 720) }, uAA: { value: 1 },
+    tZ: { value: null }, uOut: { value: .55 }, uOutW: { value: 1 }, uNear: { value: .5 }, uFar: { value: 1600 },
+    uOutC: { value: new THREE.Color(.30, .34, .46) }, uOutLo: { value: .0045 }, uOutHi: { value: .034 }
   }, vertexShader: VS, fragmentShader: `
-  uniform sampler2D tD,tB; uniform float uStr,uVig,uNight,uT,uKnee,uRush,uAA; uniform vec3 uLift; uniform vec2 uPx; varying vec2 vUv;
+  uniform sampler2D tD,tB,tZ; uniform float uStr,uVig,uNight,uT,uKnee,uRush,uAA,uOut,uOutW,uNear,uFar,uOutLo,uOutHi;
+  uniform vec3 uLift,uOutC; uniform vec2 uPx; varying vec2 vUv;
+  // Depth, in units, from the buffer's own non-linear encoding.
+  float lz(vec2 uv){ float d = texture2D(tZ,uv).x; return (2.0*uNear*uFar)/(uFar+uNear-(2.0*d-1.0)*(uFar-uNear)); }
   float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
   // FXAA, AND WHY IT LIVES HERE RATHER THAN IN A PASS OF ITS OWN. Multisampling never had a
   // chance in this renderer: MSAA only exists on the default framebuffer, and the first thing
@@ -11601,6 +11620,26 @@ const compMat = new THREE.ShaderMaterial({ uniforms: {
       vec3 sm = c;
       for (int i = 1; i <= 6; i++) sm += texture2D(tD, vUv - d * (float(i) * 0.016 * uRush)).rgb;
       c = mix(c, sm / 7.0, e * uRush);
+    }
+    // THE LINE. A Laplacian of depth rather than a gradient, and that is the whole difference
+    // between an outline and a mess: a first derivative fires on every sloping surface, so a
+    // hillside seen at a glancing angle would go dark all over. The second derivative only
+    // fires where depth BREAKS -- a silhouette against what is behind it. Divided by the
+    // distance, so a line four units away and one four hundred units away read the same
+    // weight, and thresholded with a smoothstep rather than a cut, which is what keeps a
+    // one-pixel line from being the most aliased thing in the frame.
+    //
+    // It multiplies the colour toward uOutC instead of drawing black over it, so the line
+    // takes the scene's own light and reads as a dark edge on the form rather than as ink on
+    // top of the picture -- and it sits above the bloom, so a bright edge still blooms through
+    // its own outline. isle.outline(0) removes it; isle.outline(1, {w:2}) fattens it.
+    if (uOut > 0.001) {
+      vec2 o = uPx * uOutW;
+      float z0 = lz(vUv);
+      float g = abs(lz(vUv-vec2(o.x,0.0)) + lz(vUv+vec2(o.x,0.0)) - 2.0*z0)
+              + abs(lz(vUv-vec2(0.0,o.y)) + lz(vUv+vec2(0.0,o.y)) - 2.0*z0);
+      float e = smoothstep(uOutLo, uOutHi, g / max(z0, 1.0));
+      c *= mix(vec3(1.0), uOutC, e * uOut);
     }
     vec3 b = texture2D(tB,vUv).rgb;
     c += b*uStr;
@@ -11800,6 +11839,13 @@ function renderPost() {
   compMat.uniforms.tD.value = rtScene.texture; compMat.uniforms.tB.value = rtA.texture;
   compMat.uniforms.uNight.value = world.night; compMat.uniforms.uT.value = world.clock % 100;
   compMat.uniforms.uPx.value.set(1 / rtScene.width, 1 / rtScene.height);
+  // The depth is whichever camera just drew, and the title screen is a different one with a
+  // different near and far -- read them off it rather than assuming the world camera's.
+  {
+    const cm = (INTRO.on && DIO.cam) ? DIO.cam : camera;
+    compMat.uniforms.tZ.value = rtScene.depthTexture;
+    compMat.uniforms.uNear.value = cm.near; compMat.uniforms.uFar.value = cm.far;
+  }
   // Reserved for the open air. The cave is the one place true black IS the point, so the
   // floor drops away as he goes under -- measured off the mouth rather than off a flag,
   // because there is no flag and inventing one to read here would be inventing state to make
@@ -13868,6 +13914,20 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
 window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, get chop() { return CHOP; }, get melee() { return MELEE; },
   dpr: setDpr, aa: v => { compMat.uniforms.uAA.value = v === false ? 0 : 1; return !!compMat.uniforms.uAA.value; },
+  // isle.outline(0) off, isle.outline(.55) back, isle.outline(.55, {w: 2, lo: .003, hi: .05, col: '#3a4a66'})
+  outline: (k, o) => {
+    const u = compMat.uniforms;
+    if (k !== undefined) u.uOut.value = clamp(+k || 0, 0, 2);
+    if (o) {
+      if (o.w !== undefined) u.uOutW.value = o.w;
+      if (o.lo !== undefined) u.uOutLo.value = o.lo;
+      if (o.hi !== undefined) u.uOutHi.value = o.hi;
+      if (o.col) u.uOutC.value.set(o.col);
+    }
+    console.log('outline ' + u.uOut.value.toFixed(2) + '  width ' + u.uOutW.value
+      + '  band ' + u.uOutLo.value + '..' + u.uOutHi.value + '  col #' + u.uOutC.value.getHexString());
+    return u.uOut.value;
+  },
   // isle.axe({roll: 1.57}) -- turn it, slide his grip up or down it, resize it. Prints the set.
   axe: o => { if (o) Object.assign(AXEM, o); fitAxe(); console.log(JSON.stringify(AXEM)); return AXEM; },
   // who is feeling what, right now, nearest first
@@ -18321,7 +18381,15 @@ function syncSize(probe) {
   // updateStyle false: the CSS above already has it filling the viewport, and letting three
   // write pixel sizes back onto it is what re-introduces the mismatch.
   renderer.setSize(w, h, false);
+  // r128's WebGLRenderTarget.setSize resizes the colour texture and disposes the framebuffer
+  // but never touches depthTexture.image -- so after a rotate the depth attachment is still
+  // allocated at the old size and the framebuffer comes back incomplete. Resize it by hand.
   rtScene.setSize(w * Q.dpr, h * Q.dpr);
+  if (rtScene.depthTexture) {
+    rtScene.depthTexture.image.width = rtScene.width;
+    rtScene.depthTexture.image.height = rtScene.height;
+    rtScene.depthTexture.needsUpdate = true;
+  }
   rtA.setSize(w * Q.dpr / Q.bloomDiv, h * Q.dpr / Q.bloomDiv);
   rtB.setSize(w * Q.dpr / Q.bloomDiv, h * Q.dpr / Q.bloomDiv);
   motesUni.uScale.value = h * .5;
