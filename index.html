@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e38';
+const BUILD = 'e39';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -17508,6 +17508,7 @@ function netOffer() {
 // and how far it hangs is how much of it is not being used. Pulled taut it straightens by
 // itself, which is the whole tell that he is actually leaning into it.
 const DRAGROPE = { seg: 12, thick: .085, lay: .055, turns: 3.4 };
+const _clPay = new THREE.Vector3();   // where the cable is paid out to, before the cord has its say
 let dragRope = null, dragRopeG = null;
 function stepDrag() {
   const p = player, o = p.drag;
@@ -18342,6 +18343,66 @@ function fireNet() {
 // vertex, and the curve comes free with the sampling -- a cord under tension samples to a
 // straight line by itself, and only a slack one bows.
 const ROPE = { seg: 4, sag: .85 };   // more bow per unit of slack: the net now has slack to spend
+// ---------- a cord with memory ----------
+// `strand` below draws a quadratic Bezier, and a Bezier has no memory: it is rebuilt from its
+// two ends every frame, so the drone's cable snapped from shape to shape as it flew and never
+// once trailed behind it. This is the other kind of curve -- a chain of points with mass.
+//
+// One Verlet step (position minus last position IS the velocity, so nothing has to be stored
+// twice) and a few passes pulling each neighbouring pair back to its rest length. That single
+// constraint is the whole simulation: the lag, the swing, the whip when the top end stops
+// dead, and the straightening when it is drawn taut all fall out of it and none of them has
+// to be written. It is what a cloth solver does, with the sheet narrowed to one strand.
+const CORD = { g: 30, damp: .012, drag: 1.6, iter: 7 };
+class Cord {
+  constructor(n) {
+    this.n = n;                       // segments; n + 1 points
+    this.x = new Float32Array(n + 1); this.y = new Float32Array(n + 1); this.z = new Float32Array(n + 1);
+    this.px = new Float32Array(n + 1); this.py = new Float32Array(n + 1); this.pz = new Float32Array(n + 1);
+    this.live = false;
+  }
+  // Straight between two points and not moving. For the frame a cable starts paying out,
+  // which has no previous frame to have come from -- without this the first step reads the
+  // zeroed arrays as an enormous velocity and fires the cord across the island.
+  lay(ax, ay, az, bx, by, bz) {
+    for (let i = 0; i <= this.n; i++) {
+      const t = i / this.n;
+      this.x[i] = this.px[i] = ax + (bx - ax) * t;
+      this.y[i] = this.py[i] = ay + (by - ay) * t;
+      this.z[i] = this.pz[i] = az + (bz - az) * t;
+    }
+    this.live = true;
+  }
+  // `len` is the whole cord. Give ex/ey/ez and the tail is pinned there; leave them out and
+  // it hangs free, which is what makes the load swing behind the thing carrying it.
+  step(dt, ax, ay, az, len, ex, ey, ez) {
+    const n = this.n, rest = Math.max(.02, len / n), pin = ex !== undefined;
+    if (!this.live) this.lay(ax, ay, az, pin ? ex : ax, pin ? ey : ay - len, pin ? ez : az);
+    // Clamped, because a cord integrated across a dropped frame gains energy it never had.
+    const h = Math.min(dt, 1 / 30), k = Math.max(0, 1 - CORD.damp - CORD.drag * h), gh = CORD.g * h * h;
+    for (let i = 0; i <= n; i++) {
+      const vx = (this.x[i] - this.px[i]) * k, vy = (this.y[i] - this.py[i]) * k, vz = (this.z[i] - this.pz[i]) * k;
+      this.px[i] = this.x[i]; this.py[i] = this.y[i]; this.pz[i] = this.z[i];
+      this.x[i] += vx; this.y[i] += vy - gh; this.z[i] += vz;
+    }
+    // The ends are re-pinned at the top of every pass rather than once at the end, so the
+    // constraint has something solid to pull against and the cord converges instead of
+    // sagging a little further each frame.
+    for (let it = 0; it < CORD.iter; it++) {
+      this.x[0] = ax; this.y[0] = ay; this.z[0] = az;
+      if (pin) { this.x[n] = ex; this.y[n] = ey; this.z[n] = ez; }
+      for (let i = 0; i < n; i++) {
+        const dx = this.x[i + 1] - this.x[i], dy = this.y[i + 1] - this.y[i], dz = this.z[i + 1] - this.z[i];
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6, f = (d - rest) / d * .5;
+        const wx = dx * f, wy = dy * f, wz = dz * f;
+        this.x[i] += wx; this.y[i] += wy; this.z[i] += wz;
+        this.x[i + 1] -= wx; this.y[i + 1] -= wy; this.z[i + 1] -= wz;
+      }
+    }
+    this.x[0] = ax; this.y[0] = ay; this.z[0] = az;
+    if (pin) { this.x[n] = ex; this.y[n] = ey; this.z[n] = ez; }
+  }
+}
 class Rope {
   constructor(cords, width, colour, opacity, seg = ROPE.seg) {
     this.seg = seg; this.w = width; this.k = 0;
@@ -18378,13 +18439,24 @@ class Rope {
   // strands are in the chart, so it goes through the group's own matrix.
   begin(g) { this.k = 0; g.updateMatrixWorld(); this.eye.copy(camera.position); g.worldToLocal(this.eye); }
   strand(ax, ay, az, bx, by, bz, sag, w) {
-    const S = this.seg, P = this.pos, X = this._x, Y = this._y, Z = this._z;
-    const half = (w === undefined ? this.w : w) * .5;
+    const S = this.seg, X = this._x, Y = this._y, Z = this._z;
     const mx = (ax + bx) * .5, my = (ay + by) * .5 - sag, mz = (az + bz) * .5;
     for (let i = 0; i <= S; i++) {
       const t = i / S, u = 1 - t, A = u * u, B = 2 * u * t, C = t * t;
       X[i] = A * ax + B * mx + C * bx; Y[i] = A * ay + B * my + C * by; Z[i] = A * az + B * mz + C * bz;
     }
+    this.ribbon(w);
+  }
+  // The same ribbon, laid along a cord that worked out its own shape. `ox/oy/oz` is the group
+  // the mesh hangs under: the cord is simulated in chart space and drawn in local.
+  path(c, ox, oy, oz, w) {
+    const S = this.seg, X = this._x, Y = this._y, Z = this._z;
+    for (let i = 0; i <= S; i++) { X[i] = c.x[i] - ox; Y[i] = c.y[i] - oy; Z[i] = c.z[i] - oz; }
+    this.ribbon(w);
+  }
+  ribbon(w) {
+    const S = this.seg, P = this.pos, X = this._x, Y = this._y, Z = this._z;
+    const half = (w === undefined ? this.w : w) * .5;
     const base = this.k * S * 12, N = this.nrm;
     for (let i = 0; i < S; i++) {
       const tx = X[i + 1] - X[i], ty = Y[i + 1] - Y[i], tz = Z[i + 1] - Z[i];
@@ -19745,6 +19817,7 @@ function droneKnock(x, y, z, force = 1) {
 // Everything hangs in chart space under its own group, like the net does, so the cable and
 // the claw curve with the planet rather than pointing off it.
 const CLAW = {
+  seg: 14,           // links in the cable. See Cord: the shape is simulated, not drawn
   reach: 120,        // how far away it will go for something
   cruise: 16,        // its travel speed
   overY: 5.2,        // how high it hovers above what it is fetching
@@ -19769,7 +19842,8 @@ const CLAW = {
 const claw = { job: null, tgt: null, cargo: null, t: 0, out: 0, shutK: 0, g: null, rope: null, spin: 0 };
 function buildClaw() {
   const g = new THREE.Group(); g.visible = false; scene.add(g);
-  claw.rope = new Rope(1, .07, CLAW.cable, 1, 10);
+  claw.rope = new Rope(1, .07, CLAW.cable, 1, CLAW.seg);
+  claw.cord = new Cord(CLAW.seg);
   const rg = new THREE.Group(); rg.add(claw.rope.mesh); scene.add(rg); claw.ropeG = rg;
   const M = new THREE.MeshStandardMaterial({ color: new THREE.Color(CLAW.metal), roughness: .35, metalness: .7 });
   M.userData.noHole = true;
@@ -19857,7 +19931,7 @@ function stepClaw(dt) {
   // The cargo rides under the claw, and its net rides it -- the net is already bound to the
   // animal's own frame, so it needs nothing said to it.
   if (claw.cargo) {
-    clawAt(_clP);
+    clawPoint(_clP, dt);
     const o = claw.cargo;
     // and a floor under it regardless: a hill can rise under the pair of them faster than the
     // drone climbs, and a netted animal ploughing through a bank is the thing being reported.
@@ -19868,7 +19942,7 @@ function stepClaw(dt) {
   const live = claw.job !== null || claw.out > .01;
   claw.g.visible = live; claw.ropeG.visible = live;
   if (!live) return;
-  clawAt(_clP);
+  clawPoint(_clP, dt);
   claw.g.position.copy(_clP);
   claw.spin += dt * (claw.cargo ? .6 : 1.8);
   claw.g.rotation.set(0, claw.spin, 0);
@@ -19876,8 +19950,38 @@ function stepClaw(dt) {
   const mx = (f.pos.x + _clP.x) * .5, my = (f.pos.y + _clP.y) * .5, mz = (f.pos.z + _clP.z) * .5;
   claw.ropeG.position.set(mx, my, mz);
   claw.rope.begin(claw.ropeG);
-  claw.rope.strand(f.pos.x - mx, f.pos.y - .1 - my, f.pos.z - mz, _clP.x - mx, _clP.y - my, _clP.z - mz, .04);
+  claw.rope.path(claw.cord, mx, my, mz);
   claw.rope.end();
+}
+// WHERE THE CLAW ACTUALLY IS, which is the end of a rope and not a point under the drone.
+//
+// clawAt still says where the cable is PAID OUT TO -- straight down, `out` units. That is the
+// right answer while it is reaching for something: a claw that swings while it is closing on
+// a netted animal is a claw that misses, and the grab has to stay exact. So on the way down
+// the tail is pinned there and only the middle of the cable is free to bow and lag.
+//
+// Once it has the weight, the pin comes off and the tail hangs on its own. That is the whole
+// of the swing: the drone accelerates, the load does not, the constraint drags it along
+// behind and it keeps going when the drone stops. The cargo already rides wherever this
+// point is, so the animal swings under the drone with it.
+function clawPoint(out, dt) {
+  const f = fairy, ax = f.pos.x, ay = f.pos.y - .1, az = f.pos.z;
+  // Twice a frame -- once to carry the cargo, once to draw -- and a cord that integrates twice
+  // in one frame runs at double speed. The stamp makes the second call a read.
+  if (claw.cordT !== world.clock) {
+    claw.cordT = world.clock;
+    clawAt(_clPay);
+    const swing = claw.job === 'carry' || (claw.job === 'up' && claw.cargo);
+    const len = Math.max(.12, Math.hypot(_clPay.x - ax, _clPay.y - ay, _clPay.z - az));
+    // It only ever starts from scratch when there is no cable out at all. Paying out and
+    // hauling in change the length every frame, and a cord relaid every frame is a cord with
+    // no memory, which is the thing being fixed.
+    if (!claw.cord.live || claw.out < .02) claw.cord.lay(ax, ay, az, _clPay.x, _clPay.y, _clPay.z);
+    if (swing) claw.cord.step(dt, ax, ay, az, len);
+    else claw.cord.step(dt, ax, ay, az, len, _clPay.x, _clPay.y, _clPay.z);
+  }
+  const n = claw.cord.n;
+  out.set(claw.cord.x[n], claw.cord.y[n], claw.cord.z[n]);
 }
 
 function updateFairy(dt) {
