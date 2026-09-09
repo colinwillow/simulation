@@ -1572,7 +1572,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd82';
+const BUILD = 'd83';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -11819,21 +11819,30 @@ CHASE.finish = function () {
 function renderPost() {
   renderer.info.reset();
   toonSync();
+  // Straight to the screen, no targets and no passes. Only the profiler asks for this, and
+  // what it measures is the whole cost of the post chain in one number.
+  if (PROF.noPost) {
+    renderer.setRenderTarget(null); renderer.clear();
+    renderer.render(INTRO.on && DIO.scene ? DIO.scene : scene, INTRO.on && DIO.cam ? DIO.cam : camera);
+    return;
+  }
   renderer.setRenderTarget(rtScene); renderer.clear();
   // The intro is a different SCENE, not a different camera move on this one. Everything after
   // this line -- bloom, grade, dither, the black lift -- is the same chain either way, which
   // is what makes the title card look like it belongs to the game rather than to a menu.
   if (INTRO.on && DIO.scene) renderer.render(DIO.scene, DIO.cam);
   else renderer.render(scene, camera);
-  quad.material = brightMat; brightMat.uniforms.tD.value = rtScene.texture;
-  renderer.setRenderTarget(rtA); renderer.clear(); renderer.render(quadScene, quadCam);
-  const rw = rtA.width, rh = rtA.height;
-  quad.material = blurMat; blurMat.uniforms.uRes.value.set(rw, rh);
-  for (let i = 0; i < 3; i++) {
-    blurMat.uniforms.tD.value = rtA.texture; blurMat.uniforms.uDir.value.set(1 + i * .6, 0);
-    renderer.setRenderTarget(rtB); renderer.clear(); renderer.render(quadScene, quadCam);
-    blurMat.uniforms.tD.value = rtB.texture; blurMat.uniforms.uDir.value.set(0, 1 + i * .6);
+  if (!PROF.noBloom) {
+    quad.material = brightMat; brightMat.uniforms.tD.value = rtScene.texture;
     renderer.setRenderTarget(rtA); renderer.clear(); renderer.render(quadScene, quadCam);
+    const rw = rtA.width, rh = rtA.height;
+    quad.material = blurMat; blurMat.uniforms.uRes.value.set(rw, rh);
+    for (let i = 0; i < 3; i++) {
+      blurMat.uniforms.tD.value = rtA.texture; blurMat.uniforms.uDir.value.set(1 + i * .6, 0);
+      renderer.setRenderTarget(rtB); renderer.clear(); renderer.render(quadScene, quadCam);
+      blurMat.uniforms.tD.value = rtB.texture; blurMat.uniforms.uDir.value.set(0, 1 + i * .6);
+      renderer.setRenderTarget(rtA); renderer.clear(); renderer.render(quadScene, quadCam);
+    }
   }
   quad.material = compMat;
   compMat.uniforms.tD.value = rtScene.texture; compMat.uniforms.tB.value = rtA.texture;
@@ -13238,6 +13247,9 @@ function startGame() {
   }
   if (weap.ready) wdock.hidden = false;
   if (/[?&]obs\b/.test(location.search)) setTimeout(showObstacles, 400);
+  // ?perf on the URL runs the frame breakdown once the world has settled, for when there is
+  // no console to type isle.perf() into -- which on a phone is always.
+  if (/[?&]perf\b/.test(location.search)) setTimeout(profStart, 6000);
   introEl.classList.add('go');
   setTimeout(() => introEl.remove(), 1000);
   document.body.classList.remove('intro');
@@ -13913,7 +13925,7 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
 window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, get chop() { return CHOP; }, get melee() { return MELEE; },
-  dpr: setDpr, aa: v => { compMat.uniforms.uAA.value = v === false ? 0 : 1; return !!compMat.uniforms.uAA.value; },
+  dpr: setDpr, perf: profStart, aa: v => { compMat.uniforms.uAA.value = v === false ? 0 : 1; return !!compMat.uniforms.uAA.value; },
   // isle.outline(0) off, isle.outline(.55) back, isle.outline(.55, {w: 2, lo: .003, hi: .05, col: '#3a4a66'})
   outline: (k, o) => {
     const u = compMat.uniforms;
@@ -18868,6 +18880,82 @@ function showAct() {
 }
 
 const perf = { ms: 16.7, worst: 0, acc: 0, n: 0 };
+// ---------- what the frame is actually spent on ----------
+// TWO SCREENSHOTS OF DIFFERENT SCENERY ARE NOT AN EXPERIMENT. They suggested this renderer is
+// fill-bound rather than geometry-bound -- half the triangles bought only a quarter of the
+// frame -- but day against night is a different shader load and open water is different
+// overdraw, so it was a hint and nothing more. This settles it instead of arguing about it:
+// each feature comes off for a moment, the frame times are measured with the same clock the
+// counter uses, and the median is compared against a baseline taken at the start and again at
+// the end (so a drift in what is on screen shows up as the two disagreeing rather than as a
+// false result). The whole run is about fifteen seconds and it puts the table in the in-game
+// log as well as the console, because the console is not where he is.
+const PROF = {
+  on: 0, i: 0, skip: 0, take: 0, samples: [], rows: [], noPost: 0, noBloom: 0, base: 0,
+  warm: 14, count: 34,        // frames thrown away after a change, then frames kept
+};
+function profSteps() {
+  const u = compMat.uniforms;
+  const st = [];
+  const add = (name, off, on, warm) => st.push({ name, off, on, warm: warm || PROF.warm });
+  add('— baseline —', () => {}, () => {});
+  add('half the pixels', () => setDpr(Q.dpr * .707), () => setDpr(PROF.dpr0), 24);
+  add('no post chain at all', () => PROF.noPost = 1, () => PROF.noPost = 0);
+  add('no bloom', () => { PROF.noBloom = 1; u.uStr.value = 0; }, () => { PROF.noBloom = 0; u.uStr.value = PROF.str0; });
+  add('no FXAA', () => u.uAA.value = 0, () => u.uAA.value = PROF.aa0);
+  add('no outline', () => u.uOut.value = 0, () => u.uOut.value = PROF.out0);
+  add('no grass', () => { for (const g of grass) g.visible = false; }, () => { for (const g of grass) g.visible = true; });
+  add('no particles', () => { for (const p of world.psys) if (p.pts) p.pts.visible = false; },
+                      () => { for (const p of world.psys) if (p.pts) p.pts.visible = true; });
+  add('no shadows', () => { renderer.shadowMap.enabled = false; scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); },
+                     () => { renderer.shadowMap.enabled = true; scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); }, 40);
+  add('— baseline again —', () => {}, () => {});
+  return st;
+}
+function profStart() {
+  if (PROF.on) return 'already running';
+  const u = compMat.uniforms;
+  PROF.dpr0 = Q.dpr; PROF.str0 = u.uStr.value; PROF.aa0 = u.uAA.value; PROF.out0 = u.uOut.value;
+  PROF.list = profSteps(); PROF.i = 0; PROF.rows = []; PROF.samples = [];
+  PROF.skip = PROF.list[0].warm; PROF.take = PROF.count; PROF.on = 1;
+  PROF.list[0].off();
+  logMsg('Measuring the frame. Hold still for about fifteen seconds.');
+  return 'profiling…';
+}
+function profStep(raw) {
+  if (PROF.skip > 0) { PROF.skip--; return; }
+  PROF.samples.push(raw);
+  if (PROF.samples.length < PROF.take) return;
+  const a = PROF.samples.slice().sort((x, y) => x - y);
+  const med = a[a.length >> 1];
+  const step = PROF.list[PROF.i];
+  step.on();                                        // put it back before moving on
+  PROF.rows.push({ name: step.name, ms: med });
+  PROF.samples = [];
+  PROF.i++;
+  if (PROF.i < PROF.list.length) {
+    const nx = PROF.list[PROF.i];
+    nx.off(); PROF.skip = nx.warm;
+    return;
+  }
+  PROF.on = 0;
+  profReport();
+}
+function profReport() {
+  const r = PROF.rows;
+  const b0 = r[0].ms, b1 = r[r.length - 1].ms;
+  const base = (b0 + b1) * .5;
+  const drift = Math.abs(b0 - b1);
+  const out = r.slice(1, -1).map(x => ({ what: x.name, ms: x.ms, saved: base - x.ms }))
+    .sort((x, y) => y.saved - x.saved);
+  const pct = v => (v / base * 100).toFixed(0) + '%';
+  console.log('baseline ' + base.toFixed(1) + ' ms (' + (1000 / base).toFixed(0) + ' fps), drift between the two baselines ' + drift.toFixed(1) + ' ms');
+  for (const o of out) console.log('  ' + o.what.padEnd(22) + o.ms.toFixed(1) + ' ms   saves ' + o.saved.toFixed(1) + '  ' + pct(o.saved));
+  logMsg('Frame is ' + base.toFixed(1) + ' ms, about ' + (1000 / base).toFixed(0) + ' fps.');
+  for (const o of out.slice(0, 4)) logMsg(o.what + ': ' + (o.saved > .3 ? 'saves ' + o.saved.toFixed(1) + ' ms (' + pct(o.saved) + ')' : 'costs nothing'));
+  if (drift > base * .12) logMsg('The two baselines disagree by ' + drift.toFixed(1) + ' ms — the view changed under it, so read this loosely.');
+  return out;
+}
 function updateHUD() {
   const f = (world.t / DAY) % 1;
   const tod = f < .22 ? 'before dawn' : f < .3 ? 'dawn' : f < .68 ? 'day' : f < .78 ? 'dusk' : 'night';
@@ -19006,6 +19094,7 @@ function frame(now) {
   const dt = clamp(raw / 1000, 0, .05); last = now; world.clock += dt;   // never negative: that ran a frame backwards
   syncSize();                              // costs two reads unless the viewport moved
   perf.ms = lerp(perf.ms, raw, .06); perf.acc += raw; perf.n++;
+  if (PROF.on) profStep(raw);
   if (perf.n > 30) { perf.worst = Math.max(perf.worst * .82, perf.acc / perf.n); perf.acc = 0; perf.n = 0; }
   if (perfEl && (world.clock * 3 | 0) !== perf.tick) {
     perf.tick = world.clock * 3 | 0;
