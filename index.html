@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd95';
+const BUILD = 'd96';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -14611,6 +14611,22 @@ const MELEE = {
   // a fast one reads as a wand.
   rate: 1.3, bareRate: 1.7,
   at: .34,           // how far into the swing the blade is actually out in front of him
+  // FINDING WHAT HE MEANT TO HIT. A flick of a thumb on glass is not a bearing, it is a
+  // gesture in roughly a direction, and asking it to line a body up inside a cone at the one
+  // instant the arm is out is asking too much of it -- which is why he could stand beside a
+  // creature and miss three times. So the flick SEEKS: anything hittable inside `seek` and
+  // within `cone` of the swipe is scored on angle first and distance second, and the winner
+  // becomes what this swing is at. He turns to face it exactly, and the lunge is sized to
+  // arrive rather than to travel a fixed distance.
+  seek: 9.5, cone: 1.30, seekBias: 3.2,
+  dash: 26,          // the fastest the lunge will close a gap
+  // AND THE BLOW IS A WINDOW, NOT AN INSTANT. It used to be one cone test on one frame; a
+  // creature that stepped in the tenth of a second either side of it was simply not there.
+  // Each thing can still only be hit once per swing, so a wider window is more forgiving
+  // without ever being two hits.
+  window: .17,
+  hold: 1.45,        // and whatever the flick locked onto counts inside this much of reach,
+                     // cone or no cone -- he committed to that one and the swing is at it
   // WHERE THE NEXT BLOW MAY INTERRUPT THIS ONE, as a fraction of the clip. Without it the
   // second flick was refused for the whole length of the first swing -- and since the armed
   // clips run 1.3 to 1.9 s against a 1.15 s combo window, the window shut before the clip
@@ -14622,6 +14638,36 @@ function meleeList() {
   const armed = player.armWant && player.armed > .4;
   const l = armed ? r.wmelee : r.melee;
   return (l && l.length) ? l : ((r.melee && r.melee.length) ? r.melee : null);
+}
+// What is worth swinging at, in front of him, nearest the way he swiped. Angle dominates:
+// a creature dead ahead at eight units beats one at thirty degrees at two, because the thumb
+// said forward. Trees count -- chopping is a swing -- and so does the drone, because swatting
+// it has to be possible on purpose rather than only by accident.
+const _melT = { o: null, d: 0, dx: 0, dz: 0, rad: 0 };
+function meleeSeek(hx, hz) {
+  const p = player;
+  let best = null, bs = 1e9;
+  const look = (o, ox, oz, rad, w) => {
+    const dx = ox - p.pos.x, dz = oz - p.pos.z, d = Math.hypot(dx, dz);
+    if (d > MELEE.seek + rad || d < 1e-4) return;
+    const dot = (dx * hx + dz * hz) / d;
+    if (dot < Math.cos(MELEE.cone)) return;
+    const sc = (1 - dot) * MELEE.seekBias + d / MELEE.seek - w;
+    if (sc < bs) { bs = sc; best = { o, d, dx, dz, rad }; }
+  };
+  for (const o of world.creatures) {
+    if (!o.alive || o.carried || o.fling) continue;
+    look(o, o.pos.x, o.pos.z, o.rad || 1, .35);        // a living thing is what he meant
+  }
+  for (const pl of world.plants) {
+    if (!(pl instanceof LanternTree) || !pl.alive || pl.falling >= 0) continue;
+    look(pl, pl.pos.x, pl.pos.z, (pl.elder ? 1.9 : 1) * (pl.growth || 1), 0);
+  }
+  {
+    const dy = fairy.pos.y - (p.pos.y + RIG.height * .55);
+    if (Math.abs(dy) < 2.8) look(fairy, fairy.pos.x, fairy.pos.z, 1.1, 0);
+  }
+  return best;
 }
 function meleeFlick(x, y) {
   const p = player, r = p.rigH;
@@ -14642,6 +14688,11 @@ function meleeFlick(x, y) {
   const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
   const dx = sa * y + ca * x, dz = ca * y - sa * x, d = Math.hypot(dx, dz);
   if (d > 1e-3) p.faceH = p.heading = Math.atan2(dx / d, dz / d);
+  // ...and then correct that to whatever he was actually swinging at.
+  const tgt = d > 1e-3 ? meleeSeek(dx / d, dz / d) : null;
+  p.melTgt = tgt ? tgt.o : null;
+  if (tgt) p.faceH = p.heading = Math.atan2(tgt.dx / tgt.d, tgt.dz / tgt.d);
+  p.melId = (p.melId || 0) + 1;
   // Running, and this is the first of the combo: he goes in low.
   const slide = p.melN === 0 && r.acts.slide && Math.hypot(p.vx, p.vz) > MELEE.slideAt;
   const key = slide ? 'slide' : list[p.melN % list.length];
@@ -14654,11 +14705,22 @@ function meleeFlick(x, y) {
   // THE BLOW LANDS WHERE THE ARM IS. Firing it on the input put the burst and the throw a
   // third of a second before the hand got there, which is what "you cannot actually hit
   // things" looks like from the outside: the swing and the consequence were two events.
-  p.actFire = { t: p.actMax * MELEE.at, fn: () => meleeHit(slide) };
+  p.actFire = { t: p.actMax * MELEE.at, fn: () => { p.hitT = MELEE.window; p.hitSlide = slide; } };
   // The combo stays open for the length of what is playing plus the window, so a long clip
   // cannot outlive the chain that is meant to follow it.
   p.melT = MELEE.chain + p.actMax;
-  lunge(slide ? MELEE.slideSpeed : MELEE.lunge, slide ? MELEE.slideT : MELEE.lungeT);
+  // SIZED TO ARRIVE. A fixed shove is right for a swing at nothing and wrong for a swing at
+  // something three units away -- and it is what made the melee feel like it happened near
+  // the animal rather than to it. lunge() spends its speed on a curve whose mean is .533, so
+  // the gap divided by that and the time is the speed that lands him in reach.
+  let sp = slide ? MELEE.slideSpeed : MELEE.lunge;
+  const lt = slide ? MELEE.slideT : MELEE.lungeT;
+  if (tgt) {
+    const gap = tgt.d - (MELEE.reach * .62 + tgt.rad);
+    if (gap > .2) sp = clamp(gap / (lt * .533), sp, MELEE.dash);
+    else sp *= .45;                                   // already on top of it: a shove, not a charge
+  }
+  lunge(sp, lt);
   if (slide) { p.slideT = MELEE.slideT; logMsg('He goes in low and takes its legs out.'); }
   cam.idle = 0;
 }
@@ -14699,54 +14761,67 @@ function chopTree(t, force, hx, hz) {
   logMsg('The last cut goes through. It leans, and goes over.');
   return true;
 }
-function meleeHit(slide) {
+function meleeHit(slide, first) {
   const p = player, hx = Math.sin(p.heading), hz = Math.cos(p.heading);
   const reach = MELEE.reach * (slide ? 1.35 : 1) + (p.armWant && p.armed > .4 ? .8 : 0);
   const arc = Math.cos(MELEE.arc * (slide ? 1.25 : 1));
+  const id = p.melId || 0;
   let hit = 0;
+  // In the cone, OR it is the thing this swing was aimed at and he is close enough to it.
+  // The second clause is what makes a committed swing land: the flick chose that animal, he
+  // turned to face it and lunged at it, and it is not going to be denied by a degree and a
+  // half of cone because it stepped sideways while the arm was coming round.
+  const near = (o, ox, oz, rad, mult) => {
+    if (o._mel === id) return null;
+    const dx = ox - p.pos.x, dz = oz - p.pos.z, d = Math.hypot(dx, dz);
+    if (d < 1e-3) return null;
+    const held = p.melTgt === o;
+    const lim = reach * (held ? MELEE.hold : 1) * (mult || 1) + rad;
+    if (d > lim) return null;
+    if (!held && (dx * hx + dz * hz) / d < arc) return null;
+    o._mel = id;
+    return { dx, dz, d };
+  };
   for (const o of world.creatures) {
     if (!o.alive || o.carried || o.fling) continue;
-    const dx = o.pos.x - p.pos.x, dz = o.pos.z - p.pos.z, d = Math.hypot(dx, dz);
-    if (d > reach + (o.rad || 1) || d < 1e-3) continue;
-    if ((dx * hx + dz * hz) / d < arc) continue;
+    const h = near(o, o.pos.x, o.pos.z, o.rad || 1);
+    if (!h) continue;
     hit++;
     creatureHurt(o, VIT.melee * (slide ? 1.35 : 1), p.pos);
-    if (o.hurl) o.hurl(dx / d, dz / d, MELEE.push * (slide ? 1.3 : 1), slide ? .7 : MELEE.arcUp);
+    if (o.hurl) o.hurl(h.dx / h.d, h.dz / h.d, MELEE.push * (slide ? 1.3 : 1), slide ? .7 : MELEE.arcUp);
     else if (o.knock) o.knock(p.pos, 1);
     moodShift(o, MOOD.hit);
     world.effects.push(new Burst(o.pos.x, o.pos.y + (o.rad || 1) * .7, o.pos.z, '#ffd2a0', 8, .5));
   }
-  // and a hut in front of him comes apart the way a bolt takes it apart
   const fx = p.pos.x + hx * reach * .7, fz = p.pos.z + hz * reach * .7;
-  for (const st of world.structures) if (st.alive && st.shatter) st.shatter(fx, p.pos.y + 1, fz, 1.6, 4.5, .5);
-  // A TREE IN FRONT OF HIM TAKES THE CUT. Its trunk has a radius of its own, so the reach is
-  // measured to the bark rather than to the middle of it, and only the nearest one is hit --
-  // a swing is a swing, not an area of effect.
+  // A hut in front of him comes apart the way a bolt takes it apart -- once, on the frame the
+  // arm arrives, because shatter is not a thing to run six times over a sixth of a second.
+  if (first) for (const st of world.structures) if (st.alive && st.shatter) st.shatter(fx, p.pos.y + 1, fz, 1.6, 4.5, .5);
+  // The nearest tree in the cone takes a cut. Its trunk has a radius of its own, so the reach
+  // is measured to the bark rather than to the middle of it.
   {
-    let best = null, bd = 1e9;
+    let best = null, bd = 1e9, bh = null;
     for (const pl of world.plants) {
       if (!(pl instanceof LanternTree) || !pl.alive || pl.falling >= 0) continue;
-      const dx = pl.pos.x - p.pos.x, dz = pl.pos.z - p.pos.z, d = Math.hypot(dx, dz);
       const rad = (pl.elder ? 1.9 : 1) * (pl.growth || 1);
-      if (d > reach + rad + .6 || d < 1e-3) continue;
-      if ((dx * hx + dz * hz) / d < arc) continue;
-      if (d < bd) { bd = d; best = pl; }
+      const h = near(pl, pl.pos.x, pl.pos.z, rad + .6);
+      if (h && h.d < bd) { bd = h.d; best = pl; bh = h; }
     }
-    // Bare hands sting it; an axe takes it apart. Anything else is somewhere between.
-    if (best) { hit++; chopTree(best, (p.armWant && p.armed > .4 && WEAPONS[p.wpn] && WEAPONS[p.wpn].melee) ? 1 : .34, hx, hz); }
+    // Bare hands sting it; an axe takes it apart.
+    if (best) { hit++; chopTree(best, (p.armWant && p.armed > .4 && WEAPONS[p.wpn] && WEAPONS[p.wpn].melee) ? 1 : .34, bh.dx / bh.d, bh.dz / bh.d); }
   }
-  // AND THE DRONE, if he swings at it. It follows him about at head height and there was no
-  // way to tell it to get out of the way; now there is one, and it is the same one that works
-  // on everything else.
+  // And the drone, if he swings at it. It follows him about at head height and there was no
+  // way to tell it to get out of the way; now there is, and it is the same one that works on
+  // everything else.
   {
-    const dx = fairy.pos.x - p.pos.x, dz = fairy.pos.z - p.pos.z;
     const dy = fairy.pos.y - (p.pos.y + RIG.height * .55);
-    if (Math.hypot(dx, dz) < reach + 1.2 && Math.abs(dy) < 2.6) {
+    if (Math.abs(dy) < 2.6 && near(fairy, fairy.pos.x, fairy.pos.z, 1.2)) {
       droneKnock(p.pos.x, p.pos.y + RIG.height * .55, p.pos.z, slide ? 1.4 : 1.1);
       hit++;
     }
   }
-  if (!hit) world.effects.push(new Burst(fx, p.pos.y + 1.1, fz, '#e8e2d0', 4, .3));
+  if (first && !hit) world.effects.push(new Burst(fx, p.pos.y + 1.1, fz, '#e8e2d0', 4, .3));
+  return hit;
 }
 // Start a named one-shot. `actT` is how long it owns the body, and stepPlayer walks actK in
 // and out of it so the blend is a ramp rather than a switch.
@@ -14793,6 +14868,8 @@ function stepAct(dt) {
   const p = player;
   // The arm comes back over a beat, not on the frame the thumb crossed the threshold.
   p.windK = lerp(p.windK || 0, (p.throwAim || p.tossAim) ? 1 : 0, Math.min(1, dt * THROWA.windIn));
+  // The blow is open for a moment rather than for a frame -- see MELEE.window.
+  if (p.hitT > 0) { const f = !p.hitOn; p.hitOn = 1; p.hitT -= dt; meleeHit(p.hitSlide, f); if (p.hitT <= 0) p.hitOn = 0; }
   // ...and the thing leaves his hand when the clip says so.
   if (p.actFire) {
     p.actFire.t -= dt;
@@ -15738,6 +15815,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
   actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actFrom: 0, actFire: null, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0, windK: 0, holdT: 0,
+  melTgt: null, melId: 0, hitT: 0, hitOn: 0, hitSlide: 0,
   lungeT: 0, lungeMax: 0, lungeSp: 0, lungeH: 0, armAct: null, wpnShow: 0, wpnK: 0,
   wpn: 'blaster', drag: null, approach: null, approachT: 0, turning: 0, grade: 0, leanK: 0, sprint: 0, roping: 0, ropeGrip: 0, ropeShip: null, ropeX: 0, ropeZ: 0 });
 
