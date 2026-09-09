@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e31';
+const BUILD = 'e32';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -2099,7 +2099,16 @@ const MUSIC = {
 // landing together is a jolt. Robits runs the same two numbers and it is most of why its
 // melee lands.
 const FX = { freeze: 0, scale: 1, trauma: 0, decay: 3.2, amp: .34, cine: 1 };
-function hitStop(frames) { FX.freeze = Math.max(FX.freeze, Math.round(frames * FX.cine)); }
+// WHY THE PHONE GETS HOT, and the one switch that does the most about it. Heat is not the
+// triangle count; it is the duty cycle. An uncapped loop asks for a frame the instant the
+// last one is done, so a phone that can just about manage 35 fps runs its GPU at a hundred
+// percent, all the time, whatever is on screen -- and that is a phone that is warm inside
+// two minutes. The games that stay cool are not drawing less than this one; they are capped
+// at 30 and finished inside 20 ms, so the chip sleeps a third of every frame. Steady 30 with
+// headroom also FEELS better than 33-38 wandering, because every frame is the same length.
+// `cap` 0 is uncapped. hitStop counts in frames, so it is scaled to keep the same wall time.
+const FPS = { cap: MOBILE ? 30 : 0 };
+function hitStop(frames) { FX.freeze = Math.max(FX.freeze, Math.max(frames > 0 ? 1 : 0, Math.round(frames * FX.cine * (FPS.cap ? FPS.cap / 60 : 1)))); }
 function addTrauma(t) { FX.trauma = clamp(FX.trauma + t * FX.cine, 0, 1); }
 function stepFX(dt) {
   if (FX.freeze > 0) { FX.freeze--; FX.scale = .05; } else FX.scale = 1;
@@ -19039,6 +19048,9 @@ const VIEW = {
   low: { label: 'low world', cost: '-40% pixels',
     get: () => Q.dpr < Q.dpr0 - .01,
     set: v => setDpr(v ? Q.dpr0 * .75 : Q.dpr0) },
+  cool: { label: '30 fps', cost: 'a cooler phone',
+    get: () => FPS.cap > 0,
+    set: v => { FPS.cap = v ? 30 : 0; } },
 };
 VIEW.outline.k = compMat.uniforms.uOut.value;
 VIEW.ground.k = stainSet();
@@ -21051,6 +21063,10 @@ function bootFail(e) {
 }
 function frame(now) {
   requestAnimationFrame(frame);
+  // See FPS. Skipped frames cost nothing; `last` is left alone so the next one gets real dt.
+  // 2.5 ms of slack, because rAF timestamps land a hair early and a strict test at a 60 Hz
+  // display would let every third frame through and stutter.
+  if (FPS.cap && now - last < 1000 / FPS.cap - 2.5) return;
   try {
   const raw = now - last;
   let dt = clamp(raw / 1000, 0, .05); last = now;
