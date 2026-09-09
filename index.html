@@ -1979,7 +1979,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e15';
+const BUILD = 'e16';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -14713,7 +14713,27 @@ const MOVE = {
   // hill lowered his target speed he was slammed to it in a frame. A hill taking speed off a
   // man is not a brake being applied; it is him coasting. So when the SLOPE is what lowered
   // the target, the speed comes off at this rate instead, and the run-up survives.
-  pull: 19, hillBrake: 5.5,
+  // PULL IS OFF. Gravity along the slope was the answer to the invisible wall, and it was the
+  // wrong one: it is a force on a model whose whole character is that it has none, which is
+  // why he can still charge a face and get somewhere -- momentum is exactly what a force model
+  // gives you. It is left in the file behind this number, at zero, for when there is a slide
+  // clip to hang on it.
+  pull: 0,
+  // AND HILLBRAKE WAS THE MOMENTUM. At 5.5 a second the hill could take five and a half units
+  // of speed off him per second; a run is seventeen, so it took three seconds to bleed a full
+  // sprint -- three seconds of climbing. That is the "I can still get some momentum and get up
+  // them". At 26 the hill has his run in about two thirds of a second: slower and slower, then
+  // stopped, and still not the single frame that made it a pane of glass.
+  hillBrake: 26,
+  // HOW FAR AHEAD THE SLOPE IS READ, and how fast the reading is allowed to change. These two
+  // are the whole of what made it janky. The grade was one sample 1.1 units out -- a step, at
+  // walking pace -- so it went from nothing to a wall between two frames and the target speed
+  // with it. And 1.1 units is inside him: he is 1.2 in radius, so by the time the slope had
+  // registered his chest was already in the hillside, which is the "he's in the ground when
+  // the slant starts". Read to 2.4 and averaged over two samples, he begins slowing while the
+  // face is still in front of him; eased at 4.5 a second, the slowing takes about a fifth of
+  // a second instead of one frame.
+  look: 2.4, gradeEase: 4.5,
   slipAt: 1.15, slipFull: 1.9, slipDrag: .05,
   // And he leans into it. Radians of forward pitch per unit of gradient, scaled by how hard
   // he is actually pushing -- standing on a slope is not climbing one -- and less going down,
@@ -18908,14 +18928,24 @@ function updatePlayer(dt) {
     // him, which would slow him just as much running along a contour as straight up the
     // face. One extra height() when the stick is held, and nothing when it is not.
     let hillK = 1;
-    if (!inW && player.wmag > .1) {
-      const e = 1.1, x0 = player.pos.x, z0 = player.pos.z;
-      const grade = (height(x0 + player.wx * e, z0 + player.wz * e) - height(x0, z0)) / e;
-      const up = Math.max(0, grade);
-      hillK = clamp(1 - up * MOVE.hill - up * up * MOVE.hill2 + Math.max(0, -grade) * MOVE.dip,
+    {
+      let grade = 0;
+      if (!inW && player.wmag > .1) {
+        const x0 = player.pos.x, z0 = player.pos.z, h0 = height(x0, z0), L = MOVE.look;
+        // Two samples, near and far, so a lip at his toes does not read as a mountain and a
+        // mountain does not arrive all at once. The average is the rise he is about to climb.
+        const g1 = (height(x0 + player.wx * L * .5, z0 + player.wz * L * .5) - h0) / (L * .5);
+        const g2 = (height(x0 + player.wx * L, z0 + player.wz * L) - h0) / L;
+        grade = (g1 + g2) * .5;
+      }
+      // AND IT EASES. The grade is a lookup, so it used to step, and a target speed built on
+      // something that steps is a wall however gentle the curve above it looks.
+      const g0 = player.grade || 0;
+      player.grade = g0 + (grade - g0) * (1 - Math.exp(-dt * MOVE.gradeEase));
+      const up = Math.max(0, player.grade);
+      hillK = clamp(1 - up * MOVE.hill - up * up * MOVE.hill2 + Math.max(0, -player.grade) * MOVE.dip,
         MOVE.hillMin, MOVE.dipMax);
-      player.grade = grade;
-    } else player.grade = 0;
+    }
     // AND THE GROUND TAKES OVER. Measured off the terrain rather than off the way he is
     // walking, because a face is steep whether or not he is pushing into it -- stop halfway up
     // one and you should not simply stand there. Only on the actual ground: a platform over a
@@ -18930,7 +18960,7 @@ function updatePlayer(dt) {
       player.slope = m;
       // GRAVITY ALONG THE SLOPE, always, not past a threshold. sin of the angle, so it is
       // nothing underfoot on level ground and nearly all of `pull` on a wall.
-      if (onDirt && m > 1e-3) {
+      if (MOVE.pull > 0 && onDirt && m > 1e-3) {
         const sinT = m / Math.sqrt(1 + m * m), f = MOVE.pull * sinT * dt / Math.hypot(gx, gz);
         player.vx -= gx * f; player.vz -= gz * f;
       }
