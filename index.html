@@ -1620,7 +1620,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e48';
+const BUILD = 'e49';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -2593,8 +2593,29 @@ function randomBiome(name, minH = 1.4, maxH = 14, maxSl = .6, tries = 900, clear
 // the antipode, which is nine hundred units of open water nobody has a reason to visit.
 // R = W puts the far pole at chart radius pi*W and makes the circumference 2*pi*W: about
 // four minutes' walk the whole way round, and a horizon roughly seventy units out.
-const PLANET = { R: W };
-PLANET.rMax = Math.PI * PLANET.R;
+// HOW HARD THE WORLD BENDS, AND IT IS ONE NUMBER.
+//
+// This is a REAL sphere. planetPos maps every chart point onto it and planetUpdateMatrix
+// warps every object there, which is why a landmass across the world leans away from you
+// rather than standing parallel to the lens -- it is genuinely on the far side of a curve.
+// The other look, the flat world bent downward in view space, keeps everything upright and
+// only drops the ground at the edges; it cannot be had at the same time as this one, because
+// this one is what makes the map wrap and the horizon real.
+//
+// What CAN be had is a bigger sphere. The tip of a thing at chart radius r is r / R radians,
+// and R is the island's own half-width -- so the coast is already a full radian over, which
+// is a very small planet indeed. `?curve=3` puts R at three times that and everything stands
+// up; `?curve=6` is nearly flat. The chart's own extent stays put either way -- rMax is tied
+// to W, not to R -- so the island, the grid density and how far he may walk do not move, and
+// the only thing that changes is the bend. What is lost as it rises is the wrap: at curve 1
+// the walkable rim reaches most of the way round the globe, and at 3 it is a disc on
+// something much larger with open ocean past it.
+const _curve = (() => {
+  try { const m = /[?&]curve=([\d.]+)/.exec(location.search); return m ? clamp(+m[1] || 1, 1, 12) : 1; }
+  catch (e) { return 1; }
+})();
+const PLANET = { R: W * _curve };
+PLANET.rMax = Math.PI * W;
 const _plU = new THREE.Vector3(), _plY = new THREE.Vector3(0, 1, 0);
 // the unit surface normal over a chart point -- "up", before any terrain slope
 function planetUp(x, z, out) {
