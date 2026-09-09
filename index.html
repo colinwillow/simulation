@@ -1864,7 +1864,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e8';
+const BUILD = 'e9';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -5807,8 +5807,30 @@ function cloneModel(root) {
 // y=0, and wire up whatever of idle/walk/blink the file actually has. Calls back with a
 // handle, or never, if the model cannot be loaded — callers keep their placeholder.
 const RIG_WARNED = new Set();
+// `cfg.clipsFrom` borrows another model's animation set. It works because every rig in this
+// game came out of Mixamo, so the bone names and the hierarchy are identical -- three binds a
+// track to a bone BY NAME, so a clip authored on one of them plays on any of the others with
+// no retargeting step at all. Proportions differ, but a clip is rotations: a longer arm swings
+// through the same angles. The one thing that does not travel is hips TRANSLATION, which is in
+// the donor's units -- and every clip here already has its horizontal component flattened for
+// other reasons, so what is left is a vertical bob that is close enough at these scales.
+//
+// What it is worth: a second poacher exported with no clips at all is the mesh and nothing
+// else. Whether that is worth doing is a judgement about how many characters end up sharing
+// one set -- see the note in the reply. This exists so it is a config line either way.
 function attachRig(parent, cfg, done) {
+  if (cfg.clipsFrom) {
+    loadModel(cfg.clipsFrom, donor => attachRigTo(parent, cfg, donor.anims, done));
+    return;
+  }
+  attachRigTo(parent, cfg, null, done);
+}
+function attachRigTo(parent, cfg, lend, done) {
   loadModel(cfg.url, e => {
+    // A borrowed set gets its own stride and floor caches. Sharing the donor's would measure
+    // its clips against THIS body and write the answer back under the donor's clip names,
+    // which is a wrong number waiting for whoever loads the donor next.
+    if (lend && lend.length) e = Object.assign({}, e, { anims: lend, strides: {}, floors: {} });
     const inst = markBody(cloneModel(e.root));
     const h = e.box.max.y - e.box.min.y;
     const s = h > 1e-4 ? cfg.height / h : 1;
@@ -15299,8 +15321,10 @@ function meleeFlick(x, y) {
     // lands there: the mark and the moment have to be the same event.
     const hx = Math.sin(p.heading), hz = Math.cos(p.heading), R = MELEE.reach * .62;
     const y = p.pos.y + RIG.height * (slide ? .28 : .58);
-    slashArc(p.pos.x + hx * R, y, p.pos.z + hz * R, p.heading, armed ? .5 : -.7, armed ? 3.6 : 2.7, armed);
-    if (armed) slashArc(p.pos.x + hx * R * 1.1, y + .3, p.pos.z + hz * R * 1.1, p.heading + .18, .8, 3.0, 1);
+    const roll = (SLASH.roll[key] !== undefined ? SLASH.roll[key] : -.4) + rnd(-.12, .12);
+    slashArc(p.pos.x + hx * R, y, p.pos.z + hz * R, roll, armed ? 3.8 : 2.9, armed);
+    // A second, thinner, a beat behind and turned a little further: one line is a line.
+    if (armed) slashArc(p.pos.x + hx * R * 1.05, y + .25, p.pos.z + hz * R * 1.05, roll - .3, 3.1, 1);
     snd.swing(p.pos.x, p.pos.z);
   } };
   // The combo stays open for the length of what is playing plus the window, so a long clip
@@ -15324,20 +15348,68 @@ function meleeFlick(x, y) {
 // What a blow lands on: anything inside a cone in front of him. The slide is wider and
 // throws harder, because it is his whole body rather than an arm.
 // ---------- the mark a swing leaves in the air ----------
-// A CRESCENT THAT SWEEPS AND GOES. It is drawn where the blade actually is -- out at reach, in
-// front of him, banked into the swing -- and it grows through its first third and thins away
-// through the rest, which is what makes it read as motion rather than as a decal. Two of them
-// on a weapon swing, offset slightly, because one line is a line and two is a slash.
-const SLASH = { life: .20, r: 3.2, w: .55, col: '#dff4ff', hot: '#ffd8a8' };
-let _slashPool = null;
-function slashArc(x, y, z, heading, tilt, size, hot) {
+// THE FIRST VERSION WAS A RING IN THE WORLD and that was the mistake. A RingGeometry lies in
+// its own XY plane, so turning it by his heading put its NORMAL along the swing -- the arc
+// ended up drawn in the plane facing the direction of travel, with the crescent's opening
+// pinned to his local right. Which is exactly what he saw: the first one looks like it is
+// facing right, and none of them look like they go forward.
+//
+// A slash mark is not a thing in the world. It is a drawn mark ON THE PICTURE -- that is what
+// the ones in comics and in every stylised game are -- so it is a camera-facing sprite with a
+// roll in SCREEN space. It cannot then be edge-on, it cannot face the wrong way, and it reads
+// the same from any camera angle. Which is also the thing that makes his own hand-drawn ones
+// drop straight in: put a PNG at SLASH.url and it replaces the canvas one with no other
+// change. Until then it is drawn here -- a tapered crescent, thick in the middle and gone to
+// nothing at both ends, with a lighter second stroke inside it, which is what an ink line
+// does when it is made with one fast pass.
+const SLASH = {
+  life: .22, r: 3.4, col: '#eaf6ff', hot: '#ffdcae', url: null, n: 6,
+  // Which way the mark lies on screen, per clip. Radians, 0 is horizontal. Measured by eye
+  // against what each swing does rather than derived, because the thing being matched is what
+  // the animation LOOKS like and not where a bone went.
+  roll: { mel0: -.25, mel1: -.95, mel2: .35, wmel0: -.7, wmel1: -1.05, wmel2: .55, wmel3: -.45, slide: .1 },
+};
+let _slashPool = null, _slashTex = null;
+function slashTex() {
+  if (_slashTex) return _slashTex;
+  const S = 256, cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  // One fast pass of a brush: an arc whose width swells to the middle and vanishes at the ends.
+  const stroke = (r, w, a0, a1, alpha) => {
+    const N = 48;
+    g.lineCap = 'round';
+    for (let i = 0; i < N; i++) {
+      const t0 = i / N, t1 = (i + 1) / N;
+      const taper = Math.sin(Math.PI * ((t0 + t1) * .5)) ** 1.5;
+      g.globalAlpha = alpha * taper;
+      g.lineWidth = Math.max(.6, w * taper);
+      g.beginPath();
+      g.arc(S * .5, S * .5, r, a0 + (a1 - a0) * t0, a0 + (a1 - a0) * t1);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  };
+  g.strokeStyle = '#fff';
+  stroke(S * .34, S * .085, -1.15, 1.15, .95);        // the body of the mark
+  stroke(S * .40, S * .022, -.85, .95, .55);          // a thinner one riding outside it
+  stroke(S * .27, S * .018, -.7, .8, .40);            // and one inside, so it is not a single line
+  const t = new THREE.CanvasTexture(cv); t.needsUpdate = true;
+  _slashTex = t;
+  if (SLASH.url) new THREE.TextureLoader().load(SLASH.url, tx => {
+    tx.needsUpdate = true; _slashTex = tx;
+    for (const m of _slashPool || []) m.material.map = tx;
+  });
+  return t;
+}
+// `roll` is where the mark lies on screen, in radians. Everything else about its orientation
+// is the camera's business, which is the point.
+function slashArc(x, y, z, roll, size, hot) {
   if (!_slashPool) {
     _slashPool = [];
-    // A ring segment: an arc a hand's width thick, a bit over a third of a turn.
-    const geo = new THREE.RingGeometry(1 - SLASH.w * .5, 1 + SLASH.w * .5, 20, 1, -1.25, 2.5);
-    for (let i = 0; i < 6; i++) {
-      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-        color: col(SLASH.col), transparent: true, opacity: 0, side: THREE.DoubleSide,
+    const tex = slashTex();
+    for (let i = 0; i < SLASH.n; i++) {
+      const m = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex, color: col(SLASH.col), transparent: true, opacity: 0,
         depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
       m.visible = false; m.renderOrder = 3; m.userData.noHole = 1;
       scene.add(m); _slashPool.push(m);
@@ -15346,19 +15418,20 @@ function slashArc(x, y, z, heading, tilt, size, hot) {
   const m = _slashPool.find(q => !q.visible) || _slashPool[0];
   m.visible = true; m.userData.t = 0; m.userData.size = size || SLASH.r;
   m.material.color.set(hot ? SLASH.hot : SLASH.col);
+  m.material.rotation = roll;                    // the whole of which way it faces
   m.position.set(x, y, z);
-  m.quaternion.setFromEuler(_slashE.set(tilt, heading, 0, 'YXZ'));
-  m.scale.setScalar(.5);
+  m.scale.setScalar((size || SLASH.r) * .6);
 }
-const _slashE = new THREE.Euler();
 function stepSlash(dt) {
   if (!_slashPool) return;
   for (const m of _slashPool) {
     if (!m.visible) continue;
     const t = (m.userData.t += dt) / SLASH.life;
     if (t >= 1) { m.visible = false; continue; }
-    m.scale.setScalar(m.userData.size * (.55 + t * .75));
-    m.material.opacity = t < .25 ? t / .25 * .85 : (1 - (t - .25) / .75) * .85;
+    // It opens fast and thins away: the scale keeps growing while the opacity falls, which is
+    // what makes a mark read as having been left behind rather than as having been placed.
+    m.scale.setScalar(m.userData.size * (.62 + t * .7));
+    m.material.opacity = t < .18 ? t / .18 : (1 - (t - .18) / .82) ** 1.4;
   }
 }
 // ---------- taking a tree down in pieces ----------
