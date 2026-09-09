@@ -1596,6 +1596,15 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // machine shop, so the heavy end of the robits set is here to be auditioned rather than used:
 // isle.hear() lists every file, isle.hear('beam_01') plays one, isle.hear('beam_01', .8) plays
 // it slower. Pick the one that sounds right and I will bind it.
+// Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
+// repo has moved on — which once cost an afternoon arguing about which way a model faced.
+// Bump it with anything that changes behaviour.
+//
+// IT LIVES UP HERE because the sound loader stamps it on every audio URL, and that loader runs
+// at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
+// the file and shows as a blank page -- the thirteenth time that has happened here. It being
+// early also keeps it inside the range the stale-build check reads.
+const BUILD = 'e25';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -1625,13 +1634,22 @@ const SFX = {
   raw: {}, buf: {}, got: 0,
   live: 0, cap: 6, beat: 45, _at: {},   // voices at once, and the shortest gap between two of a kind
   // Bytes now, decoding later. No context needed for either half of this.
+  // ?v=BUILD ON EVERY ONE, AND THIS IS THE LAST CACHE IN THE CHAIN.
+  // Replacing a sound in place -- same folder, same filename, new contents -- changes nothing
+  // a phone can see: it already has that URL and it keeps what it has. He re-cut the blaster
+  // twice and heard the old dead-air take both times, which from where he sits is the game
+  // ignoring him. A build stamp on the query makes each push a different URL, so a file that
+  // changed arrives changed. It costs a re-download of the effects on every build, which is
+  // under a megabyte; the music is fifteen and carries its own key below, bumped by hand when
+  // a track is actually replaced.
+  miss: [],
   fetchAll() {
     for (const k in SND_FILES) {
       this.raw[k] = [];
       SND_FILES[k].forEach((f, i) => {
-        fetch('audio/' + f + '.mp3').then(r => r.ok ? r.arrayBuffer() : null)
-          .then(b => { if (b) { this.raw[k][i] = b; this.got++; if (this.ctx) this.decode(); } })
-          .catch(() => {});
+        fetch('audio/' + f + '.mp3?v=' + BUILD).then(r => r.ok ? r.arrayBuffer() : null)
+          .then(b => { if (b) { this.raw[k][i] = b; this.got++; if (this.ctx) this.decode(); } else this.miss.push(f); })
+          .catch(() => this.miss.push(f));
       });
     }
   },
@@ -1669,7 +1687,8 @@ const SFX = {
       this.raw[k].forEach((b, i) => {
         if (!b || this.buf[k][i] === 0) return;
         this.buf[k][i] = 0;                       // claimed, so a second wake does not decode it twice
-        this.ctx.decodeAudioData(b.slice(0), out => { this.buf[k][i] = this.edge(out); }, () => { this.buf[k][i] = null; });
+        this.ctx.decodeAudioData(b.slice(0), out => { this.buf[k][i] = this.edge(out); },
+          () => { this.buf[k][i] = null; this.miss.push(SND_FILES[k][i] + '?'); });
       });
     }
   },
@@ -1929,6 +1948,7 @@ SFX.fetchAll();
 // `MUSIC.pick` is the whole state machine and it is deliberately one function: when there are
 // tracks for a fight, for flying, for night, that is where it is decided, and nothing else has
 // to know music exists.
+const MUSICV = 1;
 const MUSIC = {
   gain: null, cur: null, curName: null, want: null, vol: .55, on: true,
   fade: 2.2, track: {}, list: [], t: 0,
@@ -1957,7 +1977,9 @@ const MUSIC = {
       const set = [].concat(this.files[k]);
       this.raw[k] = this.raw[k] || [];
       set.forEach((f, i) => {
-        fetch('audio/' + f + '.mp3').then(r => r.ok ? r.arrayBuffer() : null)
+        // Its own version, not BUILD: these are three megabytes each and there are six of
+        // them. Bump MUSICV when a track is replaced in place.
+        fetch('audio/' + f + '.mp3?v=' + MUSICV).then(r => r.ok ? r.arrayBuffer() : null)
           .then(b => { if (b) { this.raw[k][i] = b; this.decode(); } })
           .catch(() => {});
       });
@@ -2071,10 +2093,6 @@ function stepFX(dt) {
 // under the horizontal factor. It multiplies the finished height field about zero, which
 // leaves the coastline exactly where the mask put it and stretches everything else.
 const RELIEF = 1.25;
-// Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
-// repo has moved on — which once cost an afternoon arguing about which way a model faced.
-// Bump it with anything that changes behaviour.
-const BUILD = 'e24';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -20870,6 +20888,15 @@ function updateHUD() {
   // to know what you are looking at, the other two because they are the report.
   if (bldEl) {
     if (firstErr) { bldEl.innerHTML = BUILD + '  \u00b7  <span style="color:#ff9c9c">' + firstErr + '</span>'; return; }
+    // AND A SOUND FILE THAT NEVER ARRIVED SAYS SO HERE. A rename on his side is a 404 on
+    // this one, and a 404 is silent in every way that matters: the pool stays empty, the
+    // caller falls back to an oscillator, and the only symptom is that a noise he can hear in
+    // his editor is not in the game. That took two rounds to find once. Now it is on the line.
+    if (SFX.miss.length) {
+      bldEl.innerHTML = BUILD + '  \u00b7  <span style="color:#ff9c9c">no audio: '
+        + SFX.miss.slice(0, 3).join(', ') + (SFX.miss.length > 3 ? ' +' + (SFX.miss.length - 3) : '') + '</span>';
+      return;
+    }
     bldEl.innerHTML = BUILD + (KDBG ? '+knock' : '') + (KOBS ? '+obs' : '')
       + '  \u00b7  ' + (INTRO.on ? 'title' : lookingAt());
   }
