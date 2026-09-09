@@ -1661,7 +1661,7 @@ const SFX = {
     this.master = this.ctx.createGain(); this.master.gain.value = this.vol;
     this.master.connect(this.ctx.destination);
     this.decode();
-    try { MUSIC.decode(); MUSIC.step(99); } catch (e) {}
+    try { MUSIC.fetchAll(); MUSIC.decode(); MUSIC.step(99); } catch (e) {}
   },
   wake() { if (!this.ctx) this.init(); else if (this.ctx.state !== 'running') try { this.ctx.resume(); } catch (e) {} },
   // Anything with a position in the world is quieter for being away from the lens, and never
@@ -1808,6 +1808,9 @@ const MUSIC = {
     return 'theme';
   },
   step(dt) {
+    // The crossfade ramps each SOURCE's own gain, so the bus is free to be set live --
+    // isle.music.vol = .3 while it is playing, and it takes.
+    if (this.gain && Math.abs(this.gain.gain.value - this.vol) > .001 && this.on) this.gain.gain.value = this.vol;
     if ((this.t -= dt) > 0) return;
     this.t = 1.5;                        // a music decision is not a per-frame question
     if (!SFX.ctx || !this.on) return;
@@ -1815,7 +1818,12 @@ const MUSIC = {
     if (k && k !== this.curName) this.go(k);
   },
 };
-MUSIC.fetchAll();
+// NOT AT PAGE LOAD. Three megabytes of music pulled while the GLBs are still coming down is
+// three megabytes the world is not being built with, on a phone that may be on cellular -- and
+// nothing can play it anyway until a touch has built the context. So the fetch waits for that
+// touch, which is the tap that starts the game, and the track fades in over two seconds after
+// it lands. The effects are different and stay eager: they are 50 KB each and one of them is
+// needed the first time he swings at something.
 // ---------- hitstop and the shake ----------
 // A HIT IS NOT AN EVENT, IT IS A PAUSE. Four frames at five per cent of speed is the whole
 // trick: the picture stops on the frame of contact for about seventy milliseconds, which the
@@ -1841,7 +1849,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'e6';
+const BUILD = 'e7';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
