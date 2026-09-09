@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e52';
+const BUILD = 'e53';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7551,6 +7551,13 @@ const VIT = {
   dazeT: [7, 11], dazeGet: .3,             // how long it is out, and what it wakes up with
   netFull: 2.4, netWorn: 11,               // seconds a net holds a fresh animal vs a spent one
   armFull: 2.8, armWorn: 30,               // and the same for his arms
+  // ONE BLOW BIG ENOUGH PUTS IT DOWN, whatever it had left. Wearing something down over three
+  // bolts is the ordinary way and it stays; this is the other one -- a full charge into a man
+  // and he goes over on the spot, gets up in his own time on the clip he has for it. Without
+  // it `daze` could only ever be reached by arithmetic, and being knocked flat is a thing you
+  // should be able to DO rather than accumulate.
+  drop: .62,
+  chargeK: 1.4,                            // and what a held shot adds to a bolt's damage
   ire: .6, ireEase: .085,                  // what a hit adds to an animal's own temper, per second back down
   ireAt: .5,                               // above this it comes at him instead of running
   bold: 2.2,                               // and anything this big answers a blow whatever its temper
@@ -7706,7 +7713,7 @@ function creatureHurt(c, k, from, quiet) {
   c.trust = 0;                                  // whatever he had built up, that was that
   const big = (c.rad || 1) >= VIT.bold || c.massive;
   c.ire = clamp(c.ire + VIT.ire * (big ? 1.25 : 1) * (k / VIT.bolt), 0, 1);
-  if (c.vig <= 0 && c.daze <= 0) {
+  if ((c.vig <= 0 || k >= VIT.drop) && c.daze <= 0) {
     c.daze = rnd(VIT.dazeT[0], VIT.dazeT[1]);
     c.ire = 0; c.alarm = 0; c.fleeTo = null; c.abandon();
     bubbleSay(c, 'daze');
@@ -8148,7 +8155,13 @@ class Creature {
     // space, which is this object's parent frame, and it must not follow the body round as
     // the body turns. Two successive LOCAL turns about X and then Z is a rotation about a
     // diagonal that moves every frame, which is the thing that looked like an orbit.
-    this.g.rotateOnWorldAxis(_kbAx.set(k.ax, 0, k.az).normalize(), k.ang);
+    // NOT ON TOP OF A CLIP THAT ALREADY DOES IT. The tumble spin is for a body with nothing
+    // to say about being thrown -- most of them. A poacher has two air poses with the lean
+    // authored into them, about his own hips, and turning the whole group about a horizontal
+    // line through the pivot on top of that is two rotations fighting: it is what made the
+    // lean read as going the wrong way. When his own pose is up, the pose is the whole of it.
+    const posed = this.hasAir && this.actK > .5 && (this.act === 'airFwd' || this.act === 'airBwd');
+    if (!posed) this.g.rotateOnWorldAxis(_kbAx.set(k.ax, 0, k.az).normalize(), k.ang);
     _kbB.set(0, hy, 0).applyQuaternion(this.g.quaternion);
     this.g.position.add(_kbA).sub(_kbB);
     if (this.g.position.y < gy) this.g.position.y = gy;    // and never let the shift bury it
@@ -8161,7 +8174,14 @@ class Creature {
       logMsg(this.constructor.name + ' flung ' + Math.hypot(k.x - this.lastGood.x, k.z - this.lastGood.z).toFixed(1)
         + 'u out, y ' + k.y.toFixed(1) + ', vis ' + (this.g.visible ? 1 : 0) + ', pivot ' + hy.toFixed(2));
     }
-    if (this.rig) this.rig.mixer.update(dt);      // keep the skin ticking so it is not a statue
+    // AND THE POSE IT IS IN WHILE IT FLIES. This ticked the mixer and nothing else, which
+    // keeps the skin moving but never touches the BLEND -- so whatever weights the body had
+    // when it was hit are the weights it keeps all the way through the air. A poacher shot
+    // mid-stride sails across the meadow walking, and the only thing that reads as a hit is
+    // the procedural lean underneath. Driving the rig properly is what lets the act channel
+    // in, which is where the two air clips live.
+    if (this.rig) stepRig(this.rig, dt, 0, false,
+      { top: this.speed * 1.45, runAt: .78, runFull: .98, act: this.act || null, actK: this.actK || 0 });
     return true;
   }
   // Somewhere to run to: away from whatever it is, and somewhere it can stand.
@@ -9575,6 +9595,7 @@ class Poacher extends Creature {
     this.quarry = null; this.hunt = 0; this.cool = rnd(0, 8);
     this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
+    this.hasAir = 1;                       // and two for being in it: skip the procedural lean
   }
   build() {
     // A stand-in only, and it is hidden the moment the GLB lands. Enough of a silhouette that
@@ -18560,7 +18581,7 @@ class Bolt {
       // no new button and reads on sight.
       if (o.net && d < BL * .6) { o.net.cut(); continue; }
       // Right where it went off, it throws. Out at the edge of the blast it only startles.
-      if (d < R + (o.rad || 1) + 1.6 && o.knock) { creatureHurt(o, VIT.bolt, this, 1); o.knock(this, 1); punched = punched || o; }
+      if (d < R + (o.rad || 1) + 1.6 && o.knock) { creatureHurt(o, VIT.bolt * (1 + this.c * VIT.chargeK), this, 1); o.knock(this, 1); punched = punched || o; }
       else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * f, this, 1); o.knock(this, f); punched = punched || o; }
       else if (o.spook) o.spook(this, 10);
     }
