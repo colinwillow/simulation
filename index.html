@@ -1577,7 +1577,7 @@ const RELIEF = 1.25;
 // Shown in the HUD. Pages caches index.html, so a phone can sit on an old build while the
 // repo has moved on — which once cost an afternoon arguing about which way a model faced.
 // Bump it with anything that changes behaviour.
-const BUILD = 'd99';
+const BUILD = 'e1';
 // Whatever an earlier build left on these, put it back. The strip takes its colour from here.
 try { document.documentElement.style.background = '#070418'; document.body.style.background = '#070418'; } catch (e) { }
 // The build number, on every screen there is. It has to be set here rather than left in the
@@ -1606,7 +1606,7 @@ addEventListener('unhandledrejection', e => {
   if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason);
 });
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { turnip: 64, loose: 20, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
+const MAX = { turnip: 64, loose: 20, poacher: 7, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -5643,7 +5643,15 @@ function attachRig(parent, cfg, done) {
     const meleeK = [], wmeleeK = [];
     (cfg.melee || []).forEach((nm, i) => { const k = 'mel' + i; if ((clips[k] = byName(nm))) meleeK.push(k); });
     (cfg.wmelee || []).forEach((nm, i) => { const k = 'wmel' + i; if ((clips[k] = byName(nm))) wmeleeK.push(k); });
-    const oneShot = ['slide', 'equip', 'disarm', 'landRoll', 'throwGo'].concat(meleeK, wmeleeK).filter(k => clips[k]);
+    // A SPECIES WITH ITS OWN VOCABULARY. The table above is the wanderer's: idle, walk, run,
+    // swim, jump, the rifle set. Everything else -- a poacher's three hit reactions, his two
+    // ways of going through the air, lying down and getting up again -- is named by the config
+    // and driven by whatever owns the body, through the same one-shot channel the melee uses.
+    const extraK = [];
+    if (cfg.extra) for (const k in cfg.extra) { const c = byName(cfg.extra[k]); if (c) { clips[k] = c; extraK.push(k); } }
+    const loops = cfg.extraLoop || [];
+    const oneShot = ['slide', 'equip', 'disarm', 'landRoll', 'throwGo']
+      .concat(meleeK, wmeleeK, extraK.filter(k => loops.indexOf(k) < 0)).filter(k => clips[k]);
     // NOTHING IN A SWING MAY TRAVEL. Measured hips displacement across the melee set: 14 to 77
     // units, and weapon_melee_04 at 230 -- which on screen is him leaping a body length out in
     // front, then sliding back to where he started as the clip unwinds. Nothing in this game
@@ -5658,7 +5666,7 @@ function attachRig(parent, cfg, done) {
     // instance of this model would inherit the edit. The NAME is kept, because the stride and
     // floor caches are keyed on it. New values array too -- KeyframeTrack.clone hands back the
     // same buffer when it is already the right type, so editing a "clone" edits the original.
-    for (const k of oneShot) {
+    for (const k of oneShot.concat(cfg.flatten || [])) {
       const cl = clips[k]; if (!cl) continue;
       let cut = false;
       const c2 = cl.clone(); c2.name = cl.name;
@@ -5978,6 +5986,14 @@ function stepRig(r, dt, speed, grounded, ctx) {
   // out of the way, so they share one channel rather than each earning a branch of their own.
   // Everything under them is suppressed by exactly how far in it is, so the hand-off both
   // ways is a blend and not a cut.
+  // AN ALTERNATIVE GAIT. A limp, a creep on tiptoe: same legs, same speed blend, a different
+  // clip. Whatever the walk and the run had between them goes to it, and it runs at the walk's
+  // measured rate so it covers ground at the pace it is actually travelling.
+  if (c.gait && a[c.gait]) {
+    want[c.gait] = (want.walk || 0) + (want.run || 0);
+    want.walk = want.run = 0;
+    a[c.gait].timeScale = clamp(a.walk ? a.walk.timeScale : 1, MODEL.rateMin, r.rateMax || MODEL.rateMax);
+  }
   const actK = clamp(c.actK || 0, 0, 1), actN = (c.act && a[c.act]) ? c.act : null;
   if (actN) {
     for (const k in want) if (k !== actN) want[k] *= 1 - actK;
@@ -6352,6 +6368,35 @@ const CREATURE_RIGS = {
     // beak, belly and the warm banding down its back
     glow: { lo: .13, hi: .40, k: 1.5, lum: [.40, .84] },
   },
+  // ---------- the poacher ----------
+  // NOT AN ANIMAL. He is the first thing on the island that is somebody rather than something:
+  // his own build, his own walk, and a job -- creeping up on the small creatures and taking
+  // them, which is the same job the player has and the reason he is interesting before any
+  // story exists to say whether he is a villain.
+  //
+  // Fourteen clips, so this is the first species that needs more than the wanderer's table.
+  // `extra` names them; the three hit reactions are keyed by where the blow came FROM (a blow
+  // from his right throws his head left), the two air clips by whether he was facing it, and
+  // laying / standUp are the two halves of being knocked out.
+  Poacher: {
+    url: 'models/alien_poacher_02.glb',
+    height: 2.7,          // a shade taller than the wanderer, so he reads as the same kind of thing
+    idle: 'idle_01', walk: 'walk_01', run: 'run',
+    yaw: 0,
+    extra: {
+      idle2: 'idle_02_stretch',
+      hitC: 'hit_move_center', hitL: 'hit_move_left', hitR: 'hit_move_right',
+      airFwd: 'in_air_lean_fwd', airBwd: 'in_air_lean_bwd',
+      lay: 'laying', standUp: 'stand_up_from_laying',
+      hobble: 'injured_hobble', sneak: 'walk_tip_toe', walk2: 'walk_02',
+    },
+    extraLoop: ['hobble', 'sneak', 'walk2', 'idle2'],
+    // AND TWO OF THEM TRAVEL. Measured: hips Z runs 73 units on walk_02 and 54 on the tiptoe,
+    // against under 20 for everything else in the file -- he meant to strip those and did not.
+    // It costs nothing to do it here and it means the export does not have to be redone.
+    flatten: ['walk2', 'sneak'],
+    glow: { lo: .14, hi: .40, k: 1.6, lum: [.42, .88] },
+  },
   Grazer: {
     url: 'models/purple_horny.glb',
     height: 2.4,          // a mossback stands about this tall at the shoulder
@@ -6450,7 +6495,7 @@ const MOOD = {
   waryK: 2.6,            // fear multiplies a species' own flee radius by up to this
   waryMin: 34,           // and a terrified species keeps its distance even if it never had one
   label: { Grazer: 'the mossbacks', Weaver: 'the tinkers', Burrower: 'the mudlarks',
-    Skimmer: 'the glimmerfins', Drifter: 'the kitewings', Hopper: 'the hoppers',
+    Skimmer: 'the glimmerfins', Drifter: 'the kitewings', Hopper: 'the hoppers', Poacher: 'the poachers',
     Walker: 'the grovewalkers', Leviathan: 'the leviathans' },
 };
 function moodOf(c) { return MOOD.m[c.constructor.name] || 0; }
@@ -6746,7 +6791,7 @@ function stepFace(c, dt) {
   // OVER ON ITS SIDE. The clip for this does not exist on any of them, so the body is laid
   // down here: a roll about its own forward axis and a drop of half its standing height,
   // eased in and out so it goes over rather than blinking flat.
-  if (c.daze > 0 || c.dazeK > .003) {
+  if (!c.hasLay && (c.daze > 0 || c.dazeK > .003)) {
     c.dazeK = lerp(c.dazeK, c.daze > 0 ? 1 : 0, Math.min(1, dt * 3.2));
     c.g.rotation.z += c.dazeK * 1.15;
     c.g.position.y -= c.dazeK * c.pivotY() * .55;
@@ -7610,7 +7655,10 @@ class Creature {
     if (this.rig) {
       const px = this.px2 === undefined ? this.rx : this.px2, pz = this.pz2 === undefined ? this.rz : this.pz2;
       this.px2 = this.rx; this.pz2 = this.rz;
-      stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic, { top: this.speed * 1.45, runAt: .78, runFull: .98 });
+      stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic,
+        // act / gait are how a species with its own clips drives them: it sets them on itself
+        // and this hands them through. Nothing that has neither pays anything for them.
+        { top: this.speed * 1.45, runAt: .78, runFull: .98, act: this.act || null, actK: this.actK || 0, gait: this.gaitClip || null });
     }
   }
   dispose() { scene.remove(this.g); }
@@ -8588,6 +8636,131 @@ class Walker extends Creature {
   }
 }
 // Hopper — the small end of the scale; trails the big grazers for the cropped ground
+// THE POACHER. Everything he does is the player's own loop run by somebody else: he finds a
+// small creature, creeps up on it on his toes, grabs at it, and either has it or does not. He
+// is not scripted as an enemy, because nothing has decided yet whether he is one -- he simply
+// has a job, and what happens when the player walks into the middle of it is the interesting
+// part rather than something to decide in advance.
+//
+// He takes a beating properly, which is what the fourteen clips are for. A blow off his right
+// throws his head left; a blow he was facing sends him back through the air leaning away from
+// it and one from behind sends him forward; worn down he limps; out cold he lies there until
+// he comes round and gets up. All of it hangs off the vigour and daze the whole island already
+// runs on -- see VIT -- so none of it is a second damage system.
+const POACHER = {
+  see: 34,           // how far off he notices a creature worth having
+  creep: 13,         // and inside this he stops walking and starts creeping
+  grab: 2.6,
+  cool: [7, 16],     // between attempts, whether or not the last one worked
+  react: .55,        // how long a hit reaction owns him
+  limp: .55,         // he limps below this much of his wind
+};
+class Poacher extends Creature {
+  constructor(x, z) {
+    super(x, z, { speed: 4.4, turn: 3.4, rad: .85, look: 7, minObR: 1.1,
+      wary: 0, flock: 0, notice: 26, social: 1, thirst: 90 });
+    this.quarry = null; this.hunt = 0; this.cool = rnd(0, 8);
+    this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
+    this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
+  }
+  build() {
+    // A stand-in only, and it is hidden the moment the GLB lands. Enough of a silhouette that
+    // a world built before the model arrives is not full of invisible people.
+    const b = this.body, coat = M.hopper ? pick(M.hopper) : M.domeSteel;
+    b.add(mesh(G.cyl, coat, .34, 1.5, .26, 0, 1.15, 0));
+    b.add(mesh(G.sph, coat, .3, .34, .3, 0, 2.15, 0));
+    for (const sx of [1, -1]) this.addLeg(sx * .22, 0, .95, coat, .12);
+  }
+  // One of his own clips, for as long as it lasts. Same shape as the wanderer's act channel.
+  play(key, rate, own) {
+    const a = this.rig && this.rig.acts[key]; if (!a) return false;
+    this.act = key; this.actT = this.actMax = a.getClip().duration / (rate || 1);
+    if (own !== undefined) this.actT = this.actMax = own;
+    a.timeScale = rate || 1;
+    return true;
+  }
+  stepAct(dt) {
+    if (this.actT > 0) {
+      this.actT -= dt;
+      this.actK = Math.min(smooth(0, .10, this.actMax - this.actT), smooth(0, this.actMax * .25, this.actT));
+      if (this.actT <= 0) { this.actT = 0; this.actK = 0; this.act = null; }
+    } else if (this.actK > 0) { this.actK = Math.max(0, this.actK - dt * 6); if (this.actK <= 0) this.act = null; }
+  }
+  // WHICH WAY HE TOOK IT. `right` is the cross of his facing with the line back to whatever
+  // hit him -- positive when it came off his right -- and `front` is how much of it he was
+  // looking at. A blow from the right throws him left, which is the way a head actually goes.
+  hitFrom(from) {
+    const dx = from.x - this.pos.x, dz = from.z - this.pos.z, d = Math.hypot(dx, dz) || 1;
+    const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+    return { right: (dx * fz - dz * fx) / d, front: (dx * fx + dz * fz) / d };
+  }
+  stagger(from, force = 1) {
+    super.stagger(from, force);
+    const h = this.hitFrom(from);
+    this.play(Math.abs(h.right) < .45 ? 'hitC' : (h.right > 0 ? 'hitL' : 'hitR'), 1.35, POACHER.react);
+    this.quarry = null; this.hunt = 0;
+  }
+  knock(from, force = 1) {
+    const h = this.hitFrom(from);
+    super.knock(from, force);
+    // He is in the air now: leaning away from a blow he saw coming, folded forward over one
+    // he did not. Held for the flight rather than for the clip's own length.
+    if (this.fling) this.play(h.front > .1 ? 'airBwd' : 'airFwd', 1, 2.2);
+    this.quarry = null; this.hunt = 0;
+  }
+  think(dt) {
+    this.moving = 1;
+    this.cool = Math.max(0, this.cool - dt);
+    // Out cold: he lies where he went down, and gets up when he comes round.
+    if (this.daze > 0) { this.gaitClip = null; if (this.act !== 'lay') this.play('lay', 1, this.daze + .6); this.moving = 0; return; }
+    if (this._wasDown) { this._wasDown = 0; this.play('standUp', 1.15); }
+    if (this.actT > 0 && (this.act === 'lay' || this.act === 'standUp')) { this.moving = 0; return; }
+    // Worn down, he limps -- which is also the tell that he can be taken.
+    this.gaitClip = (this.vig < POACHER.limp && this.rig && this.rig.acts.hobble) ? 'hobble' : null;
+    // A creature worth having. He keeps the one he chose while it is still worth keeping.
+    if (this.quarry && (!this.quarry.alive || this.quarry.carried || this.dist(this.quarry.pos) > POACHER.see * 1.4)) this.quarry = null;
+    if (!this.quarry && this.cool <= 0) {
+      this.quarry = nearest(world.creatures, this.pos,
+        c => c.alive && c !== this && !(c instanceof Poacher) && !c.carried && !c.net && !c.aquatic && !c.flying && (c.rad || 1) < 1.6, POACHER.see);
+      if (this.quarry) this.hunt = rnd(14, 26);
+    }
+    if (this.quarry) {
+      const d = this.dist(this.quarry.pos);
+      this.hunt -= dt;
+      if (this.hunt <= 0) { this.quarry = null; this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); this.doing = 'give up'; return; }
+      if (d < POACHER.grab) {
+        // The grab. It works on something already worn down or dazed, and otherwise it does
+        // not -- the same rule the player's own capture runs on, which is the point of him.
+        this.cool = rnd(POACHER.cool[0], POACHER.cool[1]);
+        const got = this.quarry.daze > 0 || this.quarry.vig < .45;
+        if (got) {
+          creatureHurt(this.quarry, .5, this.pos);
+          logMsg('A poacher gets his hands on ' + (MOOD.label[this.quarry.constructor.name] || 'something').replace(/^the /, 'a ').replace(/s$/, ''));
+        } else {
+          this.quarry.spook(this.pos, 14);
+          bubbleSay(this.quarry, 'alarm');
+        }
+        this.play('idle2', 1, 1.6);
+        this.quarry = null; this.doing = 'grab'; return;
+      }
+      // Close in, then creep. A poacher who runs at everything catches nothing, and the
+      // tiptoe is the whole reason to watch him.
+      const creeping = d < POACHER.creep;
+      this.gaitClip = this.gaitClip || (creeping && this.rig && this.rig.acts.sneak ? 'sneak' : null);
+      this.moving = creeping ? .45 : 1;
+      this.seek(this.quarry.pos, creeping ? .40 : 1.15);
+      this.doing = creeping ? 'creep' : 'stalk';
+      return;
+    }
+    this.wander();
+    this.doing = 'wander';
+  }
+  update(dt) {
+    if (this.daze > 0) this._wasDown = 1;
+    this.stepAct(dt);
+    super.update(dt);
+  }
+}
 class Hopper extends Creature {
   // Nervous, and it does not keep that to itself: one hopper bolting takes the whole flock
   // with it, which is the most alive the meadow ever looks.
@@ -10831,7 +11004,8 @@ function buildSites() {
   // the whole world by biome and would as happily put them in the mainland jungle.
   {
     const ps = poacherSpot();
-    if (ps) { out.push(buildPoacherCamp(ps.x, ps.z, Math.atan2(PLAT.x - ps.x, PLAT.z - ps.z)));
+    if (ps) { world.poachCamp = { x: ps.x, z: ps.z };
+      out.push(buildPoacherCamp(ps.x, ps.z, Math.atan2(PLAT.x - ps.x, PLAT.z - ps.z)));
       console.info('[site] the poachers are camped at ' + ps.x.toFixed(0) + ', ' + ps.z.toFixed(0)); }
     else console.warn('[site] nowhere on the terrace for the poachers');
   }
@@ -11726,6 +11900,18 @@ function populate() {
   for (let i = 0; i < 6; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Drifter(p.x, p.z)); }
   for (let i = 0; i < 5; i++) { const p = randomLand(1.5, 9, .6, 600, 4.5); if (p) world.creatures.push(new Walker(p.x, p.z)); }
   for (let i = 0; i < 42; i++) { const p = randomLand(1.2, 12, .9); if (p) world.creatures.push(new Hopper(p.x, p.z)); }
+  // The poachers themselves, around the camp that has been standing empty since it was built.
+  // A few more scattered wide, because a species that only exists in one clearing is scenery.
+  {
+    const c = world.poachCamp;
+    for (let i = 0; i < MAX.poacher; i++) {
+      let p = null;
+      if (c && i < 4) { const a = rnd(Math.PI * 2), r = rnd(6, 22); const x = c.x + Math.cos(a) * r, z = c.z + Math.sin(a) * r;
+        if (isLand(x, z) && slope(x, z) < 1) p = { x, z }; }
+      if (!p) p = randomLand(1.4, 14, .8);
+      if (p) world.creatures.push(new Poacher(p.x, p.z));
+    }
+  }
   for (let i = 0; i < 3; i++) { const p = randomWater(SEA - 12); world.creatures.push(new Leviathan(p.x, p.z)); }
   // the camp, on a beach shelf
   // and keep it off the pad: the ship is placed after this and adds its own collider then, so
