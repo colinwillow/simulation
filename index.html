@@ -560,8 +560,7 @@
      out the far side. Not two shutters. `u` is the inside of a cloud, up for the instant of
      the swap only, so the cover is guaranteed without the clouds having to tile the frame. */
   #wipe{position:fixed;inset:0;z-index:10;pointer-events:none;overflow:hidden}
-  #wipe i{position:absolute;display:block;background-repeat:no-repeat;background-size:100% 100%;
-    will-change:transform;transform:translate3d(0,0,0)}
+  #wipe i{position:absolute;display:block;background-repeat:no-repeat;background-size:100% 100%}
   #wipe u{position:absolute;inset:-2%;display:block;opacity:0;
     background:radial-gradient(120% 90% at 50% 45%,#ffffff 0%,#eaf3fb 45%,#cfe0ef 100%);
     transition:opacity .30s ease}
@@ -1630,7 +1629,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e54';
+const BUILD = 'e55';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -14784,7 +14783,17 @@ function introFrame(dt) {
 // Drawn, not shipped: the same trick as the slash and the contact blob. A run of overlapping
 // discs down one edge of a canvas, blurred, in the sky's own indigo with a lit rim, so it
 // reads as cloud in this game's palette rather than as a shape crossing the screen.
-const WIPE = { n: 16, inT: .80, hold: .24, outT: 1.0, on: 0, url: null };
+// SIZE IS THE WHOLE BUDGET HERE, and the first go spent it all. Sixteen elements up to 86vh
+// tall and near three times that wide, each pinned into its own compositing layer by
+// will-change and some of them carrying a CSS blur -- at a device ratio of three that is tens
+// of megabytes of raster apiece, asked for at the one moment the WebGL scene is being torn
+// down and rebuilt and memory is already at its worst. Safari killed the tab.
+//
+// So: ten of them, none taller than a third of the screen, no will-change (a transform
+// composites perfectly well without being told to in advance) and no blur -- distance is
+// carried by opacity and size, which is most of what carries it anyway. Total painted area
+// lands around two and a half screens instead of forty.
+const WIPE = { n: 10, inT: .80, hold: .24, outT: 1.0, on: 0, url: null };
 // A CLOUD, DRAWN. Puffs along a baseline with a couple riding on top, filled with a vertical
 // gradient so the crown is white and the belly takes the sky's blue -- which is the whole of
 // what makes a cartoon cloud read as lit from above. Three layouts off a seeded generator, so
@@ -14838,12 +14847,11 @@ function wipeStart(fn) {
       // real sky: the near ones are big, opaque, quick and low; the far ones are small, hazy,
       // slow and high. Without that they all arrive together and it is a shutter again.
       const dep = rr(), side = i % 2 ? 1 : -1;
-      const h = 26 + dep * dep * 86;                 // vh
-      const w = h * (2.1 + rr() * .8);
+      const h = 15 + dep * dep * 22;                 // vh -- see WIPE for why this is capped
+      const w = h * (1.8 + rr() * .7);
       el.style.height = h + 'vh'; el.style.width = w + 'vh';
-      el.style.top = (-14 + rr() * 104) + 'vh';
-      el.style.opacity = (.66 + dep * .34).toFixed(2);
-      if (dep < .4) el.style.filter = 'blur(' + ((.4 - dep) * 5).toFixed(1) + 'px)';
+      el.style.top = (-10 + rr() * 96) + 'vh';
+      el.style.opacity = (.58 + dep * .42).toFixed(2);
       el.style.backgroundImage = 'url(' + WIPE.url[i % 3] + ')';
       if (side > 0) el.style.transform = 'scaleX(-1)';
       // start off its own side, meet somewhere across the middle, carry on out the far one
@@ -14867,7 +14875,7 @@ function wipeStart(fn) {
         el.style.transform = 'translate3d(' + el.dataset.x1 + 'vw,0,0)' + el._flip;
       }
     }));
-    setTimeout(() => { veil.style.opacity = '1'; }, (WIPE.inT - .22) * 1000);
+    setTimeout(() => { veil.style.opacity = '1'; }, (WIPE.inT - .30) * 1000);
     setTimeout(fire, WIPE.inT * 1000 + 30);
     setTimeout(() => {
       veil.style.transition = 'opacity .42s ease';
