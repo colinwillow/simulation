@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e34';
+const BUILD = 'e35';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -1832,6 +1832,16 @@ const snd = {
     SFX.blip(f, big ? .15 : .12, 'sine', big ? .21 : .17, f * .40, x, z);
     SFX.blip(f * 2.1, .05, 'triangle', .05, f * 1.2, x, z);
     SFX.noise(.045, .05, 1600, x, z);
+  },
+  // A THING LANDING ON GRASS, and it is synthesised for the same reason the bolt's bop is:
+  // nothing in either folder is a soft landing. Wood, metal and explosions do not cover a
+  // turnip. `k` is how hard it came down, and a bounce that has spent its energy is both
+  // quieter AND higher -- less of it arrives, so less of it rings.
+  plop: (x, z, k) => {
+    if (!sndOnce('plop', 45)) return;
+    const q = clamp(k === undefined ? 1 : k, 0, 1), f = (232 - 62 * q) * rnd(.94, 1.07);
+    SFX.blip(f, .045 + .055 * q, 'sine', .05 + .13 * q, f * .55, x, z);
+    SFX.noise(.035, .02 + .05 * q, 900 + 600 * (1 - q), x, z);
   },
   // FOOTSTEPS ARE SYNTHESISED, and there is nothing to borrow: neither repo has one. Which is
   // no loss -- a footstep is a short filtered thump, and making it means every step can differ
@@ -7307,6 +7317,10 @@ const THROW = {
   // ground, so the mark can be PUT somewhere instead of flung near it. Cutting the top of the
   // range is what buys the precision; there is no separate sensitivity dial to find.
   speed: [15, 38],   // launch speed at no power and at full
+  // THE CAMERA FOLLOWS THE AIM, as it does with the blaster out. Gentler than the gun's 2.6
+  // and 2.3, because a wind-up is held for a second or more and the gun's rate sweeps too far
+  // in that time to place a mark with.
+  camEase: 2.0, camTurn: 1.7,
   // A FLICK MAY NOT OUT-THROW A WIND-UP. The swipe's power came off stick speed and a hard
   // flick saturates it instantly, so it reached the same 54 the bar takes 1.7 seconds to
   // fill -- which makes the charge throw pointless and sends the animal out of sight.
@@ -17651,6 +17665,15 @@ function throwStick(dt, rx, ry, own, sp) {
   let d = want - p.aimH; d = Math.atan2(Math.sin(d), Math.cos(d));
   p.aimH += d * e;                                 // the friction: it chases the thumb, it is not pinned to it
   p.throwK = lerp(p.throwK, wantK, e);
+  // AND THE CAMERA COMES ROUND WITH HIM. It did not, and the stance was a frozen frame: this
+  // function claims the right stick, which switches off the ordinary orbit further down, and
+  // nothing put anything back -- so the aim swung and the lens stayed where it was. It is the
+  // same loop the blaster uses, and capped for the same reason: the bearing is read in the
+  // camera's frame and the camera eases in behind the bearing, so an off-centre stick sweeps
+  // him round at a rate set by how far off centre it is, and uncapped that is unsteerable.
+  // stepToss comes through here too, so the beacon's stance turns as well.
+  let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
+  cam.az += clamp(cd * THROW.camEase, -THROW.camTurn, THROW.camTurn) * dt;
   cam.idle = 0;
   setChargeRing(Math.max(p.throwK, .06));          // a sliver from the first frame, so it reads as armed
   return true;
@@ -17797,6 +17820,10 @@ class TossedItem {
     this.pos.y = fy;
     const drop = Math.abs(this.v.y);
     this.bounces = (this.bounces || 0) + 1;
+    // Every touch, not just the first. It bounces twice before it settles into a roll and all
+    // three arrivals were silent, so a throw was a thing that left his hand and then happened
+    // to somebody else. Scaled by the drop, so the putt-putt-putt falls away by itself.
+    snd.plop(this.pos.x, this.pos.z, clamp(drop / 20, .22, 1));
     if (this.bounces <= 2 && drop > 3) {
       this.v.y = drop * HTOSS.bounce;
       this.v.x *= HTOSS.roll; this.v.z *= HTOSS.roll;
