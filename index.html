@@ -1604,7 +1604,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e28';
+const BUILD = 'e29';
 const SND_FILES = {
   swing: ['swoosh_01', 'swoosh_02', 'swoosh_03', 'swoosh_04', 'swoosh_05', 'swoosh_06'],
   clang: ['metal_clang_01', 'metal_clang_02', 'metal_clang_03', 'metal_clang_04'],
@@ -1807,15 +1807,23 @@ const snd = {
   // charge so a big one lands heavier without becoming a different event.
   zap: (x, z, c) => SFX.play('ping', .34 + (c || 0) * .2, .78 - (c || 0) * .18, x, z)
     || (SFX.blip(880, .07, 'triangle', .1, 300, x, z), SFX.noise(.05, .12, 2200, x, z)),
-  // WHAT A BOLT SOUNDS LIKE LANDING ON SOMEBODY -- and he was right that he had heard it in
-  // robits and right that it is not in the folder as a file. It is not a punch sample. Read
-  // out of that repo: its sword hit calls _boomSfx('small', 1.15), which is explosion_small
-  // played a seventh fast, throttled to one per 220ms so a swing that rakes three enemies
-  // still makes one noise. A small explosion sped up loses its boom and its tail and what is
-  // left is a short body thump. Two guesses were spent on the bamboo and the swooshes; this
-  // one is measured.
-  beamHit: (x, z, big) => SFX.play('boom', big ? .78 : .62, rnd(1.10, 1.20), x, z)
-    || (SFX.noise(.12, .24, 700, x, z), SFX.blip(150, .10, 'sine', .16, 70, x, z)),
+  // WHAT A BOLT SOUNDS LIKE LANDING ON SOMEBODY, and it is the one voice in the game with no
+  // sample behind it on purpose. Three tries went through the pool -- bamboo, swooshes, and
+  // then robits' own answer, which is explosion_small at 1.15 -- and the third was right about
+  // that game and wrong about this one. Robits is metal hitting metal; clangs and bangs are
+  // the truth there. Nothing in either folder is a LIGHT impact, because neither folder was
+  // ever cut for one, so reaching into them again only picks a different wrong thing.
+  //
+  // A cartoon bop is a pitched body, not a noise burst: a sine that falls a fifth in a tenth
+  // of a second, a quiet triangle an octave up for the top of it, and a whisper of filtered
+  // air for the contact. Short, round, no crack. The pitch wobbles a little each time so a
+  // burst does not machine-gun one note.
+  beamHit: (x, z, big) => {
+    const f = (big ? 300 : 390) * rnd(.94, 1.08);
+    SFX.blip(f, big ? .15 : .12, 'sine', big ? .21 : .17, f * .40, x, z);
+    SFX.blip(f * 2.1, .05, 'triangle', .05, f * 1.2, x, z);
+    SFX.noise(.045, .05, 1600, x, z);
+  },
   // FOOTSTEPS ARE SYNTHESISED, and there is nothing to borrow: neither repo has one. Which is
   // no loss -- a footstep is a short filtered thump, and making it means every step can differ
   // slightly instead of a four-file pool going round. `hard` is a run rather than a walk.
