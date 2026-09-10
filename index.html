@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e75';
+const BUILD = 'e76';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -6085,6 +6085,14 @@ const MODEL = {
   // Where the walk gives way to the run, as a fraction of the thing's own top speed —
   // not of the clip's authored pace, which is a different number entirely and much smaller.
   runAt: .42, runFull: .74,
+  // WHAT A SPRINT ADDS TO THE LEGS, on top of the rate the ground speed already asks for.
+  // It has to be a separate term because the ordinary rate is ALREADY PINNED at its ceiling:
+  // he tops out at 17 units a second and the run clip is authored at a fraction of that, so
+  // speed/runSpeed is over 3 and rateMax has been holding it at 1.6 since long before the
+  // sprint comes into it. Sprinting made him cover half again as much ground with exactly the
+  // same leg cycle, which is the "it doesn't look like he's running any harder" -- the rate
+  // could not move because it was already against the stop.
+  sprintRate: .40,
   moveAt: .015, moveFull: .13,        // and where idle gives way to the walk
 };
 // AND SOME THINGS WANT MORE OF IT THAN THE ISLAND DOES. The global lift is set for foliage and
@@ -7160,7 +7168,8 @@ function stepRig(r, dt, speed, grounded, ctx) {
   if (a.rifleBack) a.rifleBack.timeScale = -armRate;
   if (a.rifleLeft) a.rifleLeft.timeScale = armRate;
   if (a.rifleRight) a.rifleRight.timeScale = armRate;
-  if (a.run) a.run.timeScale = clamp(speed / (r.runSpeed || ref * 3), .75, 1.6);
+  if (a.run) a.run.timeScale = clamp(speed / (r.runSpeed || ref * 3), .75, r.rateMax || 1.6)
+    * (1 + clamp(c.sprint || 0, 0, 1) * MODEL.sprintRate);
   if (a.rifleRun) a.rifleRun.timeScale = a.run ? a.run.timeScale : 1;
   if (a.rifleShoot) a.rifleShoot.timeScale = 1.35;
   if (a.pickUp) a.pickUp.timeScale = 2;      // the stoop was slow enough to feel like a cutscene
@@ -21062,6 +21071,7 @@ function updateRig(dt) {
     // The clip's own top speed rises with him, or the run plays at its normal rate against
     // ground going past half again as fast and he skates.
     top: p.swim > .5 ? MOVE.swimMax : MOVE.max * (1 + SPRINT.k * (p.sprint || 0)),
+    sprint: p.sprint || 0,      // the legs turn over harder; see MODEL.sprintRate
     swim: p.swim, air: !p.fly && !p.grounded && p.leadT <= 0 && p.swim < .5,
     mf, mr, roll: p.rollT > 0, rollSkip: ROLL.skip, rollRate: ROLL.rate,
     // The stoop ramps in and out rather than switching, because the ramp IS the bend.
