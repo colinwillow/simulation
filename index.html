@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e80';
+const BUILD = 'e81';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -8801,6 +8801,7 @@ class Creature {
       R.t -= dt;
       if (d < .6 || R.t <= 0 || (R.t < R.T - .3 && this.terrainOK(this.pos.x, this.pos.z))) {
         this.recover = null; this.stuck = 0; this.wedged = 0;
+        this.progX = this.pos.x; this.progZ = this.pos.z; this.progT = 0;   // a fresh window
       } else {
         this.heading = Math.atan2(dx, dz);
         const st = Math.min(d, this.speed * .85 * dt);
@@ -8810,6 +8811,31 @@ class Creature {
         this.steer.set(0, 0, 0); this.steerS.set(0, 0, 0);
         return;
       }
+    }
+    // PROGRESS, OVER A WINDOW RATHER THAN A FRAME. `stuck` below compares one step against the
+    // step that was asked for, which catches a body pressed against a wall and catches nothing
+    // else. It does not catch the two that actually happen: a body sliding ALONG a wall moves
+    // at full speed every frame and gets nowhere, and a body walking a small circle -- steer
+    // toward the waypoint, fail the terrain test, slide, steer back, fail, slide the other way
+    // -- moves fastest of all. Both report perfect per-frame movement for ever.
+    // So: remember where it was a second and a bit ago. Still there, and still trying to leave,
+    // and it is wedged whatever its speed says -- which is the purple one revolving on the bank.
+    this.progT = (this.progT || 0) + dt;
+    if (this.progT > 1.3) {
+      this.progT = 0;
+      if (this.progX === undefined) { this.progX = this.pos.x; this.progZ = this.pos.z; }
+      else {
+        const went = Math.hypot(this.pos.x - this.progX, this.pos.z - this.progZ);
+        if (this.moveK > .3 && went < this.speed * .35) this.wedged = (this.wedged || 0) + 1;
+        else if (went > this.speed * .7) this.wedged = 0;
+        this.progX = this.pos.x; this.progZ = this.pos.z;
+      }
+    }
+    if (this.wedged >= 2 && !this.recover) {
+      this.ghost = 3.4;
+      const e = this.findEscape();
+      if (e) this.recover = { x: e.x, z: e.z, t: 3.4, T: 3.4 };
+      this.wedged = 0; this.stuck = 0; this.wp = null; this.target = null;
     }
     this.avoidObstacles(); this.separate();
     const kS = Math.min(1, dt * 7);
@@ -8850,12 +8876,8 @@ class Creature {
       }
       if (this.stuck > 1.6) { this.wp = null; this.target = null; this.stuck = 0; this.turnBias = Math.random() < .5 ? -1 : 1; this.wedged = (this.wedged || 0) + 1; }
       if (this.stuck === 0 && slid === 0 && r) this.turnBias = 0;
-      if (this.wedged >= 2) {                       // truly boxed in: walk out and re-settle
-        this.ghost = 3.4;
-        const e = this.findEscape();
-        if (e) this.recover = { x: e.x, z: e.z, t: 3.4, T: 3.4 };
-        this.wedged = 0;
-      }
+      // (the walk-out itself is at the top of this function, so both ways of noticing -- the
+      // per-frame one here and the windowed one up there -- reach the same exit)
     }
     s.set(0, 0, 0);
   }
@@ -10028,6 +10050,11 @@ const POACHER = {
   airAt: 5.5,        // upward launch below this is a shove, not a flight -- see knock
   see: 34,           // how far off he notices a creature worth having
   creep: 13,         // and inside this he stops walking and starts creeping
+  // AND THE LAST STRIDE IS NOT A CREEP. Creeping is .45 of 4.4, which is two units a second
+  // against a hopper's 3.6 -- he could close on something standing still and never on anything
+  // that moved, so he spent the whole hunt hovering just outside arm's reach. Inside this he
+  // goes at him.
+  pounce: 4.8,
   grab: 2.6,
   cool: [7, 16],     // between attempts, whether or not the last one worked
   react: .55,        // how long a hit reaction owns him
@@ -10200,18 +10227,25 @@ class Poacher extends Creature {
         this.cool = rnd(POACHER.cool[0], POACHER.cool[1]);
         const q = this.quarry;
         this.quarry = null; this.doing = 'grab';
-        if (q.daze > 0 || q.vig < .45) { this.takeIt(q); return; }
+        // WHAT A SUCCESSFUL STALK IS. It used to be "already dazed or already worn down", which
+        // is the player's rule -- and nothing on this island wears a creature down except the
+        // player, so the condition was very nearly never true and no poacher had ever taken
+        // anything. The tiptoe is his rule: get within arm's reach of something that has not
+        // noticed him and it is his. Let it notice him on the way in and it bolts, which is
+        // what the creeping is for and what walking up to one loudly costs.
+        if (q.daze > 0 || q.vig < .45 || q.alarm <= 0) { this.takeIt(q); return; }
         q.spook(this.pos, 14); bubbleSay(q, 'alarm');
         this.play('idle2', 1, 1.6);
         return;
       }
       // Close in, then creep. A poacher who runs at everything catches nothing, and the
       // tiptoe is the whole reason to watch him.
-      const creeping = d < POACHER.creep;
+      const pouncing = d < POACHER.pounce;
+      const creeping = d < POACHER.creep && !pouncing;
       this.gaitClip = this.gaitClip || (creeping && this.rig && this.rig.acts.sneak ? 'sneak' : null);
       this.moving = creeping ? .45 : 1;
       this.seek(this.quarry.pos, creeping ? .40 : 1.15);
-      this.doing = creeping ? 'creep' : 'stalk';
+      this.doing = pouncing ? 'pounce' : creeping ? 'creep' : 'stalk';
       return;
     }
     this.wander();
