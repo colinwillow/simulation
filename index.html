@@ -1629,7 +1629,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e58';
+const BUILD = 'e59';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -1705,6 +1705,11 @@ const SND_FILES = {
   spare: ['laser_01', 'laser_02', 'beam_01', 'electricity_beam_01', 'plasma_canon', 'phase_warp_01', 'helix_blaster_air', 'fire_burn_01'],
   // Half a minute of continuous walking. It is not a pool and it is never played by
   // SFX.play -- FOOT owns it. See there for why it is one long file rather than six short ones.
+  // HIS SEVEN, UNLABELLED, AND THAT IS THE RIGHT WAY ROUND. Naming one of them "angry" would
+  // spend it on one feeling; kept as one voice they are the ISLAND'S voice, and which feeling
+  // it is comes out of pitch and weight instead. See snd.beast.
+  beast: ['creature_noise_01', 'creature_noise_02', 'creature_noise_03', 'creature_noise_04',
+          'creature_noise_05', 'creature_noise_06', 'creature_noise_07'],
   steps: ['footsteps_sound_01'],
 };
 // How far he goes between footfalls. Measured off nothing -- it is a taste number, and the
@@ -1937,6 +1942,25 @@ const snd = {
   arm: (x, z, out) => SFX.play('swing', .3, out ? rnd(1.00, 1.16) : rnd(.70, .84), x, z)
     || (SFX.noise(.13, .09, out ? 1900 : 1150, x, z),
         SFX.blip(out ? 380 : 240, .09, 'sine', .04, out ? 640 : 140, x, z)),
+  // WHAT AN ANIMAL SOUNDS LIKE, out of one pool of seven and two numbers.
+  //
+  // Pitch carries the SIZE and the volume carries the FEELING, which between them is most of
+  // how an animal reads. A mossback is nine parts of a hopper and speaks most of an octave
+  // lower for it -- the same file, and it is a different animal. Then alarm goes up and gets
+  // shorter, anger goes down and gets louder, contentment sits low and quiet, and a hurt one
+  // is a bark at the top of its range. The same trick as the bamboo, which is a fist at .7
+  // and an axe at 1.15: one pool doing several jobs because it is the pitch that says which.
+  //
+  // `o` is the animal, for its size; `k` is what it is feeling.
+  beast: (o, k) => {
+    const rad = (o && o.rad) || 1;
+    // half an octave down over the whole size range, on a curve so the small ones spread out
+    const size = Math.pow(1.05 / clamp(rad, .5, 2.6), .45);
+    const M = { alarm: [1.24, .60], angry: [.82, .78], hurt: [1.34, .70],
+                fond: [.94, .34], calm: [.90, .24], daze: [.70, .52] };
+    const m = M[k] || M.calm;
+    SFX.play('beast', m[1], size * m[0] * rnd(.94, 1.07), o ? o.pos.x : undefined, o ? o.pos.z : undefined);
+  },
   // FOOTSTEPS ARE SYNTHESISED, and there is nothing to borrow: neither repo has one. Which is
   // no loss -- a footstep is a short filtered thump, and making it means every step can differ
   // slightly instead of a four-file pool going round. `hard` is a run rather than a walk.
@@ -5547,6 +5571,25 @@ function cullView() {
   }
 }
 
+// THE ISLAND HAS A VOICE WHEN NOTHING IS HAPPENING TO IT. Everything above is a reaction --
+// something has to hit an animal or feed it for it to speak. This is the other half: now and
+// then, one calm animal near enough to be heard says something, low and quiet. It is the
+// difference between a meadow with creatures standing in it and a meadow that is inhabited.
+let beastT = rnd(2, 5);
+function beastTick(dt) {
+  if ((beastT -= dt) > 0 || INTRO.on) return;
+  beastT = rnd(3.4, 8.5);
+  const near = [];
+  for (const c of world.creatures) {
+    if (!c.alive || c.carried || c.fling || c.daze > 0 || !c.g || !c.g.visible) continue;
+    if (Math.hypot(c.pos.x - cam.tgt.x, c.pos.z - cam.tgt.z) < CVOX.far * .7) near.push(c);
+  }
+  if (!near.length) return;
+  const c = near[(Math.random() * near.length) | 0];
+  if (world.clock - (c.voxT || -99) < CVOX.gap * 3) return;
+  c.voxT = world.clock;
+  snd.beast(c, c.alarm > 0 ? 'alarm' : c.trust > 0 ? 'fond' : 'calm');
+}
 // Nothing the island makes may accumulate for ever. Felling a tree used to leave a stump
 // that was never removed and a pile of crown litter that nothing even held a reference to,
 // so a session left running for hours climbed instead of settling. Both now weather: past
@@ -7613,7 +7656,22 @@ function markMake() {
 // A one-off. `bubbleSay` is the event -- something just happened to this animal -- and the
 // state bubbles below are the standing ones, which need no call because they are read off the
 // animal every frame.
-function bubbleSay(c, key) { if (!c || c.bubT === undefined) return; c.bub = key; c.bubT = CBUB.hold; }
+// AND IT SAYS IT OUT LOUD. Every feeling an animal has already comes through here to put a
+// bubble over its head -- alarm, anger, being fed, going down -- so it is the one place a
+// voice belongs, and wiring it here gives every one of those a sound at once rather than six
+// calls scattered through the file. The cooldown is per animal: a herd startled together is
+// a herd, not a choir, and the global voice cap catches whatever gets past it.
+const CVOX = { gap: 1.1, far: 62 };
+function bubbleSay(c, key) {
+  if (!c || c.bubT === undefined) return;
+  if (c.bub !== key || c.bubT <= 0) {
+    const t = world.clock;
+    if (t - (c.voxT || -99) > CVOX.gap && Math.hypot(c.pos.x - cam.tgt.x, c.pos.z - cam.tgt.z) < CVOX.far) {
+      c.voxT = t; snd.beast(c, key);
+    }
+  }
+  c.bub = key; c.bubT = CBUB.hold;
+}
 function bubbleFor(c) {
   if (c.daze > 0) return 'daze';
   if (c.doing === 'charge') return 'angry';
@@ -7726,7 +7784,7 @@ function creatureHurt(c, k, from, quiet) {
   }
   // Answer or run. A big one, or one he has already worked up, turns round; everything else
   // has the sense to leave -- which the flee machinery below is already doing.
-  bubbleSay(c, (big || c.ire >= VIT.ireAt) ? 'angry' : 'alarm');
+  bubbleSay(c, (big || c.ire >= VIT.ireAt) ? 'angry' : (k > VIT.melee * .5 ? 'hurt' : 'alarm'));
 }
 class Creature {
   constructor(x, z, o) {
@@ -21888,7 +21946,7 @@ function frame(now) {
   updateWaypoint(dt);
   if (MAP.open) { clampView(); drawMap(); }
   drawMini(dt); showAct();
-  weatherLeavings(dt); cullFar(dt); cullView(); cullCells(terrain); cullCells(water); stainTick(dt); blobStep(); stepSlash(dt); MUSIC.step(dt);
+  weatherLeavings(dt); cullFar(dt); cullView(); cullCells(terrain); cullCells(water); stainTick(dt); beastTick(dt); blobStep(); stepSlash(dt); MUSIC.step(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
   waterUni.uT.value = world.clock; foamUni.uT.value = world.clock; grassUni.uT.value = world.clock;
