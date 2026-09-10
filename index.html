@@ -526,7 +526,10 @@
      cutting the wordmark's head off and the bottom one was the blank rectangle under the
      planet. The veil that covers the scene change does the job the retraction used to. */
   #introFoot{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:6px;
-    pointer-events:auto;padding-bottom:calc(52px + env(safe-area-inset-bottom));
+    /* 52 put the word up into the planet's own cloud line, with a hand's depth of empty
+       picture under it doing nothing. Down here it has the bottom of the frame to itself and
+       the world has its lower edge back. */
+    pointer-events:auto;padding-bottom:calc(20px + env(safe-area-inset-bottom));
     animation:introUp 1.9s 1.1s both cubic-bezier(.2,.7,.2,1)}
   @keyframes introUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
   /* A lit word between two rules, not a pill: a bordered button in the middle of a space shot
@@ -1627,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e60';
+const BUILD = 'e61';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -14920,10 +14923,19 @@ function wipeStart(fn) {
     // more than twice as wide as the screen, centred at the meet -- so the union of the three
     // is the whole picture and nothing behind them can show through at the moment of the swap.
     // The other two bands are texture: they are what makes it a sky rather than three shapes.
+    // FIVE SIZES, NOT THREE. He could count the big ones, which is the tell that there were
+    // only three sizes on screen: the near band was 44 to 46 -- effectively identical -- and
+    // it was doing all the covering, so it was all you saw. The three that cover are varied
+    // now (38, 52, 43) and kept overlapping by their slots rather than by being the same, and
+    // there are two more bands of small ones either side of the middle so the frame has grit
+    // in it. Speed spreads nearly three to one across the set, and every cloud takes a slice
+    // of its band's stagger rather than the whole band moving as one.
     const BANDS = [
-      { n: 5, h: [11, 16], w: [2.0, 2.6], sp: 1.28, op: [.44, .60], lead: 0,   sc: 1,    slot: null },
-      { n: 4, h: [19, 26], w: [1.9, 2.4], sp: .95,  op: [.70, .85], lead: .07, sc: 1.05, slot: null },
-      { n: 3, h: [44, 46], w: [2.0, 2.3], sp: .62,  op: [.97, 1.0], lead: .18, sc: 1.12, slot: [-14, 26, 62] },
+      { n: 7, h: [7, 12],  w: [2.1, 3.0], sp: 1.55, op: [.34, .50], lead: 0,   sc: 1,    slot: null, jit: .10 },
+      { n: 5, h: [14, 20], w: [2.0, 2.7], sp: 1.20, op: [.50, .68], lead: .05, sc: 1.02, slot: null, jit: .12 },
+      { n: 4, h: [23, 32], w: [1.8, 2.5], sp: .92,  op: [.72, .88], lead: .10, sc: 1.06, slot: null, jit: .12 },
+      { n: 3, h: [38, 52], w: [1.9, 2.4], sp: .58,  op: [.97, 1.0], lead: .20, sc: 1.13,
+        slot: [-16, 24, 60], hs: [38, 52, 43], jit: .07 },
     ];
     let k = 0;
     for (let bi = 0; bi < BANDS.length; bi++) {
@@ -14931,7 +14943,7 @@ function wipeStart(fn) {
       for (let j = 0; j < B.n; j++, k++) {
         const el = document.createElement('i');
         const side = (rr() < .5 ? -1 : 1) * (j === 0 ? (bi % 2 ? 1 : -1) : 1);
-        const h = rng(B.h[0], B.h[1]), w = h * rng(B.w[0], B.w[1]);
+        const h = B.hs ? B.hs[j] : rng(B.h[0], B.h[1]), w = h * rng(B.w[0], B.w[1]);
         const wv = w * K;                                   // the same cloud, in vw
         el.style.height = h + 'vh'; el.style.width = w + 'vh';
         el.style.top = (B.slot ? B.slot[j] + rng(-2, 2) : rng(-14, 92)) + 'vh';
@@ -14948,7 +14960,11 @@ function wipeStart(fn) {
                           : (side < 0 ? rng(-wv * .35, 62) : rng(38 - wv * .5, 100 - wv * .35));
         const x2 = side < 0 ? (100 + 12 + rng(0, 26)) : -(wv + 12 + rng(0, 26));
         el._t = [x1, x2, dy, rot, B.sc, side > 0 ? -1 : 1];
-        el._lag = B.lead; el._sp = B.sp;
+        // Its own beat inside the band, and its own pace: two clouds at the same distance do
+        // not arrive together or travel at the same speed, and making them do so is most of
+        // what reads as a mechanism rather than weather.
+        el._lag = B.lead + rr() * B.jit;
+        el._sp = B.sp * rng(.88, 1.14);
         el.style.transform = 'translate3d(' + x0 + 'vw,0,0) rotate(' + rot + 'deg) scaleX(' + el._t[5] + ')';
         g.appendChild(el); els.push(el);
       }
@@ -21996,7 +22012,11 @@ function frame(now) {
       // this runs; the two models are a courtesy so the runners do not pop in mid-stride, and
       // four seconds is longer than that courtesy is worth. _play is idempotent, so whichever
       // gets there first wins and the other does nothing.
-      setTimeout(_play, 4000);          // a cameo never holds the boot
+      // SEVEN, NOT FOUR. This exists so a dead fetch cannot hold the boot, and four seconds is
+      // short enough that a merely SLOW one gets cut off too -- which is a chase that runs
+      // with one of its two bodies missing, because dress() has nothing to clone yet. The
+      // splash's own hard floor is at nine seconds, so seven still cannot hang anything.
+      setTimeout(_play, 7000);          // a cameo never holds the boot
     }
   }
   } catch (e) { bootFail(e); }
