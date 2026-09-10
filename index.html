@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e71';
+const BUILD = 'e72';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -16990,7 +16990,7 @@ const ROLL = { speed: 23, skip: .12, end: 1.30, rate: 1.35, go: .88, time: .7, c
 // right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
 // most of what a game does to say "fast" and costs nothing. in/out are how quickly it comes on
 // and lets go -- fast in, slower out, so a stumble over a rock does not drop him out of it.
-const SPRINT = { k: .55, at: .62, in: 5, out: 2.6, fov: 7, rush: .85 };
+const SPRINT = { k: .55, hold: .20, in: 5, out: 2.6, fov: 7, rush: .85 };
 function flickRoll(x, y) {
   const p = player;
   if (INTRO.on || p.aboard || p.roping || p.free || p.fly || p.swim > .5 || p.rollT > 0 || p.rollCool > 0) return;
@@ -17878,7 +17878,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   stowFor: null, stowT: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
-  aimRange: 0,
+  aimRange: 0, rHold: 0,
   actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actFrom: 0, actFire: null, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0, windK: 0, holdT: 0,
   melTgt: null, melId: 0, hitT: 0, hitOn: 0, hitSlide: 0, slip: 0, slope: 0,
   lungeT: 0, lungeMax: 0, lungeSp: 0, lungeH: 0, armAct: null, wpnShow: 0, wpnK: 0,
@@ -20135,16 +20135,22 @@ function updatePlayer(dt) {
   const aiming = stepWeapon(dt, rx, ry);
   if (!aiming && !winding && (rx || ry)) { cam.az -= rx * dt * 2.2; cam.idle = 0; }
   const mag = Math.hypot(lx, ly);
-  // SPRINT. Hands empty, feet on the ground, moving, and the right stick pushed hard UP. Deep
-  // on purpose -- .62 of full travel -- because the same stick is the look, and a glance up
-  // must not break into a run. Nothing else reads the right stick's Y while he is unarmed, so
-  // this costs nothing that was being used.
+  // SPRINT. Hands empty, feet on the ground, moving, and a THUMB HELD on the right pad --
+  // anywhere on it. It used to be a hard push UP, which put the run on the same axis as the
+  // look: you could not glance up without breaking into one, and you could not sprint and
+  // turn the camera at all. Holding is a state the pad already reports and nothing else was
+  // using, and it leaves the whole pad free to steer the lens while he runs.
+  // The hold is what separates it from everything else that lives on this pad. A tap is the
+  // jump and the interact; a swipe is the melee. Both are over inside two-tenths, so a
+  // threshold there costs a real sprint nothing and cannot be reached by either.
   // A blow owns the legs. Not frozen -- he can lean into it -- but the stick is most of the
   // way out of his hands until the clip is done, which is what stops a combo being walked
   // sideways out of its own arc.
   if (player.actT > 0 && player.slideT <= 0) { lx *= .18; ly *= .18; }
+  player.rHold = stick.R.down ? (player.rHold || 0) + dt : 0;
   const wantRun = !aiming && !winding && !player.carry && !player.drag && !player.aboard && !player.free
-    && player.swim < .5 && player.grounded && mag > .5 && (-ry > SPRINT.at || !!keys.shift);
+    && player.swim < .5 && player.grounded && mag > .5
+    && (player.rHold > SPRINT.hold || !!keys.shift);
   player.sprint = lerp(player.sprint || 0, wantRun ? 1 : 0, Math.min(1, dt * (wantRun ? SPRINT.in : SPRINT.out)));
   if (wantRun) cam.idle = 0;
   player.moving = lerp(player.moving, mag > .1 ? Math.min(1, mag) : 0, Math.min(1, dt * 9));
