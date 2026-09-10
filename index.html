@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e87';
+const BUILD = 'e88';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -6695,10 +6695,24 @@ function attachRigTo(parent, cfg, lend, done) {
     // use this to stain themselves toward the biome, and an animal should not be stained.
     // The uK on each of these is already driven by the clock in updateSky, so they come up at
     // dusk with everything else without a line here.
+    // ITS OWN MATERIALS, if it wants its own colour. SkeletonUtils.clone shares materials
+    // across every instance of a model, which is right for the texture (one upload) and wrong
+    // for anything that has to differ per animal. A material clone is a few hundred bytes and
+    // keeps the shared map, so a species with `hue` in its config pays nothing for this
+    // beyond the clone, and gets a tint entry of its own that a creature can drive.
+    const tints = [];
     if (cfg.glow) inst.traverse(o => {
       if (!o.isMesh) return;
-      for (const m of [].concat(o.material)) if (m && !m.userData.rigGlow) {
-        m.userData.rigGlow = 1; worldTint(m, Object.assign({ keep: 1, col: col('#ffffff') }, cfg.glow));
+      const own = cfg.hue !== undefined;
+      const mats = [].concat(o.material).map(m => {
+        if (!m) return m;
+        if (!own) return m;
+        const c = m.clone(); delete c.userData.rigGlow; delete c.userData.glow; return c;
+      });
+      if (own) o.material = Array.isArray(o.material) ? mats : mats[0];
+      for (const m of mats) if (m && !m.userData.rigGlow) {
+        m.userData.rigGlow = 1;
+        tints.push(worldTint(m, Object.assign({ keep: 1, col: col('#ffffff') }, cfg.glow)));
       }
     });
     let skinned = false;
@@ -7034,6 +7048,7 @@ function attachRigTo(parent, cfg, lend, done) {
     });
     done({
       root: inst, mixer, acts, box: e.box, scale: s, lift, span, baseY: inst.position.y, pivotY, holdSocket,
+      tints, hue: cfg.hue || 0,           // this body's own tint uniforms, if it has any
       melee: meleeK, wmelee: wmeleeK, oneShot,   // the combo lists, in the order they were named
       rateMax: cfg.rateMax,      // a short-strided clip may need to run faster than the default ceiling
       walkSpeed: walk ? e.strides[walk.name] * s : 0,
@@ -7384,6 +7399,13 @@ function tintFor(mat, biome, cfg) {
   }
   return m;
 }
+// YOURS. A creature you have fed takes on the wanderer's own orange, so the ones in your
+// pasture read as yours from across a field. `rate` is how quickly it comes over. And every
+// individual of a species that carries `hue` in its rig config is born a little way round the
+// colour wheel from the next, so a herd is not nine copies of one animal.
+const TAME = { col: '#ff9a3c', rate: .9 };
+// (declared above worldTint, which reads TAME.col: a const read above its declaration is
+// the landmine that has cost more cycles than any other in this file.)
 function worldTint(mat, cfg) {
   cfg = Object.assign({}, TINT, cfg || {});
   mat.emissive.setScalar(0); mat.emissiveMap = null;
@@ -7397,6 +7419,10 @@ function worldTint(mat, cfg) {
     // all while everything not tinted got its share. This puts it back as a flat term under
     // the glow, and it does NOT ride the dusk ramp: a lift that fades at dusk is not a lift.
     uLift: { value: (mat.userData && mat.userData.lift) || 0 },
+    // A turn round the hue wheel, in radians, and how far toward the owner's colour. Both
+    // zero on everything but a creature that asked for them; zero is exactly the shader that
+    // was here before.
+    uHue: { value: 0 }, uTame: { value: 0 }, uTameCol: { value: col(TAME.col) },
   };
   mat.userData.shaderTag = 'tint' + (cfg.key === 'cool' ? 'C' : '');
   mat.onBeforeCompile = sh => {
@@ -7410,16 +7436,31 @@ function worldTint(mat, cfg) {
     const KEY = cfg.key === 'cool'
       ? 'min(diffuseColor.b - diffuseColor.r, diffuseColor.g - diffuseColor.r)'
       : 'min(diffuseColor.r - diffuseColor.b, diffuseColor.g - diffuseColor.b)';
-    sh.fragmentShader = 'uniform float uLo, uHi, uK, uKeep, uLumA, uLumB, uLift;\nuniform vec3 uTint;\nfloat _glowK;\n'
+    sh.fragmentShader = 'uniform float uLo, uHi, uK, uKeep, uLumA, uLumB, uLift, uHue, uTame;\nuniform vec3 uTint, uTameCol;\nfloat _glowK;\n'
+      // Rodrigues about the grey axis: a rotation of the colour round the hue wheel that keeps
+      // its lightness, in three lines and no HSV round trip.
+      + 'vec3 hueRot(vec3 c, float a){ const vec3 k = vec3(0.57735); float cs = cos(a), sn = sin(a); return c * cs + cross(k, c) * sn + k * dot(k, c) * (1.0 - cs); }\n'
       + sh.fragmentShader
         .replace('#include <color_fragment>', `#include <color_fragment>
       {
         float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
         float warm = ${KEY};
         _glowK = smoothstep(uLo, uHi, warm) * smoothstep(uLumA, uLumB, lum);
+        // THE TURN GOES AFTER THE MASK. The glow picks out the warm bright parts of the
+        // authored texture -- a mossback's cream spots, a mudlark's orange markings -- and it
+        // has to keep picking them out whatever colour the rest of the animal has been turned
+        // to, or a shifted one would lose its lights.
+        if (abs(uHue) > 0.001) diffuseColor.rgb = clamp(hueRot(diffuseColor.rgb, uHue), 0.0, 1.0);
         // the body: nearly all the way to grey, then stained the world's colour
         vec3 body = mix(vec3(lum), diffuseColor.rgb, uKeep) * uTint;
         diffuseColor.rgb = mix(body, diffuseColor.rgb, _glowK);
+        // HIS. A tamed animal takes the wanderer's colour on its body and keeps its own lights:
+        // the owner's colour scaled by the texture's own lightness, so the shading and the
+        // markings survive and only the hue is his.
+        if (uTame > 0.001) {
+          vec3 own = uTameCol * (lum / max(dot(uTameCol, vec3(0.299, 0.587, 0.114)), 0.05));
+          diffuseColor.rgb = mix(diffuseColor.rgb, clamp(own, 0.0, 1.0), uTame * (1.0 - _glowK * 0.8));
+        }
       }`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       totalEmissiveRadiance += diffuseColor.rgb * (uLift + _glowK * uK);`);
@@ -7543,6 +7584,7 @@ const CREATURE_RIGS = {
   // A toucan, on the small bouncy one. Its own clips carry the motion, so the procedural
   // bob the primitive hopper used gets switched off the moment the rig lands.
   Hopper: {
+    hue: .42,             // each one a little way round the wheel from the next -- see TAME
     url: 'models/tucann.glb',
     cast: false,
     // Was 1.3, which is what the primitive body it replaced stood -- and at that size the
@@ -7603,6 +7645,7 @@ const CREATURE_RIGS = {
     glow: { lo: .14, hi: .40, k: 1.6, lum: [.42, .88] },
   },
   Grazer: {
+    hue: .38,             // each one a little way round the wheel from the next -- see TAME
     url: 'models/purple_horny.glb',
     height: 2.4,          // a mossback stands about this tall at the shoulder
     idle: 'idle', walk: 'walk',
@@ -7611,6 +7654,7 @@ const CREATURE_RIGS = {
     glow: { lo: .15, hi: .42, k: 1.7, lum: [.46, .88] },
   },
   Burrower: {
+    hue: .40,             // each one a little way round the wheel from the next -- see TAME
     url: 'models/creature_green.glb',
     cast: false,
     height: 1.6,          // a mudlark's own build, roughly
@@ -8111,6 +8155,7 @@ class Creature {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
     this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null;
+    this.tame = 0; this.tameK = 0; this.hue = 0;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
@@ -8166,6 +8211,9 @@ class Creature {
     if (rc) attachRig(this.g, rc, r => {
       if (!this.alive) { this.g.remove(r.root); return; }   // died while the GLB was in flight
       this.rig = r;
+      // Its own place on the wheel, fixed for life, off its phase so it is the same after a
+      // reload of the same world.
+      if (r.hue) { this.hue = (((this.phase * 3.7) % 2) - 1) * r.hue; for (const u of r.tints) u.uHue.value = this.hue; }
       // A species too small for its shadow to read does not pay to be drawn into the map.
       // Everything that casts is drawn twice a frame; for a hopper the second time buys a
       // smudge under it that the contact blob already provides.
@@ -8687,7 +8735,7 @@ class Creature {
     if (this.metCool > 0) this.metCool -= dt;
     if (this.curioCool > 0) this.curioCool -= dt;
     // (moved up from below the flee: the flee needs to know whether he still counts)
-    const known = this.trust > 0 || world.asSpecies === this.constructor.name;
+    const known = this.tame || this.trust > 0 || world.asSpecies === this.constructor.name;
     const him = pl && !pl.free && !pl.aboard && !known;
     if (this.alarm > 0) {
       this.alarm -= dt; this.moving = SENSE.run;
@@ -9064,6 +9112,11 @@ class Creature {
     else if (!this.senses(dt)) this.think(dt);
     this.locomote(dt);
     stepFace(this, dt);
+    // The colour of a tamed one comes over rather than switching, on every material it owns.
+    if (this.rig && this.rig.tints && (this.tame || this.tameK > .001)) {
+      this.tameK = lerp(this.tameK, this.tame ? 1 : 0, Math.min(1, dt * TAME.rate));
+      for (const u of this.rig.tints) u.uTame.value = this.tameK;
+    }
     if (this.ghost > 0) this.ghost -= dt;
     if (!this.flying) {
       const r = this.resolve(this.pos.x, this.pos.z);
@@ -19199,6 +19252,9 @@ function takeFood(c, kind, x, y, z) {
     // AND THIS ONE, PERSONALLY, now lets him walk right up to it -- which is the difference
     // between a species that tolerates him and the animal in front of him trusting him.
     c.trust = VIT.trust * VIT.trustFeed; c.ire = 0; c.alarm = 0; c.vig = Math.min(1, (c.vig || 0) + .3);
+    // AND IT IS HIS NOW. Trust is a window; this is for keeps -- it wears his colour and it
+    // does not run from him again. The pasture it belongs in is not built yet.
+    if (!c.tame) { c.tame = 1; logMsg('It takes the food from his hand, and it is his.'); }
     bubbleSay(c, 'fond');
     world.effects.push(new Burst(c.pos.x, c.pos.y + c.rad * .8, c.pos.z, '#d8ffb0', 9, .8));
     logMsg('The ' + nm + ' finds it where it landed and eats it on the spot.');
