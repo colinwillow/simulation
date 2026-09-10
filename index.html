@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e81';
+const BUILD = 'e82';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -10056,7 +10056,8 @@ const POACHER = {
   // goes at him.
   pounce: 4.8,
   grab: 2.6,
-  cool: [7, 16],     // between attempts, whether or not the last one worked
+  cool: [4, 10],     // between attempts, whether or not the last one worked
+  size: 1.8,         // the biggest thing he can get his arms round, by its collider radius
   react: .55,        // how long a hit reaction owns him
   limp: .55,         // he limps below this much of his wind
   // CARRYING ONE OFF. The grab used to be the end of the story -- he touched the animal, said
@@ -10133,6 +10134,39 @@ class Poacher extends Creature {
     if (this.fling.vy > POACHER.airAt) this.play(h.front > .1 ? 'airBwd' : 'airFwd', 1, 2.6);
     else this.play(Math.abs(h.right) < .45 ? 'hitC' : (h.right > 0 ? 'hitL' : 'hitR'), 1.35, POACHER.react);
     this.quarry = null; this.hunt = 0;
+  }
+  // Anything worth taking, inside `r`. One test, used by both the sense override and the hunt,
+  // so what makes him look up and what he then walks toward cannot disagree.
+  prey(r) {
+    return nearest(world.creatures, this.pos,
+      c => c.alive && c !== this && !(c instanceof Poacher) && !c.carried && !c.net
+        && !c.aquatic && !c.flying && (c.rad || 1) < POACHER.size, r || POACHER.see);
+  }
+  // HIS OWN BUSINESS OUTRANKS AN ANIMAL'S, and this is why no poacher had ever taken anything
+  // even after the grab rule was fixed. The hunt lives in think(), and think() only runs when
+  // senses() declines the wheel -- but senses() is an ANIMAL's senses: curiosity, thirst,
+  // chit-chat, fear. Every one of them returns true and owns him for seconds at a time. Stand
+  // still anywhere near a poacher and the curiosity branch has him watching YOU for fifteen
+  // seconds; put two of them together and the social branch has them greeting each other; walk
+  // them past a shore and the thirst branch takes them to the water and holds them there. All
+  // of which is exactly what was watched: two men standing next to a creature, doing nothing.
+  // A poacher is not an animal. The senses that are about his BODY still win -- out cold, and
+  // running for his life -- and everything else stands aside while there is something in reach
+  // worth taking. Their clocks still tick, so nothing starves for being skipped.
+  senses(dt) {
+    if (this.daze > 0 || this.alarm > 0 || this.fling || this.net) return super.senses(dt);
+    if (!this.carry && !this.quarry && !this.prey()) return super.senses(dt);
+    this.doing = '';
+    if (world.clock - this.hurtAt > VIT.regenAfter && this.vig < 1) this.vig = Math.min(1, this.vig + VIT.regen * dt);
+    if (this.ire > 0) this.ire = Math.max(0, this.ire - VIT.ireEase * dt);
+    if (this.trust > 0) this.trust -= dt;
+    if (this.metCool > 0) this.metCool -= dt;
+    if (this.curioCool > 0) this.curioCool -= dt;
+    if (this.drinkT > 0) this.drinkT -= dt;
+    if (this.met > 0) { this.met = 0; this.metWho = null; }
+    if (this.state === 'drink') { this.state = 'wander'; this.wp = null; }
+    this.curio = 0;
+    return false;                     // he is working; think() has the wheel
   }
   // TAKING ONE. `carried` is what stops everything else in the game reaching for it: the
   // player's own prompt skips a carried animal, the other poachers skip it, and the creature's
@@ -10213,9 +10247,8 @@ class Poacher extends Creature {
     // A creature worth having. He keeps the one he chose while it is still worth keeping.
     if (this.quarry && (!this.quarry.alive || this.quarry.carried || this.dist(this.quarry.pos) > POACHER.see * 1.4)) this.quarry = null;
     if (!this.quarry && this.cool <= 0) {
-      this.quarry = nearest(world.creatures, this.pos,
-        c => c.alive && c !== this && !(c instanceof Poacher) && !c.carried && !c.net && !c.aquatic && !c.flying && (c.rad || 1) < 1.6, POACHER.see);
-      if (this.quarry) this.hunt = rnd(14, 26);
+      this.quarry = this.prey();
+      if (this.quarry) this.hunt = rnd(18, 34);
     }
     if (this.quarry) {
       const d = this.dist(this.quarry.pos);
