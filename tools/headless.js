@@ -42,15 +42,27 @@ let stallWorst=0, stallWho='', stallState='', stallNear='', stallCount=0; const 
 const w=global.__w,C=global.__C,c=global.__count,obRad=global.__obRad;
 let worstOverlap=0, worstWho='', overlapFrames=0, stuckMax=0;
 const obs=new Set(); for(const [k,a] of global.__OB.map) for(const o of a) obs.add(o);
-const pDoing={}, pSeen=new Map(); let pBlank=0; let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
+const pDoing={}, pSeen=new Map(); let pBlank=0;
+// FLEE: park the player next to something and see whether it actually leaves.
+const flee={n:0,ran:0,walked:0,far:0,best:0,near:0,sees:0}; let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
 for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
   if(i%10===0){ for(const cr of w.creatures){ if(!(cr instanceof C.Poacher)||!cr.alive) continue;
     pSamples++; const d=cr.doing||'-'; pDoing[d]=(pDoing[d]||0)+1;
     if(cr.carry) pCarryFrames++;
     const had=pSeen.get(cr); if(cr.carry&&!had) pGrabs++; if(!cr.carry&&had) pDrops++; pSeen.set(cr,!!cr.carry);
     if(!cr.prey||!cr.prey()) pNoPrey++;
-    if(!cr.doing && pBlank<6){ pBlank++; console.log('[poacher blank] job',cr.job,'quarry',cr.quarry?cr.quarry.constructor.name:'-','roamT',(cr.roamT||0).toFixed(1),'alarm',(cr.alarm||0).toFixed(1),'startle',(cr.startle||0).toFixed(1),'daze',cr.daze.toFixed(1),'fling',!!cr.fling,'net',!!cr.net,'cool',cr.cool.toFixed(1),'met',(cr.met||0).toFixed(1),'state',cr.state); }
+    if(false){ pBlank++; console.log('[poacher blank] job',cr.job,'quarry',cr.quarry?cr.quarry.constructor.name:'-','roamT',(cr.roamT||0).toFixed(1),'alarm',(cr.alarm||0).toFixed(1),'startle',(cr.startle||0).toFixed(1),'daze',cr.daze.toFixed(1),'fling',!!cr.fling,'net',!!cr.net,'cool',cr.cool.toFixed(1),'met',(cr.met||0).toFixed(1),'state',cr.state); }
   } }
+  if(i>300 && i%15===0){ const P=global.__p;
+    for(const cr of w.creatures){ if(!cr.alive||cr.flying||cr.aquatic||!cr.SN||!cr.SN.wary) continue;
+      const d=Math.hypot(cr.pos.x-P.pos.x,cr.pos.z-P.pos.z);
+      if(d>26) continue; flee.near++;
+      if(cr.alarm>0||cr.startle>0){ flee.sees++;
+        const v=cr._pv===undefined?0:Math.hypot(cr.pos.x-cr._px,cr.pos.z-cr._pz)/(15/30);
+        if(v>cr.speed*0.9) flee.ran++; else if(v>0.2) flee.walked++;
+      }
+      cr._px=cr.pos.x; cr._pz=cr.pos.z; cr._pv=1;
+    } }
   maxRain=Math.max(maxRain,global.__wx.rain); maxStorm=Math.max(maxStorm,global.__wx.storm);
   if(i%30===0){ for(const cr of w.creatures){ if(!cr.alive||cr.flying||cr.aquatic) continue;
       let e=stall.get(cr); if(!e){ e={t:0,x:cr.pos.x,z:cr.pos.z,worst:0}; stall.set(cr,e); }
@@ -83,6 +95,8 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
     console.log('  #'+n+' doing '+(cr.doing||'-')+' cool '+(cr.cool||0).toFixed(1)+' hunt '+(cr.hunt||0).toFixed(1)
       +' quarry '+(cr.quarry?cr.quarry.constructor.name:'-')+' nearest prey '+(q?q.constructor.name:'none')+' at '+dd
       +' carry '+(cr.carry?cr.carry.constructor.name:'-')+' vig '+cr.vig.toFixed(2)+' daze '+cr.daze.toFixed(1)); } }
+console.log('[flee] samples near player '+flee.near+'  alarmed/startled '+flee.sees
+  +' ('+(100*flee.sees/Math.max(1,flee.near)).toFixed(0)+'%)  of those: running '+flee.ran+'  ambling '+flee.walked);
 const C2=global.__C;
 let nm=0,tri=0; global.__scene.traverse(o=>{ if(o.isMesh){nm++; const g=o.geometry; if(g&&g.index) tri+=g.index.count/3; else if(g&&g.attributes.position) tri+=g.attributes.position.count/3; }});
 console.log('meshes',nm,'approx tris',Math.round(tri/1000)+'k');

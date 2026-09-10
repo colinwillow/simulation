@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e89';
+const BUILD = 'e90';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7950,8 +7950,20 @@ const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7,
 // the freeze -- it looks first, then runs -- and `cool` keeps one animal from startling on
 // every frame of a chase.
 // `keep` is how far past its sight range a frightened animal keeps running from something that
-// is still following it; `run` is its pace while it does, over its cruise.
-const SENSE = { cone: .8, hear: 1.1, hold: 1.0, cool: 2.5, keep: 1.6, run: 1.3 };
+// is still following it.
+//
+// AND A WALK IS NOT A RUN. `speed` in every species config is its ONE pace, and a frightened
+// animal was leaving at 1.3 of it -- thirty per cent, which is nothing to look at, and which
+// is the whole of "it looks exactly the same as day one". `walk` is what everything moves at
+// going about its business; `run` is the bolt. Between them that is a factor of three, and
+// the gait blend is keyed off ground actually covered, so the walk clip and the run clip
+// follow with no line anywhere else.
+// A PREY ANIMAL'S EYES ARE ON THE SIDES OF ITS HEAD. .8 was a ninety-degree window straight
+// ahead, which is a predator's face and meant most of them had their blind side to you most of
+// the time. 1.25 is two hundred and eighty degrees of vision with a blind arc directly behind,
+// which is both what a grazing animal actually has and the only shape that makes creeping up
+// BEHIND one a real thing to do rather than a coin flip.
+const SENSE = { cone: 1.25, hear: 1.15, hold: 1.0, cool: 2.5, keep: 1.6, walk: .55, run: 1.75, shy: 22 };
 const VIT = {
   bolt: .34, melee: .26, thrash: .055,     // a plasma hit, a swing, and a second of fighting a net
   regenAfter: 9, regen: .05,               // it gets its wind back if he leaves it alone
@@ -8164,7 +8176,7 @@ class Creature {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
     this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null;
-    this.tame = 0; this.tameK = 0; this.hue = 0; this.fed = 0; this.friend = 0;
+    this.tame = 0; this.tameK = 0; this.hue = 0; this.fed = 0; this.friend = 0; this.shy = 0;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
@@ -8693,7 +8705,10 @@ class Creature {
     // straight into the boulder field, and the last thing a bolting creature should do is
     // spend its panic juddering against a rock.
     for (let pass = 0; pass < 2; pass++) {
-      const spread = pass ? 2.2 : 1.1, pad = pass ? .2 : this.rad + 1.1;
+      // .55 rather than 1.1: at a radian either side of straight-away, a third of the choices
+      // ran across your front and read as the animal ignoring you. The wide pass is still
+      // there for when there is genuinely nowhere directly behind it to go.
+      const spread = pass ? 2.2 : .55, pad = pass ? .2 : this.rad + 1.1;
       for (let i = 0; i < 14; i++) {
         const a = base + rnd(-spread, spread), r = rnd(14, 30);
         const x = this.pos.x + Math.sin(a) * r, z = this.pos.z + Math.cos(a) * r;
@@ -8749,7 +8764,7 @@ class Creature {
     const known = this.friend || this.tame || this.trust > 0 || world.asSpecies === this.constructor.name;
     const him = pl && !pl.free && !pl.aboard && !known;
     if (this.alarm > 0) {
-      this.alarm -= dt; this.moving = SENSE.run;
+      this.alarm -= dt; this.moving = 1;
       // AND IT KEEPS RUNNING WHILE YOU ARE STILL THERE. The alarm was a fixed two or three
       // seconds, which at a mossback's pace is a shuffle of a few body lengths and then a stop
       // -- and then, with you still standing over it, another freeze, another shuffle. That is
@@ -8762,7 +8777,7 @@ class Creature {
       // can actually get to, away from the threat, and run there.
       // and if the way there turns out to be blocked, pick again rather than grind at it
       if (!this.fleeTo || this.dist(this.fleeTo) < 3.5 || this.stall > 1.5) this.fleeTo = this.pickFlee(this.alarmFrom);
-      if (this.fleeTo) this.seek(this.fleeTo, 2.4);
+      if (this.fleeTo) this.seek(this.fleeTo, 3.2);
       else { this.alarm = 0; this.fleeTo = null; }        // nowhere to go: stop panicking
       if (this.alarm <= 0) this.fleeTo = null;
       this.doing = 'flee'; return true;
@@ -8809,6 +8824,7 @@ class Creature {
       const t = this.threat(wary, him ? pl : null);
       if (t) {
         this.startle = SENSE.hold; this.startleFrom = { x: t.x, z: t.z }; this.startleCool = SENSE.cool;
+        this.shy = SENSE.shy;
         // A QUESTION, THEN A SHOUT. The freeze is "what was that" -- it has heard or half-seen
         // something and is looking. The ! comes a second later, when it has decided and bolts.
         this.moving = 0; bubbleSay(this, 'watch');
@@ -8843,8 +8859,14 @@ class Creature {
     // A species that likes him comes over even if it was never a curious one, and comes from
     // further off. Nothing that is currently afraid of him gets here at all -- the flee branch
     // above has already taken the wheel.
+    // AND NOT IF IT HAS JUST RUN FROM HIM. Curiosity is what walks an animal over to look at
+    // you when you stand still, and it is meant to be charming -- but a creature that startled,
+    // bolted, calmed down and then strolled straight back at you is the single clearest way to
+    // make the whole sensing system read as broken, and it is exactly what was watched.
+    // `shy` is set on every startle: for that long it wants nothing to do with him.
+    if (this.shy > 0) this.shy -= dt;
     const cur = S.curious || (md >= MOOD.fond ? 1 : 0);
-    if (cur && him && this.curioCool <= 0 && this.stall < 3 && pl.speed < .8 && this.dist(pl.pos) < 32 + md * 26) {
+    if (cur && him && this.shy <= 0 && this.curioCool <= 0 && this.stall < 3 && pl.speed < .8 && this.dist(pl.pos) < 32 + md * 26) {
       this.curio += dt;
       if (this.curio >= 15) { this.curio = 0; this.curioCool = rnd(40, 95); }
       else {
@@ -8891,8 +8913,11 @@ class Creature {
       if (d < .3) return true;
       if (any) return d < range;                                                // already alert: just distance
       if (d < range && (dx * fx + dz * fz) / d > cosC) return true;             // seen
-      const n = clamp(noise, 0, 1);
-      return d < range * SENSE.hear * n * n;                                    // heard
+      // LINEAR IN THE NOISE, not squared. Squared meant a walk at half pace was heard at a
+      // quarter of the range -- three or four units -- so walking up behind one was silent and
+      // so, very nearly, was jogging. Now a walk carries half as far as a sprint, which is
+      // what makes the tiptoe a CHOICE rather than the only setting that works.
+      return d < range * SENSE.hear * clamp(noise, 0, 1);                       // heard
     };
     if (pl && test(pl.pos.x, pl.pos.z, pl.speed / MOVE.max)) return pl.pos;
     const po = nearest(world.creatures, this.pos, c => c instanceof Poacher && c.alive && c.daze <= 0 && !c.fling, range * SENSE.hear);
@@ -8934,6 +8959,10 @@ class Creature {
     return null;
   }
   wander() { if (!this.wp || Math.hypot(this.wp.x - this.pos.x, this.wp.z - this.pos.z) < 3) this.wp = this.pickWander(); if (this.wp) this.seek(this.wp); else this.heading += .8; }
+  // Walk or run. One place, so nothing has to remember to ask for the difference: a frightened
+  // animal covers three times the ground of one going about its business, and everything that
+  // reads speed -- the gait blend, the footfalls, the stall watchdog -- follows from that.
+  paceK() { return this.alarm > 0 ? SENSE.run : SENSE.walk; }
   seek(p, w = 1) { const dx = p.x - this.pos.x, dz = p.z - this.pos.z, d = Math.hypot(dx, dz) || 1; this.steer.x += dx / d * w; this.steer.z += dz / d * w; }
   flee(p, w = 1) { this.seek(p, -w); }
   dist(p) { return Math.hypot(p.x - this.pos.x, p.z - this.pos.z); }
@@ -9003,7 +9032,7 @@ class Creature {
     this.moveK = lerp(this.moveK, this.moving, Math.min(1, dt * 4));
     if (this.moveK > .02) {
       const shelter = this.flying || this.aquatic ? 1 : 1 - WX.storm * .45;   // nothing hurries in a storm
-      const st = this.speed * this.moveK * (1 - this.nearMiss * .28) * shelter * dt;
+      const st = this.speed * this.moveK * this.paceK() * (1 - this.nearMiss * .28) * shelter * dt;
       const nx = this.pos.x + Math.sin(this.heading) * st, nz = this.pos.z + Math.cos(this.heading) * st;
       const step = (h2, dist) => {
         const mx = this.pos.x + Math.sin(h2) * dist, mz = this.pos.z + Math.cos(h2) * dist;
@@ -9320,7 +9349,10 @@ class Weaver extends Creature {
   // The one that isn't afraid of you. It will put its work down and come over to look, and a
   // spark dropped on the ground is worth crossing a field for.
   constructor(x, z) { super(x, z, { speed: 4.6, turn: 3.2, rad: .95, look: 7,
-    curious: 1.2, notice: 24, spark: 1, thirst: 200 }); this.gait = 10; this.bob = .22; this.carry = null; this.state = 'seek'; this.tree = null; }
+    // A SMALL ONE, and it is the hearing that does the work here. A tinker is bold and it is
+    // meant to come over and look at you -- that is its whole character -- so a calm walk up to
+    // one still gets curiosity. Run at it and it startles like anything else.
+    wary: 5, curious: 1.2, notice: 24, spark: 1, thirst: 200 }); this.gait = 10; this.bob = .22; this.carry = null; this.state = 'seek'; this.tree = null; }
   build() {
     const b = this.body, skin = pick(M.weaver);
     b.add(mesh(G.blob[1], skin, .62, .95, .5, 0, 1.5, 0));            // torso
@@ -10506,6 +10538,10 @@ class Poacher extends Creature {
     this.moving = d < POACHER.creep ? POACHER.creepK : .85;
     this.doing = inFront && d >= POACHER.grab * 1.8 ? 'circle' : 'stalk';
   }
+  // He is a man, not a grazing animal: the numbers in think() already say how fast he means to
+  // go, so the species-wide walk does not apply to him. A chase is the exception -- it has to
+  // out-run a bolting hopper, which is now leaving at 1.75 of its own cruise.
+  paceK() { return this.job === 'chase' ? SENSE.run : 1; }
   // Turn toward a point at his own turn rate, standing still. (Not `face` -- that is the
   // creature's mood-face STRING, and a method of the same name is shadowed by the field.)
   turnTo(pt, dt) {
