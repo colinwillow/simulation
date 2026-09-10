@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e61';
+const BUILD = 'e62';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -3515,6 +3515,25 @@ function glow(hex, size, opacity = .8) {
 }
 
 // ---------- sky dome ----------
+// THE HORIZON BAND. Where the sea's edge meets the HDRI there was nothing -- the panorama
+// simply ran down past the waterline and the water started, and the join was a hard cut with
+// no air in it. This is a thin strip of haze sitting on that join, in the dome, behind
+// everything in the world. It is NOT the old fog: that covered the whole background and is
+// staying gone. This one is a couple of degrees tall and everything above it is untouched.
+//   k    strength, 0 is off
+//   y    where the middle of the band sits, in sin(elevation) -- slightly below the
+//        waterline, because the planet's edge is a touch below eye level from the ground
+//   t    half-thickness in the same units; .04 is about 2.3 degrees, and the camera's
+//        whole frame is 46, so the band is a tenth of the picture at most
+//   roll how much the strip wanders up and down around the compass, so it reads as weather
+//        at a distance instead of a drawn line
+const HZ = { k: .34, y: -.022, t: .042, roll: .5, col: new THREE.Color(0xdfeaf0) };
+// ?hz=0 turns it off, ?hz=.6 doubles it, ?hzt=.09 makes it a fat one -- so the two numbers
+// worth arguing about can be argued about on the phone instead of over a push.
+try {
+  const q = /[?&]hz=([\d.]+)/.exec(location.search); if (q) HZ.k = clamp(+q[1] || 0, 0, 1.2);
+  const w = /[?&]hzt=([\d.]+)/.exec(location.search); if (w) HZ.t = clamp(+w[1] || .042, .008, .3);
+} catch (_) {}
 const skyUni = {
   uTop: { value: new THREE.Color(0x2a6fc4) }, uMid: { value: new THREE.Color(0x9ec8ea) }, uLow: { value: new THREE.Color(0xd9e5ee) },
   uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Color(0xffe6bb) }, uSunI: { value: 1 },
@@ -3547,7 +3566,9 @@ const skyUni = {
   // now, and takes the sky above the horizon -- but this keeps the band at and below it,
   // and it is the only thing that puts the title screen's sky over the island today.
   uPlate: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([12, 10, 26, 255]), 1, 1); t.needsUpdate = true; return t; })() },
-  uPlateK: { value: 0 }, uPlateRep: { value: 3 }, uPlateH: { value: .34 }, uSpace: { value: 0 }
+  uPlateK: { value: 0 }, uPlateRep: { value: 3 }, uPlateH: { value: .34 }, uSpace: { value: 0 },
+  uHzK: { value: HZ.k }, uHzY: { value: HZ.y }, uHzT: { value: HZ.t }, uHzR: { value: HZ.roll },
+  uHzCol: { value: HZ.col }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
@@ -3557,6 +3578,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
     uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh,uNeb,uEnvK; uniform vec2 uWind; varying vec3 vD;
     uniform vec3 uOrbA,uOrbB; uniform sampler2D uEnv;
     uniform sampler2D uPlate; uniform float uPlateK, uPlateRep, uPlateH, uSpace;
+    uniform float uHzK, uHzY, uHzT, uHzR; uniform vec3 uHzCol;
     // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -3650,6 +3672,23 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
         // that band as well: a soft roll-off well below the horizon, where the sea and the
         // terrain are in front of the dome anyway and nobody can see the difference.
         c = mix(c, e, uEnvK * smoothstep(-0.55, -0.28, h));
+      }
+      // The strip of air along the world's edge. It goes in after the panorama and the plate
+      // so it sits over both, and before the clouds and the sun so those still draw through
+      // it -- which is the order the real thing has: haze is the nearest of the far things.
+      // A gaussian, so there is no edge anywhere to catch the eye; a slow wander in the
+      // centre height around the compass, so it is not a ruled line; brighter toward the sun
+      // for the same reason the sky is. It closes down as the camera leaves the air, because
+      // from up there the horizon is the planet's limb and this would be a halo.
+      if (uHzK > 0.002) {
+        float wob = (fbm(vec2(atan(d.z, d.x) * 1.7, 4.2)) - 0.5) * uHzT * uHzR;
+        float g = (h - uHzY - wob) / max(uHzT, 0.004);
+        float t = exp(-g * g);
+        vec2 fd = normalize(vec2(d.x, d.z) + 1e-5), fs = normalize(vec2(sn.x, sn.z) + 1e-5);
+        float toward = 0.62 + 0.55 * pow(max(dot(fd, fs) * 0.5 + 0.5, 0.0), 3.0);
+        vec3 hc = mix(uHzCol * vec3(0.26, 0.30, 0.42), uHzCol * mix(vec3(1.0), uSunCol, 0.35), dayL);
+        float k = t * uHzK * toward * (1.0 - cl * 0.55) * (1.0 - max(uHigh, uSpace));
+        c = mix(c, hc, clamp(k, 0.0, 1.0));
       }
       float sh = fbm(cuv * 2.7 + 3.1);
       vec3 cLit = mix(vec3(1.0), uMid, 0.3) * dayL;
