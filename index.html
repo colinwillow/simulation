@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e78';
+const BUILD = 'e79';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -6618,9 +6618,21 @@ const RIG_WARNED = new Set();
 // What it is worth: a second poacher exported with no clips at all is the mesh and nothing
 // else. Whether that is worth doing is a judgement about how many characters end up sharing
 // one set -- see the note in the reply. This exists so it is a config line either way.
+// `cfg.clipsAlso` is the same trick used the other way round: keep everything the model was
+// exported with and ADD whatever of the donor's set it does not already have, its own winning
+// every name clash. clipsFrom is for a body with no clips at all; this is for a body that has
+// fourteen of its own and is missing one gesture somebody else already authored -- the
+// poacher's pick-up and carry, which are the wanderer's, on a skeleton with the same names.
 function attachRig(parent, cfg, done) {
   if (cfg.clipsFrom) {
     loadModel(cfg.clipsFrom, donor => attachRigTo(parent, cfg, donor.anims, done));
+    return;
+  }
+  if (cfg.clipsAlso) {
+    loadModel(cfg.url, own => loadModel(cfg.clipsAlso, donor => {
+      const have = new Set(own.anims.map(a => a.name));
+      attachRigTo(parent, cfg, own.anims.concat(donor.anims.filter(a => !have.has(a.name))), done);
+    }, () => attachRigTo(parent, cfg, null, done)), () => attachRigTo(parent, cfg, null, done));
     return;
   }
   attachRigTo(parent, cfg, null, done);
@@ -7552,6 +7564,11 @@ const CREATURE_RIGS = {
       hobble: 'injured_hobble', sneak: 'walk_tip_toe', walk2: 'walk_02',
     },
     extraLoop: ['hobble', 'sneak', 'walk2', 'idle2'],
+    // He has no stoop and no cradle of his own, and does not need one exported: both are
+    // rotations on a skeleton with the same bone names as the wanderer's, so they come off
+    // that file and drive this body unchanged. See attachRig's clipsAlso.
+    clipsAlso: 'models/alien_orange.glb',
+    pickUp: 'pick_up_object', hold: 'holding_item',
     // AND TWO OF THEM TRAVEL. Measured: hips Z runs 73 units on walk_02 and 54 on the tiptoe,
     // against under 20 for everything else in the file -- he meant to strip those and did not.
     // It costs nothing to do it here and it means the export does not have to be redone.
@@ -9012,7 +9029,10 @@ class Creature {
       stepRig(this.rig, dt, dt > 0 ? Math.hypot(this.rx - px, this.rz - pz) / dt : 0, !this.flying && !this.aquatic,
         // act / gait are how a species with its own clips drives them: it sets them on itself
         // and this hands them through. Nothing that has neither pays anything for them.
-        { top: this.speed * 1.45, runAt: .78, runFull: .98, act: this.act || null, actK: this.actK || 0, gait: this.gaitClip || null });
+        { top: this.speed * 1.45, runAt: .78, runFull: .98, act: this.act || null, actK: this.actK || 0, gait: this.gaitClip || null,
+          // and the two the carry needs: the cradle over the top of the gait, and the stoop.
+          holding: this.carryK || 0,
+          lift: this.grabT > 0 ? smooth(0, .14, Math.min(this.grabT, POACHER.stoop - this.grabT) * 2) : 0 });
     }
   }
   dispose() { scene.remove(this.g); }
@@ -10001,6 +10021,9 @@ class Walker extends Creature {
 // it and one from behind sends him forward; worn down he limps; out cold he lies there until
 // he comes round and gets up. All of it hangs off the vigour and daze the whole island already
 // runs on -- see VIT -- so none of it is a second damage system.
+// His own standing height, for anything that has to place something against his body. Read off
+// the taller of the two rigs rather than off `rad`, which is a footprint.
+const POACHER_H = 3.3;
 const POACHER = {
   airAt: 5.5,        // upward launch below this is a shove, not a flight -- see knock
   see: 34,           // how far off he notices a creature worth having
@@ -10009,6 +10032,14 @@ const POACHER = {
   cool: [7, 16],     // between attempts, whether or not the last one worked
   react: .55,        // how long a hit reaction owns him
   limp: .55,         // he limps below this much of his wind
+  // CARRYING ONE OFF. The grab used to be the end of the story -- he touched the animal, said
+  // so in the log, and let go. Now he picks it up and walks it home, which is the whole reason
+  // a poacher is on the island and the thing the player is meant to interrupt.
+  stoop: .55,        // how long the bend owns him
+  haul: 34,          // the longest he will spend walking one home before giving it up
+  hold: 5,           // how fast the cradle blends in and out
+  camp: 7,           // near enough to the camp to set it down
+  put: 1.5,          // and how far in front of him it goes when he does
 };
 class Poacher extends Creature {
   constructor(x, z) {
@@ -10018,6 +10049,7 @@ class Poacher extends Creature {
       wary: 0, flock: 0, notice: 26, social: 1, thirst: 90,
       rigKey: (Poacher._n = (Poacher._n || 0) + 1) % 2 ? 'Poacher' : 'Poacher1' });
     this.quarry = null; this.hunt = 0; this.cool = rnd(0, 8);
+    this.carry = null; this.carryK = 0; this.carryT = 0; this.grabT = 0;
     this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
     this.hasAir = 1;                       // and two for being in it: skip the procedural lean
@@ -10058,6 +10090,7 @@ class Poacher extends Creature {
     const h = this.hitFrom(from);
     this.play(Math.abs(h.right) < .45 ? 'hitC' : (h.right > 0 ? 'hitL' : 'hitR'), 1.35, POACHER.react);
     this.quarry = null; this.hunt = 0;
+    if (this.carry) this.dropCarry('hit');
   }
   knock(from, force = 1) {
     const h = this.hitFrom(from);
@@ -10074,6 +10107,52 @@ class Poacher extends Creature {
     else this.play(Math.abs(h.right) < .45 ? 'hitC' : (h.right > 0 ? 'hitL' : 'hitR'), 1.35, POACHER.react);
     this.quarry = null; this.hunt = 0;
   }
+  // TAKING ONE. `carried` is what stops everything else in the game reaching for it: the
+  // player's own prompt skips a carried animal, the other poachers skip it, and the creature's
+  // update returns on the first line because somebody else is placing it -- which from here
+  // means this poacher is, in holdPlace, every frame until he lets go.
+  takeIt(o) {
+    if (!o || !o.alive || this.carry) return;
+    o.carried = 1; o.fling = null; o.holeOff(1); o.abandon();
+    o.wp = null; o.target = null; o.alarm = 0; o.moving = 0; o.animK = 0;
+    this.carry = o; this.carryT = POACHER.haul; this.grabT = POACHER.stoop;
+    bubbleSay(o, 'alarm'); snd.beast(o, 'alarm');
+    logMsg('A poacher has one under his arm, and he is walking off with it.');
+  }
+  // And letting go, for any reason at all: he arrived, he ran out of patience, he was knocked
+  // flat, or he stopped existing. One exit, so none of those can leave an animal parented to
+  // a man who is no longer holding it.
+  dropCarry(why) {
+    const o = this.carry;
+    this.carry = null; this.carryT = 0; this.grabT = 0;
+    if (!o) return;
+    const h = this.heading;
+    let x = this.pos.x + Math.sin(h) * POACHER.put, z = this.pos.z + Math.cos(h) * POACHER.put;
+    if (!o.terrainOK(x, z)) { x = this.pos.x; z = this.pos.z; }
+    o.carried = 0; o.holeOff(0);
+    o.pos.set(x, groundY(x, z), z);
+    o.rx = x; o.rz = z; o.px0 = x; o.pz0 = z; o.lastGood.set(x, 0, z);
+    o.ghost = 1.2; o.stall = 0; o.stuck = 0; o.pinned = 0; o.recover = null;
+    world.effects.push(new Burst(x, o.pos.y + .5, z, '#cdbf9c', 7, .7));
+    if (why === 'camp') { logMsg('He drops it at the camp and goes back for another.'); o.spook(this.pos, 10); }
+    else { o.roamT = 3; o.spook(this.pos, 8); }
+  }
+  // Where it rides. The wanderer hangs his on the hold pose's own socket null; this is the
+  // honest cheap version -- chest high, a half stride in front, standing up and facing out --
+  // because the poacher's rig hands back no socket of its own and a wrong null puts an animal
+  // through his ribs.
+  holdPlace(dt) {
+    const o = this.carry; if (!o || !o.g) return;
+    const h = this.heading, out = .55 + (o.rad || 1) * .55;
+    const x = this.pos.x + Math.sin(h) * out, z = this.pos.z + Math.cos(h) * out;
+    const y = this.pos.y + POACHER_H * .52;
+    o.pos.set(x, y, z); o.rx = x; o.rz = z; o.px0 = x; o.pz0 = z;
+    o.animK = 0; o.moving = 0; o.stall = 0;
+    o.g.position.set(x, y, z);
+    alignTo(o.g, x, z, .5); o.g.rotateY(h + Math.PI);      // looking back over his shoulder
+    o.g.position.y -= o.pivotY() * .8;                     // by its middle, not by its feet
+    if (o.rig) o.rig.mixer.update(dt);                     // it keeps breathing while it is held
+  }
   // Out cold: he lies where he went down, and gets up when he comes round. Called from
   // senses(), which is the only thing running while he is under.
   dazePose() {
@@ -10088,6 +10167,22 @@ class Poacher extends Creature {
     if (this.actT > 0 && (this.act === 'lay' || this.act === 'standUp')) { this.moving = 0; return; }
     // Worn down, he limps -- which is also the tell that he can be taken.
     this.gaitClip = (this.vig < POACHER.limp && this.rig && this.rig.acts.hobble) ? 'hobble' : null;
+    // ARMS FULL: he is going home, and nothing else is interesting. The stoop owns him for its
+    // own length first, so he bends over the animal rather than gliding away from it.
+    if (this.carry) {
+      this.quarry = null;
+      if (this.grabT > 0) { this.moving = 0; this.doing = 'stoop'; return; }
+      const c = world.poachCamp || this.lastGood;
+      const d = this.dist(c);
+      this.carryT -= dt;
+      if (d < POACHER.camp) { this.dropCarry('camp'); this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); return; }
+      if (this.carryT <= 0) { this.dropCarry('bored'); this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); return; }
+      this.gaitClip = null;                    // the cradle is an overlay; the legs walk normally
+      this.moving = .85;
+      this.seek(c, 1.0);
+      this.doing = 'haul';
+      return;
+    }
     // A creature worth having. He keeps the one he chose while it is still worth keeping.
     if (this.quarry && (!this.quarry.alive || this.quarry.carried || this.dist(this.quarry.pos) > POACHER.see * 1.4)) this.quarry = null;
     if (!this.quarry && this.cool <= 0) {
@@ -10103,16 +10198,12 @@ class Poacher extends Creature {
         // The grab. It works on something already worn down or dazed, and otherwise it does
         // not -- the same rule the player's own capture runs on, which is the point of him.
         this.cool = rnd(POACHER.cool[0], POACHER.cool[1]);
-        const got = this.quarry.daze > 0 || this.quarry.vig < .45;
-        if (got) {
-          creatureHurt(this.quarry, .5, this.pos);
-          logMsg('A poacher gets his hands on ' + (MOOD.label[this.quarry.constructor.name] || 'something').replace(/^the /, 'a ').replace(/s$/, ''));
-        } else {
-          this.quarry.spook(this.pos, 14);
-          bubbleSay(this.quarry, 'alarm');
-        }
+        const q = this.quarry;
+        this.quarry = null; this.doing = 'grab';
+        if (q.daze > 0 || q.vig < .45) { this.takeIt(q); return; }
+        q.spook(this.pos, 14); bubbleSay(q, 'alarm');
         this.play('idle2', 1, 1.6);
-        this.quarry = null; this.doing = 'grab'; return;
+        return;
       }
       // Close in, then creep. A poacher who runs at everything catches nothing, and the
       // tiptoe is the whole reason to watch him.
@@ -10128,6 +10219,14 @@ class Poacher extends Creature {
   }
   update(dt) {
     if (this.daze > 0) this._wasDown = 1;
+    // ANYTHING THAT TAKES HIS ARMS TAKES THE ANIMAL. Knocked flat, netted, out cold, in the
+    // water or simply gone: one test, before the brain runs, so no branch can end with a
+    // creature parented to a man who is not holding it any more. This is also the whole of
+    // "how do I get it back" -- put him down and it is loose.
+    if (this.carry && (this.daze > 0 || this.fling || this.net || !this.alive
+        || !this.carry.alive || this.carry.carried !== 1)) this.dropCarry('lost');
+    this.grabT = Math.max(0, this.grabT - dt);
+    this.carryK = lerp(this.carryK, this.carry && this.grabT <= 0 ? 1 : 0, Math.min(1, dt * POACHER.hold));
     // FEET DOWN, POSE DOWN -- and "down" is not "the fling object is gone". A fling has a REST
     // phase: it lands, stops, and lies there gathering itself up with this.fling still set for
     // another second or so. Testing for the object meant the air pose ran through the whole of
@@ -10137,7 +10236,11 @@ class Poacher extends Creature {
     if (!up && this.actT > .12 && (this.act === 'airFwd' || this.act === 'airBwd')) this.actT = .12;
     this.stepAct(dt);
     super.update(dt);
+    // AFTER the body has moved, not before: holdPlace reads his position and his heading, and
+    // reading them a frame early is an animal that swims a stride behind the man carrying it.
+    if (this.carry) this.holdPlace(dt);
   }
+  dispose() { if (this.carry) this.dropCarry('lost'); super.dispose(); }
 }
 class Hopper extends Creature {
   // Nervous, and it does not keep that to itself: one hopper bolting takes the whole flock
