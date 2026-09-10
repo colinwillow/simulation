@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e69';
+const BUILD = 'e70';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -5356,7 +5356,13 @@ function zapFX(o, k) { if (o && o.alive) world.effects.push(new ZapFX(o, k)); }
 // stands it up in the local frame and the orbit is horizontal over the head wherever on the
 // sphere that head happens to be; the stars themselves are sprites, so they stay square to
 // the lens and take no notice of the body having rolled onto its side underneath them.
-const DIZZY = { n: 3, max: 5, far: 62, r: .8, squash: .42, rate: 2.4, head: 1.15, size: .55, t: 0 };
+const DIZZY = { n: 3, max: 5, far: 62, r: .8, squash: .42, rate: 2.4, size: .55, t: 0,
+  // How far over the crown the ring floats, times the body's own size, and how long the body
+  // has to have been down before they come out -- see `after`. They were appearing on the
+  // frame of the hit, over something still on its feet, which reads as a bug rather than as a
+  // state: the knockdown has to land first.
+  gap: .40, after: .5 };
+const _dzA = new THREE.Vector3(), _dzB = new THREE.Vector3(), _dzU = new THREE.Vector3(), _dzQ = new THREE.Quaternion();
 let _starTex = null;
 function starTex() {
   if (_starTex) return _starTex;
@@ -5398,11 +5404,12 @@ function sweepDizzy(dt) {
   let k = 0;
   for (const c of world.creatures) {
     if (k >= DIZZY.max) break;
-    if (!c.alive || c.carried || !(c.daze > 0)) continue;
+    if (!c.alive || c.carried || !(c.daze > 0) || !c.g) continue;
+    if ((c.dazeMax || 0) - c.daze < DIZZY.after) continue;      // it is down before it is dizzy
     if (Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z) > DIZZY.far) continue;
     const ring = P[k++], rad = c.rad || 1;
     ring.g.visible = true;
-    ring.g.position.set(c.pos.x, c.pos.y + rad * DIZZY.head + .3, c.pos.z);
+    ring.g.position.set(c.g.position.x, c.g.position.y + c.crownY() + rad * DIZZY.gap, c.g.position.z);
     // It goes out as it comes round, so waking is not a pop. (Not off dazeK -- that is the
     // roll-onto-its-side for creatures with no lay clip, and it is zero for everything that
     // has one, which is every poacher.)
@@ -7975,7 +7982,7 @@ function creatureHurt(c, k, from, quiet) {
   const big = (c.rad || 1) >= VIT.bold || c.massive;
   c.ire = clamp(c.ire + VIT.ire * (big ? 1.25 : 1) * (k / VIT.bolt), 0, 1);
   if ((c.vig <= 0 || k >= VIT.drop) && c.daze <= 0) {
-    c.daze = rnd(VIT.dazeT[0], VIT.dazeT[1]);
+    c.daze = c.dazeMax = rnd(VIT.dazeT[0], VIT.dazeT[1]);
     c.ire = 0; c.alarm = 0; c.fleeTo = null; c.abandon();
     bubbleSay(c, 'daze');
     if (!quiet) snd.daze(c.pos.x, c.pos.z);
@@ -8069,7 +8076,45 @@ class Creature {
   // this: it reads matrixWorld, and a creature's group carries the planet projection, so its
   // world box is on the sphere while everything here is on the chart.
   measurePivot() {
-    const box = new THREE.Box3(), v = new THREE.Vector3(), stack = [];
+    const box = this.measureBox();
+    if (!box) return (this.rad || 1) * .8;
+    return clamp((box.min.y + box.max.y) * .5, .15, 8);
+  }
+  // THE TOP OF THE HEAD, and it is measured rather than guessed. A ring of stars placed at a
+  // multiple of `rad` sat inside the skull on anything tall and a foot over the ears on
+  // anything wide, because `rad` is a COLLIDER radius -- a footprint -- and has nothing to say
+  // about height. Mixamo rigs carry a bone at the literal tip of the head (HeadTop_End), so a
+  // rigged body is exact and LIVE: lay it on its side and the crown goes down with it. Only
+  // something with no head bone at all falls back to the bind-pose box.
+  crownY() {
+    if (this._crownB === undefined) {
+      let b = null;
+      for (const re of [/head(top)?[_.]?end$/i, /^(mixamorig)?[:_]?head$/i, /head/i]) {
+        this.g.traverse(o => { if (!b && o.isBone && re.test(o.name)) b = o; });
+        if (b) break;
+      }
+      this._crownB = b || null;
+    }
+    const b = this._crownB || this.head;
+    if (b) {
+      b.updateWorldMatrix(true, false);
+      // Along the BODY'S own up, in world units. Not the local-frame translation: a group
+      // that carries a scale would report that in its own units, and lengths on the sphere
+      // are chart lengths anyway -- the planet map bends, it does not stretch.
+      _dzA.setFromMatrixPosition(b.matrixWorld);
+      _dzB.setFromMatrixPosition(this.g.matrixWorld);
+      this.g.getWorldQuaternion(_dzQ);
+      const y = _dzA.sub(_dzB).dot(_dzU.set(0, 1, 0).applyQuaternion(_dzQ));
+      if (isFinite(y) && y > .1) return y;
+    }
+    if (this._crownY === undefined) {
+      const box = this.measureBox();
+      this._crownY = box ? clamp(box.max.y, .4, 14) : (this.rad || 1) * 1.7;
+    }
+    return this._crownY;
+  }
+  measureBox() {
+    const box = new THREE.Box3(), v = new THREE.Vector3();
     const walk = (o, par) => {
       o.updateMatrix();
       const w = new THREE.Matrix4().multiplyMatrices(par, o.matrix);
@@ -8083,8 +8128,8 @@ class Creature {
     };
     const I = new THREE.Matrix4();
     for (const c of this.g.children) walk(c, I);
-    if (!isFinite(box.min.y) || !isFinite(box.max.y)) return (this.rad || 1) * .8;
-    return clamp((box.min.y + box.max.y) * .5, .15, 8);
+    if (!isFinite(box.min.y) || !isFinite(box.max.y)) return null;
+    return box;
   }
   addLeg(x, z, len, mat, r = .17) {
     const hip = new THREE.Group(); hip.position.set(x, len, z);
@@ -8511,6 +8556,11 @@ class Creature {
     // stops a second knock being free -- it is on its feet and worth something again.
     if (this.daze > 0) {
       this.daze -= dt; this.moving = 0; this.wp = null; this.target = null; this.alarm = 0;
+      // AND IT ACTUALLY LIES DOWN. senses() takes the wheel before think() ever runs, so the
+      // poacher's own "if dazed, play lay" lived in a branch that could not be reached: he had
+      // the clip, he had the get-up, and he had never once used either. Anything with a way of
+      // being down says so here.
+      if (this.dazePose) this.dazePose(dt);
       if (this.daze <= 0) { this.vig = Math.max(this.vig, VIT.dazeGet); this.spook(pl ? pl.pos : this.pos, 0); }
       this.doing = 'daze'; return true;
     }
@@ -9931,11 +9981,16 @@ class Poacher extends Creature {
     else this.play(Math.abs(h.right) < .45 ? 'hitC' : (h.right > 0 ? 'hitL' : 'hitR'), 1.35, POACHER.react);
     this.quarry = null; this.hunt = 0;
   }
+  // Out cold: he lies where he went down, and gets up when he comes round. Called from
+  // senses(), which is the only thing running while he is under.
+  dazePose() {
+    this.gaitClip = null;
+    this._wasDown = 1;
+    if (this.act !== 'lay') this.play('lay', 1, this.daze + .6);
+  }
   think(dt) {
     this.moving = 1;
     this.cool = Math.max(0, this.cool - dt);
-    // Out cold: he lies where he went down, and gets up when he comes round.
-    if (this.daze > 0) { this.gaitClip = null; if (this.act !== 'lay') this.play('lay', 1, this.daze + .6); this.moving = 0; return; }
     if (this._wasDown) { this._wasDown = 0; this.play('standUp', 1.15); }
     if (this.actT > 0 && (this.act === 'lay' || this.act === 'standUp')) { this.moving = 0; return; }
     // Worn down, he limps -- which is also the tell that he can be taken.
@@ -16355,7 +16410,10 @@ const MELEE = {
   // to it, so a tackle that starts at 19 and decays is a man braking out of a sprint -- which
   // is exactly what "he just slides in place" looks like. `lunge` floors the start at a little
   // over whatever he was already doing, so it can only ever be a gain.
-  slideAt: 4.2, slideSpeed: 22, slideT: .70,
+  // AND IT TRAVELS. 22 over .70 with a third-speed tail carries about eight units, which is
+  // three body lengths and reads as a stumble. These carry thirteen. slideRate stretches the
+  // clip to cover the longer trip, or the last third of it is a man standing up and gliding.
+  slideAt: 4.2, slideSpeed: 26, slideT: .95, slideRate: .78,
   slideFar: 5.2,     // closer than this and the opening move is a punch, not a tackle
   // THE CLIPS PLAY HOT, and the bare-handed three play hotter than the armed four. A punch
   // is a jab: 0.92 s of authored swing is a man deciding to hit something. At 1.7 it is 0.54,
@@ -16468,7 +16526,7 @@ function meleeFlick(x, y) {
     && (!tgt || tgt.d > MELEE.slideFar);
   const key = slide ? 'slide' : list[p.melN % list.length];
   const armed = p.armWant && p.armed > .4;
-  const rate = slide ? MELEE.rate * .9 : (armed ? MELEE.rate : MELEE.bareRate);
+  const rate = slide ? MELEE.rate * MELEE.slideRate : (armed ? MELEE.rate : MELEE.bareRate);
   // The tackle is a FOURTH move in front of the three, not the first of them: it does not
   // spend a place in the list, so the flick that follows it is still swing one.
   if (!slide) p.melN++;
