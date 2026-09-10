@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e74';
+const BUILD = 'e75';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7518,7 +7518,9 @@ const CREATURE_RIGS = {
   // laying / standUp are the two halves of being knocked out.
   Poacher: {
     url: 'models/alien_poacher_02.glb',
-    height: 2.7,          // a shade taller than the wanderer, so he reads as the same kind of thing
+    // HE IS THE TALL ONE. 2.7 against the wanderer's 2.8 made him the short one instead, which
+    // is not what a poacher standing over you is for. Half a head clear of him now.
+    height: 3.3,
     idle: 'idle_01', walk: 'walk_01', run: 'run',
     yaw: 0,
     extra: {
@@ -7558,7 +7560,9 @@ const CREATURE_RIGS = {
 // THE SECOND POACHER. Read out of both files: identical clip sets, fourteen names each, same
 // rig. So he is the same config with a different body, and the only reason he needs an entry
 // of his own is that the model cache is keyed on the url and the rig table on this key.
-CREATURE_RIGS.Poacher1 = Object.assign({}, CREATURE_RIGS.Poacher, { url: 'models/alien_poacher_01.glb' });
+// The other one is the stockier build: eye to eye with the wanderer rather than looming.
+CREATURE_RIGS.Poacher1 = Object.assign({}, CREATURE_RIGS.Poacher,
+  { url: 'models/alien_poacher_01.glb', height: 2.95 });
 
 // Getting hit. Nothing in this game kills an animal, and nothing here starts: a hit throws.
 // The creature leaves the ground, tumbles, bounces, lies there a moment and gets up
@@ -7712,7 +7716,11 @@ const THROW = {
   // is the one that matters for aiming: the same millimetre of thumb now covers half as much
   // ground, so the mark can be PUT somewhere instead of flung near it. Cutting the top of the
   // range is what buys the precision; there is no separate sensitivity dial to find.
-  speed: [15, 38],   // launch speed at no power and at full
+  // 38 was the answer to the MAPPED aim, where the top of the range was a millimetre of thumb
+  // away and the mark could only be flung. Nothing is flung now -- the range is walked out and
+  // stops where it is left -- so the ceiling can go back up without costing any precision.
+  // Range goes as the square of this, so 46 is about half again as far as 38.
+  speed: [15, 46],   // launch speed at no power and at full
   // THE CAMERA FOLLOWS THE AIM, as it does with the blaster out. Gentler than the gun's 2.6
   // and 2.3, because a wind-up is held for a second or more and the gun's rate sweeps too far
   // in that time to place a mark with.
@@ -7785,12 +7793,15 @@ const THROW = {
   upArc: .95,        // and how far off straight up it may be and still count (54 degrees)
   keep: .16,         // once committed the whole pad is the aim, down to here; below it, throw
   dead: .15,         // and this much of the middle is centred
-  rate: .50,         // range out, in fractions of the full throw a second: two seconds end to end
-  rateIn: .70,       // and back in, a little quicker, because pulling back is a correction
+  // Between the two wrongs. The mapped version was instant and reached the far side of a
+  // region; the first rate was two seconds end to end and stopped short. These walk the mark
+  // out in about one and a quarter, over half again as much ground.
+  rate: .80,         // range out, in fractions of the full throw a second
+  rateIn: 1.05,      // and back in, a little quicker, because pulling back is a correction
   // Sideways, in UNITS OF GROUND a second rather than radians, so the mark tracks the thumb at
   // the same pace whether it is at his feet or out at the end of the range. Capped as an
   // angular rate all the same, or a mark two units away would spin round him.
-  side: 12, sideMax: 1.4,
+  side: 17, sideMax: 1.9,
   // How much of the throw a heavy thing eats. `hurl` divides the launch speed by the body's
   // own radius; this is the power that radius is raised to, so above 1 a big animal loses
   // ground faster than its size and a small one barely notices being thrown hard.
@@ -8024,6 +8035,7 @@ class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
+    this.recover = null;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
@@ -8042,6 +8054,12 @@ class Creature {
     this.chargeCool = 0;      // initialised, because `undefined <= 0` is false and the charge would never fire
     // What it has left, what it thinks of him personally, whether it is out cold, and how
     // long it will keep letting him near after a meal. See VIT.
+    // WHICH BODY, and it has to be settled HERE. The rig is attached further down this same
+    // constructor, so a subclass that set it on the line after super() was setting it a whole
+    // frame too late and every one of them came out as the class default. That is the whole
+    // reason only ever one poacher was seen: the second model was configured, cached, and
+    // never once asked for.
+    this.rigKey = o.rigKey || null;
     this.vig = 1; this.hurtAt = -99; this.ire = 0; this.daze = 0; this.dazeK = 0; this.trust = 0;
     this.face = 'calm'; this.bub = null; this.bubT = 0;
     this.curio = 0; this.curioCool = rnd(0, 40); this.drinking = 0;
@@ -8730,6 +8748,31 @@ class Creature {
   flee(p, w = 1) { this.seek(p, -w); }
   dist(p) { return Math.hypot(p.x - this.pos.x, p.z - this.pos.z); }
   locomote(dt) {
+    // WALKING OUT, and the spin on the spot was the old answer to this. When every candidate
+    // step fails the loop turned and tried again -- which works when the way ahead is blocked
+    // and cannot work at all when the ground UNDER him is already outside what terrainOK
+    // accepts. That is exactly a shoreline, and exactly the inside of a concave pocket:
+    // nowhere he can reach in one step is any better than where he is, `stuck` reset itself
+    // every 1.6 seconds, and there was no way out of it in the code at all.
+    // So: twice wedged and he walks a straight line to the nearest place he could actually
+    // stand, with the terrain test and the obstacles both off for the trip, ending the moment
+    // he is back on ground that works. It is a few seconds of a body moving deliberately
+    // instead of for ever of a body revolving.
+    if (this.recover) {
+      const R = this.recover, dx = R.x - this.pos.x, dz = R.z - this.pos.z, d = Math.hypot(dx, dz);
+      R.t -= dt;
+      if (d < .6 || R.t <= 0 || (R.t < R.T - .3 && this.terrainOK(this.pos.x, this.pos.z))) {
+        this.recover = null; this.stuck = 0; this.wedged = 0;
+      } else {
+        this.heading = Math.atan2(dx, dz);
+        const st = Math.min(d, this.speed * .85 * dt);
+        this.pos.x += dx / d * st; this.pos.z += dz / d * st;
+        this.moving = 1;
+        this.moveK = lerp(this.moveK, 1, Math.min(1, dt * 4));
+        this.steer.set(0, 0, 0); this.steerS.set(0, 0, 0);
+        return;
+      }
+    }
     this.avoidObstacles(); this.separate();
     const kS = Math.min(1, dt * 7);
     this.steerS.x = lerp(this.steerS.x, this.steer.x, kS);
@@ -8769,7 +8812,12 @@ class Creature {
       }
       if (this.stuck > 1.6) { this.wp = null; this.target = null; this.stuck = 0; this.turnBias = Math.random() < .5 ? -1 : 1; this.wedged = (this.wedged || 0) + 1; }
       if (this.stuck === 0 && slid === 0 && r) this.turnBias = 0;
-      if (this.wedged > 2) { this.ghost = 1.6; this.wedged = 0; }   // truly boxed in: walk out and re-settle
+      if (this.wedged >= 2) {                       // truly boxed in: walk out and re-settle
+        this.ghost = 3.4;
+        const e = this.findEscape();
+        if (e) this.recover = { x: e.x, z: e.z, t: 3.4, T: 3.4 };
+        this.wedged = 0;
+      }
     }
     s.set(0, 0, 0);
   }
@@ -9943,11 +9991,11 @@ const POACHER = {
 };
 class Poacher extends Creature {
   constructor(x, z) {
-    super(x, z, { speed: 4.4, turn: 3.4, rad: .85, look: 7, minObR: 1.1,
-      wary: 0, flock: 0, notice: 26, social: 1, thirst: 90 });
     // Alternated rather than rolled, so seven of them are four and three and never all one
-    // man seven times.
-    this.rigKey = (Poacher._n = (Poacher._n || 0) + 1) % 2 ? 'Poacher' : 'Poacher1';
+    // man seven times. Counted in the super() call because that is where it is read.
+    super(x, z, { speed: 4.4, turn: 3.4, rad: .95, look: 7, minObR: 1.1,
+      wary: 0, flock: 0, notice: 26, social: 1, thirst: 90,
+      rigKey: (Poacher._n = (Poacher._n || 0) + 1) % 2 ? 'Poacher' : 'Poacher1' });
     this.quarry = null; this.hunt = 0; this.cool = rnd(0, 8);
     this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
