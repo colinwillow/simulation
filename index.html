@@ -557,13 +557,11 @@
     transition:opacity 1.2s ease-out}
   /* THE CLOUD WIPE. A sky's worth of them, at their own sizes and depths, drifting in from
      both sides -- they meet, the world is swapped inside them, and they carry on across and
-     out the far side. Not two shutters. `u` is the inside of a cloud, up for the instant of
-     the swap only, so the cover is guaranteed without the clouds having to tile the frame. */
+     out the far side. Not two shutters, and no white fill behind them: the near band is sized
+     and placed to cover the frame on its own. */
   #wipe{position:fixed;inset:0;z-index:10;pointer-events:none;overflow:hidden}
   #wipe i{position:absolute;display:block;background-repeat:no-repeat;background-size:100% 100%}
-  #wipe u{position:absolute;inset:-2%;display:block;opacity:0;
-    background:radial-gradient(120% 90% at 50% 45%,#ffffff 0%,#eaf3fb 45%,#cfe0ef 100%);
-    transition:opacity .30s ease}
+
 
   /* ══ THE BRAND PASS ══════════════════════════════════════════════════════════════════
      One language for the whole interface, and it is the title screen's: cream on deep
@@ -1629,7 +1627,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e59';
+const BUILD = 'e60';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -14870,11 +14868,13 @@ function introFrame(dt) {
 // composites perfectly well without being told to in advance) and no blur -- distance is
 // carried by opacity and size, which is most of what carries it anyway. Total painted area
 // lands around two and a half screens instead of forty.
-const WIPE = { n: 10, inT: .80, hold: .24, outT: 1.0, on: 0, url: null };
-// A CLOUD, DRAWN. Puffs along a baseline with a couple riding on top, filled with a vertical
-// gradient so the crown is white and the belly takes the sky's blue -- which is the whole of
-// what makes a cartoon cloud read as lit from above. Three layouts off a seeded generator, so
-// the sky is not the same shape sixteen times and is the same sky on every load.
+// SIZED IN vh, MOVED IN vw, AND THAT WAS MOST OF WHAT WAS WRONG. A cloud 60 wide was 60vh
+// wide -- which on a portrait phone is a hundred and thirty vw -- while every start and end
+// position was worked out in vw as though 60 meant 60. So they never began fully off screen
+// and never finished leaving: they were removed while still in frame, which is the "one frame
+// they are there and one frame they are not". Sizes stay in vh, because a cloud should be the
+// same shape on any screen; the arithmetic converts.
+const WIPE = { inT: .92, hold: .26, outT: 1.05, on: 0, url: null };
 function cloudTex(v) {
   const W0 = 440, H0 = 260, cv = document.createElement('canvas');
   cv.width = W0; cv.height = H0;
@@ -14885,7 +14885,6 @@ function cloudTex(v) {
   const n = 6 + (v % 3);
   for (let i = 0; i < n; i++) {
     const t = (i + .5) / n;
-    // fat in the middle of the run, tapering at both ends, the way a bank of cloud sits
     const swell = Math.sin(Math.PI * t) ** .7;
     puffs.push([W0 * (.08 + t * .84), H0 * (.66 - swell * .12 + rr() * .06),
                 H0 * (.16 + swell * .21 + rr() * .05)]);
@@ -14900,12 +14899,9 @@ function cloudTex(v) {
   g.beginPath();
   for (const [x, y, r] of puffs) { g.moveTo(x + r, y); g.arc(x, y, r, 0, 6.2832); }
   g.fill();
-  // and a flat base, so it sits on its own line rather than hanging as a bunch of grapes
   g.fillRect(W0 * .10, H0 * .60, W0 * .80, H0 * .22);
   return cv.toDataURL('image/png');
 }
-// `fn` runs at the moment the sky is shut. If anything here goes wrong at all it runs at once
-// instead: a transition is decoration and the start button is not.
 function wipeStart(fn) {
   if (WIPE.on) return;
   WIPE.on = 1;
@@ -14914,83 +14910,73 @@ function wipeStart(fn) {
   try {
     if (!WIPE.url) WIPE.url = [cloudTex(0), cloudTex(1), cloudTex(2)];
     const g = document.createElement('div'); g.id = 'wipe';
-    const veil = document.createElement('u'); g.appendChild(veil);
     let seed = 4;
     const rr = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
     const rng = (lo, hi) => lo + rr() * (hi - lo);
-    // THREE BANDS, ON PURPOSE. The first go rolled one random number per cloud and let
-    // everything follow it, which gives ten variations on one cloud rather than a composed
-    // sky -- and because the timings were all within a sixth of a second of each other they
-    // still arrived as a wall. A band decides its own size, speed, height, opacity and
-    // entrance, and the three read as three distances:
-    //
-    //   far  -- small, pale, slow, high in the frame, and ALREADY DRIFTING when the tap lands
-    //   mid  -- the body of the sky, ordinary pace
-    //   near -- big, opaque, quick, low, a beat late, and swelling as they arrive, which is
-    //           the one cue that says the camera went into them rather than they slid past
-    //
-    // A two-to-one spread of speed across the bands is what makes it read as depth. A sixth
-    // of a second did not.
-    const BANDS = [
-      { n: 4, h: [12, 17], w: [2.0, 2.6], sp: 1.30, op: [.46, .62], y: [-12, 78], lead: 0,    from: .34, sc: 1 },
-      { n: 3, h: [20, 27], w: [1.9, 2.4], sp: .94,  op: [.72, .86], y: [-16, 84], lead: .06, from: 0,   sc: 1.05 },
-      { n: 3, h: [30, 38], w: [1.7, 2.1], sp: .60,  op: [.94, 1.0], y: [-24, 76], lead: .17, from: 0,   sc: 1.14 },
-    ];
+    const K = (innerHeight || 1) / (innerWidth || 1);      // one vh, in vw
     const els = [];
+    // THE NEAR BAND COVERS THE FRAME BY CONSTRUCTION, which is what lets the white fill go.
+    // Three of them at fixed vertical slots with a third of their height overlapping, each
+    // more than twice as wide as the screen, centred at the meet -- so the union of the three
+    // is the whole picture and nothing behind them can show through at the moment of the swap.
+    // The other two bands are texture: they are what makes it a sky rather than three shapes.
+    const BANDS = [
+      { n: 5, h: [11, 16], w: [2.0, 2.6], sp: 1.28, op: [.44, .60], lead: 0,   sc: 1,    slot: null },
+      { n: 4, h: [19, 26], w: [1.9, 2.4], sp: .95,  op: [.70, .85], lead: .07, sc: 1.05, slot: null },
+      { n: 3, h: [44, 46], w: [2.0, 2.3], sp: .62,  op: [.97, 1.0], lead: .18, sc: 1.12, slot: [-14, 26, 62] },
+    ];
     let k = 0;
     for (let bi = 0; bi < BANDS.length; bi++) {
       const B = BANDS[bi];
       for (let j = 0; j < B.n; j++, k++) {
         const el = document.createElement('i');
-        // Not i % 2. Alternating strictly is a pattern the eye picks up in ten objects; this
-        // keeps both sides fed without being a rhythm.
         const side = (rr() < .5 ? -1 : 1) * (j === 0 ? (bi % 2 ? 1 : -1) : 1);
         const h = rng(B.h[0], B.h[1]), w = h * rng(B.w[0], B.w[1]);
+        const wv = w * K;                                   // the same cloud, in vw
         el.style.height = h + 'vh'; el.style.width = w + 'vh';
-        el.style.top = rng(B.y[0], B.y[1]) + 'vh';
-        el.style.opacity = rng(B.op[0], B.op[1]).toFixed(2);
+        el.style.top = (B.slot ? B.slot[j] + rng(-2, 2) : rng(-14, 92)) + 'vh';
+        el.style.opacity = (B.slot ? 1 : rng(B.op[0], B.op[1])).toFixed(2);
         el.style.backgroundImage = 'url(' + WIPE.url[k % 3] + ')';
         el.style.left = '0';
-        // A cloud is not a spirit level, and the near ones drift down across the frame as
-        // they come, which is the parallax a camera moving forward actually produces.
-        const rot = rng(-4, 4), dy = (bi === 2 ? rng(2, 7) : bi === 1 ? rng(1, 3.5) : rng(-1, 1)) * side * -1;
-        const off = side < 0 ? -(w + 6) : (100 + 6);
-        const x0 = off + (side < 0 ? w * B.from : -w * B.from);   // the far band is part-way in already
-        const x1 = side < 0 ? rng(-14, 44) : rng(58 - w * .35, 74 - w * .1);
-        const x2 = side < 0 ? rng(116, 150) : -(w + rng(26, 60));
-        el._t = [x0, x1, x2, dy, rot, B.sc, side > 0 ? -1 : 1];
-        el.style.transform = 'translate3d(' + x0 + 'vw,0,0) rotate(' + rot + 'deg) scaleX(' + el._t[6] + ')';
-        el._lag = B.lead;
-        el._sp = B.sp;
+        const rot = B.slot ? rng(-2, 2) : rng(-5, 5);
+        const dy = (bi === 2 ? rng(2, 6) : bi === 1 ? rng(1, 3.5) : rng(-1, 1)) * side * -1;
+        // Fully off, both ends, measured against the cloud's REAL width. The far band alone
+        // starts part-way in, because distant cloud is already sky rather than an arrival.
+        const inset = bi === 0 ? wv * .34 : 0;
+        const x0 = side < 0 ? -(wv + 8) + inset : (100 + 8) - inset;
+        const x1 = B.slot ? (100 - wv) * .5 + rng(-8, 8)
+                          : (side < 0 ? rng(-wv * .35, 62) : rng(38 - wv * .5, 100 - wv * .35));
+        const x2 = side < 0 ? (100 + 12 + rng(0, 26)) : -(wv + 12 + rng(0, 26));
+        el._t = [x1, x2, dy, rot, B.sc, side > 0 ? -1 : 1];
+        el._lag = B.lead; el._sp = B.sp;
+        el.style.transform = 'translate3d(' + x0 + 'vw,0,0) rotate(' + rot + 'deg) scaleX(' + el._t[5] + ')';
         g.appendChild(el); els.push(el);
       }
     }
-    const put = (el, x, y, sc) => 'translate3d(' + x + 'vw,' + y + 'vh,0) rotate(' + el._t[4]
-      + 'deg) scale(' + sc + ') scaleX(' + el._t[6] + ')';
+    const put = (el, x, y, sc) => 'translate3d(' + x + 'vw,' + y + 'vh,0) rotate(' + el._t[3]
+      + 'deg) scale(' + sc + ') scaleX(' + el._t[5] + ')';
     document.body.appendChild(g);
-    // Two frames before the move, not one: a transform set in the same frame the element was
-    // added has no previous value to animate away from and the sky simply appears shut.
     requestAnimationFrame(() => requestAnimationFrame(() => {
       for (const el of els) {
-        el.style.transitionDelay = el._lag + 's';
-        el.style.transition = 'transform ' + (WIPE.inT * el._sp) + 's cubic-bezier(.18,.64,.24,1) ' + el._lag + 's';
-        el.style.transform = put(el, el._t[1], el._t[3] * .5, el._t[5]);
+        // Eased at both ends rather than driven in and yanked out: they arrive off their own
+        // momentum and leave the same way, which is the whole of "polished" here.
+        el.style.transition = 'transform ' + (WIPE.inT * el._sp) + 's cubic-bezier(.24,.58,.30,1) ' + el._lag + 's';
+        el.style.transform = put(el, el._t[0], el._t[2] * .5, el._t[4]);
       }
     }));
-    setTimeout(() => { veil.style.opacity = '1'; }, (WIPE.inT - .30) * 1000);
-    setTimeout(fire, WIPE.inT * 1000 + 30);
+    setTimeout(fire, (WIPE.inT + .20) * 1000);
     setTimeout(() => {
-      veil.style.transition = 'opacity .42s ease';
-      veil.style.opacity = '0';
       for (const el of els) {
-        el.style.transition = 'transform ' + (WIPE.outT * el._sp) + 's cubic-bezier(.40,0,.70,1)';
-        el.style.transform = put(el, el._t[2], el._t[3] * 1.6, el._t[5] * 1.06);
+        el.style.transition = 'transform ' + (WIPE.outT * el._sp) + 's cubic-bezier(.36,.02,.58,1)';
+        el.style.transform = put(el, el._t[1], el._t[2] * 1.7, el._t[4] * 1.05);
       }
     }, (WIPE.inT + WIPE.hold) * 1000);
-    setTimeout(() => { g.remove(); WIPE.on = 0; }, (WIPE.inT + WIPE.hold + WIPE.outT + .4) * 1000);
+    // Not removed until the SLOWEST of them has finished leaving. The far band takes a third
+    // longer than the rest, and cutting on the average is what takes them off mid-frame.
+    let slow = 0; for (const el of els) slow = Math.max(slow, WIPE.outT * el._sp);
+    setTimeout(() => { g.remove(); WIPE.on = 0; }, (WIPE.inT + WIPE.hold + slow + .45) * 1000);
   } catch (e) { console.warn('wipe skipped:', e); WIPE.on = 0; fire(); }
-  // and a backstop, because the game starting is not allowed to depend on any of the above
-  setTimeout(fire, 1800);
+  setTimeout(fire, 2000);
 }
 function startGame() {
   if (!INTRO.on) return;
