@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e72';
+const BUILD = 'e73';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -18465,7 +18465,12 @@ function throwMarkStep(show, power, T) {
 // deliberately the same shape as the rifle's trigger, because it is the same decision. Any
 // other direction, and any gentler push, is the camera.
 function throwUp(rx, ry) {
-  return ry > THROW.upAt && Math.abs(Math.atan2(rx, ry)) < THROW.upArc;
+  // UP THE PAD IS NEGATIVE Y. It is a screen offset from the centre of the knob, not a
+  // joystick axis -- the keyboard binding a line or two down says the same thing with
+  // `ly -= 1` for the up arrow. Written as +ry this test could only be satisfied by pushing
+  // DOWN, which is why the throw stopped happening at all.
+  const up = -ry;
+  return up > THROW.upAt && Math.abs(Math.atan2(rx, up)) < THROW.upArc;
 }
 // One axis of the pad, past its dead zone, as a signed rate in -1..1.
 function stickAx(v) {
@@ -18489,12 +18494,15 @@ function throwStick(dt, rx, ry, own) {
   }
   // Range: forward walks it out, back walks it in. Nothing is mapped -- hold it and it keeps
   // going, let it centre and it stops where it is.
-  const fy = stickAx(ry);
+  const fy = stickAx(-ry);                         // up the pad is out; see throwUp
   p.throwK = clamp(p.throwK + fy * (fy > 0 ? THROW.rate : THROW.rateIn) * dt, 0, 1);
   // Bearing: a ground speed rather than a turn rate, so the same thumb moves the mark the same
   // number of units whether it is at his feet or out at the end of the throw.
   const r = Math.max(p.aimRange || 0, 3);
-  p.aimH += stickAx(rx) * Math.min(THROW.side / r, THROW.sideMax) * dt;
+  // MINUS, and it is the same handedness note as everywhere else: forward is (sin h, cos h),
+  // so his right is -x and a bearing that INCREASES turns him left. The camera orbit on the
+  // line below does `cam.az -= rx` for exactly this reason.
+  p.aimH -= stickAx(rx) * Math.min(THROW.side / r, THROW.sideMax) * dt;
   p.flickH = p.aimH;
   // AND THE CAMERA COMES ROUND WITH IT. Same loop the blaster uses. It could never do its job
   // before: the bearing was read in the camera's own frame and the camera eased in behind the
