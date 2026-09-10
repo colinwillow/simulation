@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e67';
+const BUILD = 'e68';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -1998,6 +1998,19 @@ const snd = {
   thud: (x, z) => SFX.play('crack', .5, rnd(.55, .65), x, z)
     || (SFX.noise(.14, .18, 480, x, z), SFX.blip(110, .14, 'sine', .14, 60, x, z)),
   pick: (x, z) => SFX.play('ping', .45, rnd(.95, 1.15), x, z) || SFX.blip(760, .07, 'triangle', .09, 1080, x, z),
+  // PICKING THINGS UP OFF THE FLOOR, and it is a LADDER rather than a sound. One jewel is a
+  // jewel; four in a row each a tone higher than the last is a run, and a run is the whole
+  // reason walking over a scatter of them is worth doing. It resets after a second and a
+  // half, so a piece found on its own starts at the bottom again. Seven steps caps it at a
+  // fifth up -- past that it stops reading as the same object.
+  gather: (x, z) => {
+    const now = performance.now();
+    snd._gN = (now - (snd._gT || 0) < 1500) ? Math.min((snd._gN || 0) + 1, 7) : 0;
+    snd._gT = now;
+    const r = Math.pow(1.05946, snd._gN * 2);
+    SFX.play('jewel', .5, r, x, z) || SFX.blip(620 * r, .09, 'triangle', .10, 940 * r, x, z);
+  },
+  _gN: 0, _gT: 0,
   gain: (x, z) => SFX.play('jewel', .5, 1, x, z) || SFX.blip(880, .1, 'triangle', .1, 1300, x, z),
   power: (x, z) => SFX.play('power', .6, 1, x, z) || SFX.blip(440, .3, 'sine', .12, 880, x, z),
   daze: (x, z) => sndOnce('daze', 220) && (SFX.play('ping', .5, rnd(.5, .6), x, z)
@@ -5382,7 +5395,8 @@ class LanternTree {
         const segLen = Math.max(2.2, this.h * .82 / nSeg);
         for (let i = 0; i < nSeg; i++) {                   // the trunk breaks where it lands
           const d = 1.6 + segLen * (i + .5) + rnd(-.3, .3);
-          const x = this.pos.x + dir.x * d + rnd(-.6, .6), z = this.pos.z + dir.z * d + rnd(-.6, .6);
+          const c0 = dropClear(this.pos.x + dir.x * d + rnd(-.6, .6), this.pos.z + dir.z * d + rnd(-.6, .6), GLEAN.clear);
+          const x = c0.x, z = c0.z;
           if (Math.abs(x) > W * .95 || Math.abs(z) > W * .95) continue;
           world.structures.push(new Log(x, z, rotY + rnd(-.3, .3), segLen * .9, this.elder ? .62 : .5));
         }
@@ -16483,6 +16497,34 @@ function stepSlash(dt) {
 // puts it over. `sink` and `lean` are what make the progress visible without touching the
 // geometry, which is the honest version of chunking the mesh until the trunk is built in
 // segments that can come off one at a time.
+// GLEANING. Small stuff on the ground is picked up by walking over it rather than by asking
+// for it. `reach` is generous on purpose -- a phone stick does not place feet precisely, and a
+// piece he clearly walked past and did not get is worse than one he got from a foot away.
+// `clear` is where a fresh drop is pushed out to, and it has to be comfortably more than
+// `reach` or the piece is collected on the frame it appears.
+const GLEAN = { reach: 2.1, clear: 3.4 };
+function sweepGlean() {
+  const p = player;
+  if (INTRO.on || p.aboard || p.free || p.fly || p.swim > .5) return;
+  for (const st of world.structures) {
+    if (!(st instanceof Log) || !st.alive || st.carried) continue;
+    if (Math.hypot(st.pos.x - p.pos.x, st.pos.z - p.pos.z) > GLEAN.reach) continue;
+    st.alive = false; st.dispose(); INV.wood++;
+    world.effects.push(new Burst(st.pos.x, st.pos.y + .7, st.pos.z, '#e8d9ae', 7, .5));
+    snd.gather(st.pos.x, st.pos.z);
+  }
+}
+// WHERE A DROPPED PIECE LANDS. He is standing right beside whatever he just cut, and the
+// gleaning radius is around his feet -- so a piece that spawns inside it is collected on the
+// frame it appears and he never sees the thing he made. Anything closer than `min` is pushed
+// straight out from him to `min`: far enough to be an object on the ground, near enough that
+// one step is the whole of the errand.
+function dropClear(x, z, min) {
+  const dx = x - player.pos.x, dz = z - player.pos.z, d = Math.hypot(dx, dz);
+  if (d >= min) return { x, z };
+  const a = d > 1e-3 ? Math.atan2(dx, dz) : player.heading;
+  return { x: player.pos.x + Math.sin(a) * min, z: player.pos.z + Math.cos(a) * min };
+}
 function chopTree(t, force, hx, hz) {
   if (!t || !t.alive || t.falling >= 0 || !(t instanceof LanternTree)) return false;
   t.chop = (t.chop || 0) + (force || 1);
@@ -16498,7 +16540,8 @@ function chopTree(t, force, hx, hz) {
     t.leanZ = (t.leanZ || 0) - hx * CHOP.lean;
     if (count(world.structures, Log) < CHOP.logs) {
       const a = Math.atan2(hx, hz) + rnd(-.6, .6), d = 2.4 + Math.random() * 1.6;
-      const lx = t.pos.x + Math.sin(a) * d, lz = t.pos.z + Math.cos(a) * d;
+      const c = dropClear(t.pos.x + Math.sin(a) * d, t.pos.z + Math.cos(a) * d, GLEAN.clear);
+      const lx = c.x, lz = c.z;
       if (isLand(lx, lz)) world.structures.push(new Log(lx, lz, a + 1.57 + rnd(-.4, .4), t.elder ? 3.4 : 2.6, t.elder ? .58 : .46));
     }
     logMsg(t.chop === 1 ? 'The blade bites in and a log rolls clear.'
@@ -17272,15 +17315,10 @@ function holdOffer() {
   // a hold beside the trunk, and after a couple of seconds it goes over the way a browsed one
   // does, and breaks into the same logs. No new tool yet -- the hold IS the pickaxe until he
   // models one -- and not the elder, which is the island's and not his.
-  {
-    let lg = null, ld = 2.8;
-    for (const st of world.structures) {
-      if (!(st instanceof Log) || !st.alive) continue;
-      const d = Math.hypot(st.pos.x - p.pos.x, st.pos.z - p.pos.z);
-      if (d < ld) { ld = d; lg = st; }
-    }
-    if (lg) { offerAct({ icon: 'lift', label: 'GATHER', run: () => { lg.alive = false; lg.dispose(); INV.wood++; world.effects.push(new Burst(lg.pos.x, lg.pos.y + .6, lg.pos.z, '#d8c9a8', 5, .4)); } }); return; }
-  }
+  // NO LOG PROMPT ANY MORE. Wood is not a decision, it is a thing on the floor: a scatter of
+  // eight pieces was eight walks up and eight taps, and the tap said nothing the walking had
+  // not already said. He runs through them instead -- see sweepGlean -- and the offer is gone
+  // from here so it stops shadowing the tree standing behind it, which IS a decision.
   {
     let tr = null, td = HACK.reach;
     for (const t of world.plants) {
@@ -21960,6 +21998,7 @@ function frame(now) {
   updatePlayer(dt);
   updateFairy(dt);
   carryStep(dt);                           // after the body has moved: it hangs off his hands
+  sweepGlean();                            // and whatever he walked over on the way
   stepDrag();                              // and the cord to whatever he is hauling
   if (INTRO.on) introFrame(dt);
   else if (player.aboard && world.ship && !player.free) {
