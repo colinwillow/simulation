@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e68';
+const BUILD = 'e69';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -5293,6 +5293,132 @@ class Spark {
     if (k >= 1) this.alive = false;
   }
   dispose() { scene.remove(this.s); this.s.material.dispose(); }
+}
+
+// ---------- the stun, and the stars over a head that has gone under ----------
+// TWO HALVES OF ONE IDEA. The blaster is a STUN weapon: every hit should read as a jolt on
+// the body it lands on, and enough of them put the thing out on its feet. The state machine
+// for that already exists -- `vig` runs down, `daze` comes on, see VIT and creatureHurt --
+// and neither half of it had a picture. So: a jolt on every hit, and a ring of stars over
+// anything that is currently under. Both are placeholders for art he is making; both are
+// driven off state that is already there, so replacing the visuals changes nothing else.
+const ZAP = { life: .55, n: 5, col: '#bff0ff', core: '#e6fbff', flick: 34, spin: [9, 17] };
+class ZapFX {
+  constructor(o, k) {
+    this.alive = true; this.o = o; this.t = 0; this.k = clamp(k === undefined ? 1 : k, .3, 1);
+    this.life = ZAP.life * (.7 + .5 * this.k);
+    this.rad = o.rad || 1;
+    // The body lighting up. It is a sprite in front of the animal rather than a change to its
+    // material, because every creature of a species SHARES that material -- tint one and the
+    // whole herd flashes.
+    this.core = glow(ZAP.core, this.rad * 1.6, .9); scene.add(this.core);
+    this.arcs = [];
+    for (let i = 0; i < ZAP.n; i++) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: col(ZAP.col),
+        transparent: true, opacity: .95, blending: THREE.AdditiveBlending, depthWrite: false }));
+      scene.add(sp);
+      this.arcs.push({ s: sp, a: rnd(0, Math.PI * 2), y: rnd(-.7, .9), ph: rnd(0, Math.PI * 2),
+        sp: rnd(ZAP.spin[0], ZAP.spin[1]) * (Math.random() < .5 ? -1 : 1) });
+    }
+  }
+  update(dt) {
+    const o = this.o;
+    this.t += dt;
+    const k = this.t / this.life;
+    if (k >= 1 || !o.alive) { this.alive = false; return; }
+    const fade = (1 - k) * (1 - k) * this.k;
+    const cx = o.pos.x, cz = o.pos.z, cy = o.pos.y + this.rad * .9;
+    this.core.position.set(cx, cy, cz);
+    this.core.scale.setScalar(this.rad * (1.7 + k * 1.1));
+    // Flickering rather than fading: a stun is mains hum, not a candle going out.
+    this.core.material.opacity = .8 * fade * (.45 + .55 * Math.abs(Math.sin(this.t * ZAP.flick)));
+    for (const a of this.arcs) {
+      a.a += a.sp * dt;
+      const r = this.rad * (.85 + .3 * Math.sin(this.t * 22 + a.ph));
+      a.s.position.set(cx + Math.cos(a.a) * r,
+                       cy + a.y * this.rad * .8 + Math.sin(this.t * 19 + a.ph) * this.rad * .22,
+                       cz + Math.sin(a.a) * r);
+      const q = this.rad * .3 * (.6 + .5 * Math.sin(this.t * 27 + a.ph * 1.7));
+      a.s.scale.set(q, q, 1);
+      a.s.material.opacity = .95 * fade * (.25 + .75 * Math.abs(Math.sin(this.t * 30 + a.ph)));
+    }
+  }
+  dispose() {
+    scene.remove(this.core); this.core.material.dispose();
+    for (const a of this.arcs) { scene.remove(a.s); a.s.material.dispose(); }
+  }
+}
+function zapFX(o, k) { if (o && o.alive) world.effects.push(new ZapFX(o, k)); }
+
+// THE STARS. A pool, not one per animal: at most a handful are ever down at once and a ring
+// that is allocated per creature is a ring that leaks the moment one is disposed of while it
+// is still spinning. Each ring is a Group placed in CHART coordinates, so the planet wrapper
+// stands it up in the local frame and the orbit is horizontal over the head wherever on the
+// sphere that head happens to be; the stars themselves are sprites, so they stay square to
+// the lens and take no notice of the body having rolled onto its side underneath them.
+const DIZZY = { n: 3, max: 5, far: 62, r: .8, squash: .42, rate: 2.4, head: 1.15, size: .55, t: 0 };
+let _starTex = null;
+function starTex() {
+  if (_starTex) return _starTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d');
+  x.translate(32, 32);
+  const g = x.createRadialGradient(0, 0, 0, 0, 0, 32);
+  g.addColorStop(0, 'rgba(255,240,190,.85)'); g.addColorStop(.45, 'rgba(255,215,120,.22)');
+  g.addColorStop(1, 'rgba(255,200,90,0)');
+  x.fillStyle = g; x.fillRect(-32, -32, 64, 64);
+  x.fillStyle = '#fff6d8'; x.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5, r = (i % 2) ? 9.5 : 25;
+    const px = Math.cos(a) * r, py = Math.sin(a) * r;
+    if (i) x.lineTo(px, py); else x.moveTo(px, py);
+  }
+  x.closePath(); x.fill();
+  _starTex = new THREE.CanvasTexture(c); _starTex.needsUpdate = true;
+  return _starTex;
+}
+function buildDizzy() {
+  const pool = [];
+  for (let i = 0; i < DIZZY.max; i++) {
+    const g = new THREE.Group(); g.visible = false; scene.add(g);
+    const st = [];
+    for (let j = 0; j < DIZZY.n; j++) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTex(), transparent: true,
+        opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false }));
+      g.add(sp); st.push(sp);
+    }
+    pool.push({ g, st });
+  }
+  return pool;
+}
+function sweepDizzy(dt) {
+  if (INTRO.on) return;
+  const P = DIZZY.pool || (DIZZY.pool = buildDizzy());
+  DIZZY.t += dt;
+  let k = 0;
+  for (const c of world.creatures) {
+    if (k >= DIZZY.max) break;
+    if (!c.alive || c.carried || !(c.daze > 0)) continue;
+    if (Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z) > DIZZY.far) continue;
+    const ring = P[k++], rad = c.rad || 1;
+    ring.g.visible = true;
+    ring.g.position.set(c.pos.x, c.pos.y + rad * DIZZY.head + .3, c.pos.z);
+    // It goes out as it comes round, so waking is not a pop. (Not off dazeK -- that is the
+    // roll-onto-its-side for creatures with no lay clip, and it is zero for everything that
+    // has one, which is every poacher.)
+    const on = Math.min(1, c.daze * .9);
+    const R = DIZZY.r * rad;
+    for (let j = 0; j < DIZZY.n; j++) {
+      const sp = ring.st[j], a = DIZZY.t * DIZZY.rate + j * (Math.PI * 2 / DIZZY.n);
+      sp.position.set(Math.cos(a) * R, Math.sin(a * 2) * .08 * rad, Math.sin(a) * R * DIZZY.squash);
+      const dep = .5 + .5 * Math.sin(a);          // round the back of the orbit it thins out
+      sp.material.rotation = a * .7;
+      sp.material.opacity = on * (.42 + .58 * dep);
+      const q = DIZZY.size * rad * (.72 + .38 * dep);
+      sp.scale.set(q, q, 1);
+    }
+  }
+  for (; k < P.length; k++) P[k].g.visible = false;
 }
 
 // ---------- flora ----------
@@ -18885,8 +19011,8 @@ class Bolt {
       // no new button and reads on sight.
       if (o.net && d < BL * .6) { o.net.cut(); continue; }
       // Right where it went off, it throws. Out at the edge of the blast it only startles.
-      if (d < R + (o.rad || 1) + 1.6 && o.knock) { creatureHurt(o, VIT.bolt * (1 + this.c * VIT.chargeK), this, 1); o.knock(this, 1); punched = punched || o; }
-      else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * (1 + this.c * VIT.chargeK) * f, this, 1); o.knock(this, f); punched = punched || o; }
+      if (d < R + (o.rad || 1) + 1.6 && o.knock) { creatureHurt(o, VIT.bolt * (1 + this.c * VIT.chargeK), this, 1); zapFX(o, 1); o.knock(this, 1); punched = punched || o; }
+      else if (d < BL * .45 && o.knock) { const f = clamp(1 - d / (BL * .45), .25, .6); creatureHurt(o, VIT.bolt * (1 + this.c * VIT.chargeK) * f, this, 1); zapFX(o, f); o.knock(this, f); punched = punched || o; }
       else if (o.spook) o.spook(this, 10);
     }
     // The same noise a bare-handed melee makes when it connects, and nothing at all when the
@@ -21999,6 +22125,7 @@ function frame(now) {
   updateFairy(dt);
   carryStep(dt);                           // after the body has moved: it hangs off his hands
   sweepGlean();                            // and whatever he walked over on the way
+  sweepDizzy(dt);                          // and stars over anything that is out
   stepDrag();                              // and the cord to whatever he is hauling
   if (INTRO.on) introFrame(dt);
   else if (player.aboard && world.ship && !player.free) {
