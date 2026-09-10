@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e79';
+const BUILD = 'e80';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -15948,6 +15948,18 @@ const MOVE = {
   // alternative rather than as the default: isle.move('direct') to try them, isle.move() to
   // come back.
   max: 17, acc: 24, accFall: .93, drag: 46,      // ground
+  // LEANING INTO IT. accFall already thins the acceleration out as he approaches his top
+  // speed, which is what makes the last few units take their time -- but it does nothing at
+  // the bottom, where the ramp is at its full 24 and he is at a jog inside a fifth of a
+  // second. From a standstill a held stick was a run from the first frame, with the walk and
+  // the jog happening somewhere inside two hundred milliseconds where nobody sees them.
+  // `push` is the other end of the same idea: how much of his acceleration he actually HAS,
+  // starting at push0 and reaching all of it over pushT seconds of continuously asking. The
+  // gait blend is keyed off speed, so the clips follow for free -- he genuinely walks, then
+  // jogs, then runs, instead of arriving at a run and blending backwards out of it.
+  // It falls back at pushOut per second rather than resetting, so a step, a pause and another
+  // step is not three fresh starts.
+  push0: .30, pushT: .85, pushOut: 2.6,
   airAcc: 11, airDrag: 1.2,                      // in the air
   swimMax: 9, swimAcc: 20, swimDrag: 13,
   // How fast the velocity can be turned sideways, which is a separate question from how
@@ -17166,13 +17178,13 @@ const LAND = { roll: 31, rollFast: 24, rollSpeed: 11, rollRate: 1.5, rollGo: 5.5
 // fallback for a rig with no roll at all.
 // The two feels, so switching is one call and neither is buried in a diff.
 const MOVE_SETS = {
-  weighted: { acc: 24, accFall: .93, drag: 46, turn: 52, airAcc: 11, airTurn: 9, airDrag: 1.2 },
+  weighted: { acc: 24, accFall: .93, drag: 46, turn: 52, airAcc: 11, airTurn: 9, airDrag: 1.2, push0: .30, pushT: .85 },
   // AND THE AIR IS PART OF IT. airDrag 1.2 means a jump keeps nearly all of whatever it left
   // the ground with, whichever way the thumb has gone since -- which is the "momentum flying
   // around", and it is worse on a phone than anywhere else, because a thumb on glass cannot
   // make the small correction a stick can. At 6 he still arcs; he just stops arcing at the
   // mercy of the last thing he did.
-  direct:   { acc: 95, accFall: .35, drag: 200, turn: 150, airAcc: 30, airTurn: 22, airDrag: 6 },
+  direct:   { acc: 95, accFall: .35, drag: 200, turn: 150, airAcc: 30, airTurn: 22, airDrag: 6, push0: 1, pushT: .01 },
 };
 function setMove(m) {
   const ok = m in MOVE_SETS;
@@ -18090,7 +18102,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   stowFor: null, stowT: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
-  aimRange: 0, rHold: 0,
+  aimRange: 0, rHold: 0, goT: 0,
   actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actFrom: 0, actFire: null, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0, windK: 0, holdT: 0,
   melTgt: null, melId: 0, hitT: 0, hitOn: 0, hitSlide: 0, slip: 0, slope: 0,
   lungeT: 0, lungeMax: 0, lungeSp: 0, lungeH: 0, armAct: null, wpnShow: 0, wpnK: 0,
@@ -20553,7 +20565,11 @@ function updatePlayer(dt) {
     const want = player.wmag > .1 ? max * player.wmag : 0;
     const tvx = want ? player.wx * want : 0, tvz = want ? player.wz * want : 0;
     const sp0 = Math.hypot(player.vx, player.vz);
-    const ramp = onG && !inW ? 1 - MOVE.accFall * smooth(0, 1, sp0 / MOVE.max) : 1;
+    // How long he has been asking, and how much of his legs that has bought him. Only on the
+    // ground: swimming and the air have their own rates and neither has a standing start.
+    player.goT = want ? (player.goT || 0) + dt : Math.max(0, (player.goT || 0) - dt * MOVE.pushOut);
+    const push = onG && !inW ? MOVE.push0 + (1 - MOVE.push0) * smooth(0, MOVE.pushT, player.goT) : 1;
+    const ramp = (onG && !inW ? 1 - MOVE.accFall * smooth(0, 1, sp0 / MOVE.max) : 1) * push;
     // Slipping, the ground stops holding him: full ground drag on a face is a man standing on
     // a wall by friction alone, which is exactly the thing being fixed.
     const slipD = 1 - (player.slip || 0) * (1 - MOVE.slipDrag);
