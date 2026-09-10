@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e76';
+const BUILD = 'e77';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -6921,6 +6921,18 @@ function attachRigTo(parent, cfg, lend, done) {
     // pulling those down would push him under the water he is meant to be floating on.
     const span = {};
     for (const k in clips) if (clips[k]) { const sp = e.floors[clips[k].name]; span[k] = sp; const d = sp.lo - refF; lift[k] = isFinite(d) ? Math.min(0, d) : 0; }
+    // AND AN OVERLAY HAS NO FLOOR TO MEASURE. holdUpper and throwUpper are spine-up tracks
+    // only, so posing the rig with one leaves the PELVIS wherever the skeleton's rest transform
+    // puts it -- and in this file that is the origin, seventy-six units under the feet
+    // (measured: hips key at 76-80 across every clip, rest translation -1.58). clipSpan duly
+    // reported a floor seventy-six units low, lift duly offered to raise the root by it, and
+    // the weighted mean above hoisted him the better part of a foot into the air for exactly as
+    // long as he was carrying something. Any clip with no hips POSITION track is an overlay on
+    // whatever is underneath it; the thing underneath owns the floor.
+    for (const k in clips) {
+      const cl = clips[k]; if (!cl) continue;
+      if (!cl.tracks.some(t => /hips/i.test(t.name) && /\.position$/.test(t.name))) lift[k] = 0;
+    }
     const mixer = new THREE.AnimationMixer(inst);
     const acts = {};
     for (const k in clips) {
@@ -11231,8 +11243,28 @@ class FloatingIsle {
       c0: '#f2fbff', c1: '#cddfec', s0: 2, s1: 11,
       spawn: (p, v) => { const a = rnd(Math.PI * 2), r = rnd(0, 8); p.set(wx + Math.cos(a) * r, landY + .3, wz + Math.sin(a) * r); v.set(Math.cos(a) * rnd(.6, 2.4), rnd(1.8, 4), Math.sin(a) * rnd(.6, 2.4)); }
     });
-    this.foam = new THREE.Mesh(new THREE.RingGeometry(2.5 * K, 11 * K, 32), new THREE.MeshBasicMaterial({ color: 0xdff2ff, transparent: true, opacity: .45, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    this.foam.rotation.x = -Math.PI / 2; this.foam.position.set(wx, landY + .18, wz); scene.add(this.foam);
+    // THE PLUNGE POOL, AND IT LIES ON THE GROUND. It was a flat disc at one height: over a
+    // shoreline that is exactly a white circle hanging in the air at one edge and buried at the
+    // other. Same annulus, but every vertex is dropped onto groundY where it actually is, and
+    // faded out by how far the ground there has run away from the impact point -- so on a bank
+    // it thins out and stops instead of sailing off the lip. Additive blending means the vertex
+    // colour IS the fade: black is gone.
+    {
+      const fg = new THREE.RingGeometry(2.5 * K, 11 * K, 48, 3).rotateX(-Math.PI / 2);
+      const fp = fg.attributes.position, fc = new Float32Array(fp.count * 3);
+      for (let i = 0; i < fp.count; i++) {
+        const vx = fp.getX(i), vz = fp.getZ(i);
+        const gy = groundY(wx + vx, wz + vz);
+        fp.setY(i, gy - landY + .18);
+        const k = 1 - smooth(1.4 * K, 4.2 * K, Math.abs(gy - landY));
+        fc[i * 3] = fc[i * 3 + 1] = fc[i * 3 + 2] = k;
+      }
+      fp.needsUpdate = true;
+      fg.setAttribute('color', new THREE.BufferAttribute(fc, 3));
+      this.foam = new THREE.Mesh(fg, new THREE.MeshBasicMaterial({ color: 0xdff2ff, vertexColors: true,
+        transparent: true, opacity: .45, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      this.foam.position.set(wx, landY, wz); scene.add(this.foam);
+    }
     this.chunks = [];
     for (let i = 0; i < 6; i++) {
       const a = rnd(Math.PI * 2), r = rnd(R + 10 * K, R + 30 * K), sc = rnd(1.5, 4.5) * K;
@@ -11246,7 +11278,9 @@ class FloatingIsle {
     this.fallUni.uT.value = world.clock;
     for (const c of this.chunks) c.pv.rotation.y += c.sp * dt;
     this.foam.material.opacity = .28 + Math.sin(world.clock * 2.1) * .07 + world.night * .12;
-    this.foam.scale.setScalar(1 + Math.sin(world.clock * 1.3) * .04);
+    // Across the ground only. Scaling Y as well would lift the whole drape off the contour it
+    // was baked onto, which is the thing this stopped doing.
+    { const k = 1 + Math.sin(world.clock * 1.3) * .04; this.foam.scale.set(k, 1, k); }
   }
   dispose() { scene.remove(this.g); scene.remove(this.foam); if (this.fallMesh) scene.remove(this.fallMesh); }
 }
@@ -12132,8 +12166,16 @@ function buildDomeHut(x, z, yaw) {
   S.put(G.cyl, M.domeSteel, R - 2.2, .05, R - 2.2, 0, .13, 0);
   S.put(G.cyl, M.domeGlass, .5, .18, .5, 0, D.wallH + D.capH * .74, 0);
   // ---- the skirt, the crates and the pipework at its foot ----
-  S.put(G.cyl, M.domeCrate, R + .22, .5, R + .22, 0, .25, 0);
-  S.put(G.cyl, M.domeSteel, R + .30, .16, R + .30, 0, .08, 0);
+  // THE SKIRT STOPS AT THE DOORWAY. It was two full cylinders, so a half-metre lip ran across
+  // the threshold: he stepped over it, but it is the thing standing in the open door. Built as
+  // segments off the same column loop instead, skipping the same panels the wall does.
+  for (let i = 0; i < D.cols; i++) {
+    const a = i * step;
+    if (Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) < half * D.doorCols) continue;
+    const cx = Math.sin(a) * (R + .22), cz = Math.cos(a) * (R + .22);
+    S.put(G.box, M.domeCrate, chord * 1.02, .5, .44, cx, .25, cz, 0, a, 0);
+    S.put(G.box, M.domeSteel, chord * 1.02, .16, .60, Math.sin(a) * (R + .30), .08, Math.cos(a) * (R + .30), 0, a, 0);
+  }
   for (const [sgn, lon] of [[-1, .95], [1, 1.55]]) {
     const cx = Math.sin(lon * sgn) * (R - .3), cz = Math.cos(lon * sgn) * (R - .3);
     S.put(G.box, M.domeCrate, 1.5, 1.2, 1.15, cx, .6, cz, 0, lon * sgn, 0);
@@ -12162,10 +12204,20 @@ function buildDomeHut(x, z, yaw) {
   // thread a doorway whose jambs are guarded to the middle. The panel that leaves uncollided
   // sits almost entirely inside the reach of the next collider along, so what it costs is a
   // sliver of shoulder clipping the reveal, not a wall you can walk through.
+  // AND THEY HAVE TO CLEAR OB_PLAYER.minOb, which is the whole reason you could walk through
+  // any wall of this building. resolvePlayer drops every collider under .9 on the floor as too
+  // small to be worth testing -- 28 panels on a 5.2 radius is a 1.21 chord, and .55 of that is
+  // .67. Every single collider in the ring was being thrown away before it was ever compared
+  // against him, so the wall was decoration and the door was the only thing that had ever
+  // stopped anybody, because the door's own collider is 1.5.
+  // At .95 they overlap generously (centres are 1.16 apart) and the jambs still leave a 4.6
+  // opening against a 2.4-wide player.
+  const wallR = Math.max(chord * .55, .95);      // .95 = OB_PLAYER.minOb + a margin, written out
+  //   rather than read, because OB_PLAYER is declared three thousand lines below this one.
   for (let i = 0; i < D.cols; i++) {
     const a = i * step;
     if (Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) < half * (D.doorCols + 2)) continue;
-    S.block(Math.sin(a) * R, Math.cos(a) * R, chord * .55, D.wallH + D.capH * .9);
+    S.block(Math.sin(a) * R, Math.cos(a) * R, wallR, D.wallH + D.capH * .9);
   }
   S.done();
   world.structures.push(new DomeDoor(S, D, dw, dh, dz, yaw));
