@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e73';
+const BUILD = 'e74';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -18377,10 +18377,28 @@ function buildThrowMark() {
   }
   g.scale.setScalar(TMARK.r);
   scene.add(g);
-  // A triangle, flat, with its point on +Z so turning it by the arc's bearing aims it.
-  const chev = new THREE.CircleGeometry(1, 3).rotateZ(Math.PI / 2).rotateX(-Math.PI / 2);
+  // THE CHEVRONS, and they are solid. A flat triangle laid on the ground is a triangle laid on
+  // the ground: from a camera that is nearly overhead it has no thickness to catch the light
+  // and it reads as a smear rather than as a thing pointing somewhere. This is an extruded
+  // arrow with a bevel, stood up off the arc, and the extrusion is what does the work --
+  // ExtrudeGeometry puts its caps in group 0 and its walls in group 1, so a two-material mesh
+  // gets a bright top and a dark side for free, with no light in the scene to depend on.
+  const sh = new THREE.Shape();
+  sh.moveTo(0, .54); sh.lineTo(-.48, -.16); sh.lineTo(-.30, -.36);
+  sh.lineTo(0, .08); sh.lineTo(.30, -.36); sh.lineTo(.48, -.16); sh.closePath();
+  const chev = new THREE.ExtrudeGeometry(sh, { depth: .20, steps: 1,
+    bevelEnabled: true, bevelThickness: .045, bevelSize: .045, bevelSegments: 1 });
+  // Shape space is XY with the point on +Y; lay it flat with the point on +Z, then lift it so
+  // it stands ON the arc rather than through it.
+  chev.rotateX(Math.PI / 2); chev.translate(0, .26, 0);
   const dashes = [];
-  for (let i = 0; i < TMARK.dashes; i++) { const m = new THREE.Mesh(chev, mat.clone()); m.userData.noHole = 1; scene.add(m); dashes.push(m); }
+  for (let i = 0; i < TMARK.dashes; i++) {
+    const cap = mat.clone(), wall = mat.clone();
+    cap.side = wall.side = THREE.FrontSide;        // it is a closed solid now; both faces is waste
+    const m = new THREE.Mesh(chev, [cap, wall]);
+    m.userData.noHole = 1; m.userData.mats = [cap, wall];
+    scene.add(m); dashes.push(m);
+  }
   return { g, mat, dashes, ring, pip };
 }
 // Walks the arc in fixed steps until it meets the ground, filling `out` with the samples it
@@ -18439,10 +18457,16 @@ function throwMarkStep(show, power, T) {
     // near the top of a lob the path is climbing and the chevron should say so
     const dx = _tmArc[s2 * 3] - _tmArc[s * 3], dz = _tmArc[s2 * 3 + 2] - _tmArc[s * 3 + 2];
     if (dx * dx + dz * dz > 1e-6) d.rotation.set(0, Math.atan2(dx, dz), 0);
-    const sc = .30 + k * .34;
-    d.scale.set(sc * .72, sc, sc);
-    d.material.opacity = (.20 + k * .55) * (.55 + power * .45);
-    d.material.color.copy(tmark.mat.color);
+    // A crest running down the chain toward the mark, so the line says which way it is going
+    // rather than only where it ends. Off the position along the arc, not off the index, so it
+    // keeps one pace as the throw winds out and the spacing changes underneath it.
+    const pulse = .5 + .5 * Math.cos(k * 7.4 - world.clock * 4.2);
+    const sc = (.34 + k * .36) * (.86 + pulse * .26);
+    d.scale.setScalar(sc);
+    const a = (.24 + k * .58) * (.55 + power * .45) * (.62 + pulse * .48);
+    const M = d.userData.mats;
+    M[0].opacity = a; M[0].color.copy(tmark.mat.color).multiplyScalar(.85 + pulse * .5);
+    M[1].opacity = a * .92; M[1].color.copy(tmark.mat.color).multiplyScalar(.34);
   }
 }
 
@@ -18536,9 +18560,14 @@ function stepThrow(dt, rx, ry) {
     return false;
   }
   const mag = Math.hypot(rx, ry);
-  // Committed already, or committing now. Once it is his the whole pad is the aim; until then
-  // only a push straight up counts, so looking around with something in his arms is free.
-  if (p.windOwn === what ? mag > THROW.keep : throwUp(rx, ry)) {
+  // Committed already, or committing now. Until then only a push straight up counts, so
+  // looking around with something in his arms is free.
+  // AND IT ENDS WHEN THE THUMB LIFTS. Holding it committed while the stick was outside a ring
+  // meant pulling the mark back IN threw the thing: the aim passes through the centre of the
+  // pad on its way to the near end of the range, which is a position the gesture has to be
+  // allowed to visit. The pad reports whether it is under a thumb; that is the gesture, and
+  // there is no magnitude anywhere in it.
+  if (p.windOwn === what ? stick.R.down : throwUp(rx, ry)) {
     throwStick(dt, rx, ry, what);
     p.throwAim = 1;
     throwMarkStep(true, p.throwK, what === 'hold' ? HTOSS : undefined);
@@ -18572,7 +18601,7 @@ const TOSS = { keep: .16 };
 function stepToss(dt, rx, ry) {
   const p = player;
   const mag = Math.hypot(rx, ry);
-  if (p.windOwn === 'beacon' ? mag > TOSS.keep : throwUp(rx, ry)) {
+  if (p.windOwn === 'beacon' ? stick.R.down : throwUp(rx, ry)) {
     throwStick(dt, rx, ry, 'beacon');
     p.tossAim = 1;                                 // NOT p.aiming: that is the rifle stance
     throwMarkStep(true, p.throwK, BTOSS);
