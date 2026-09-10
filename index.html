@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e85';
+const BUILD = 'e86';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7897,6 +7897,13 @@ const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7,
 // It is PER ANIMAL, which is the other half of what the species barometer could never say.
 // MOOD.m is what the mossbacks think of him; `vig` and `ire` are what THIS mossback, the one
 // he just shot, is about to do about it.
+// WHAT AN ANIMAL CAN SEE AND HEAR. `cone` is the half-angle of its sight, so .8 is about
+// ninety degrees across the front; `hear` is how far its hearing reaches at a full sprint, as a
+// multiple of its sight range, and it falls off with the SQUARE of the noise, so a tiptoe at
+// .6 of full pace is heard at a third of the distance and a slow walk hardly at all. `hold` is
+// the freeze -- it looks first, then runs -- and `cool` keeps one animal from startling on
+// every frame of a chase.
+const SENSE = { cone: .8, hear: 1.1, hold: 1.0, cool: 2.5 };
 const VIT = {
   bolt: .34, melee: .26, thrash: .055,     // a plasma hit, a swing, and a second of fighting a net
   regenAfter: 9, regen: .05,               // it gets its wind back if he leaves it alone
@@ -7976,7 +7983,8 @@ function bubbleSay(c, key) {
   if (!c || c.bubT === undefined) return;
   if (c.bub !== key || c.bubT <= 0) {
     const t = world.clock;
-    if (t - (c.voxT || -99) > CVOX.gap && Math.hypot(c.pos.x - cam.tgt.x, c.pos.z - cam.tgt.z) < CVOX.far) {
+    // The seven voices are the ISLAND'S; a man noticing something does not bark like one.
+    if (!(c instanceof Poacher) && t - (c.voxT || -99) > CVOX.gap && Math.hypot(c.pos.x - cam.tgt.x, c.pos.z - cam.tgt.z) < CVOX.far) {
       c.voxT = t; snd.beast(c, key);
     }
   }
@@ -8100,7 +8108,7 @@ class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
-    this.recover = null;
+    this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
@@ -8712,7 +8720,30 @@ class Creature {
     }
     let wary = S.wary * (1 + Math.max(0, -md) * (MOOD.waryK - 1));
     if (md <= MOOD.afraid) wary = Math.max(wary, MOOD.waryMin * (-md - MOOD.afraid) / (1 + MOOD.afraid));
-    if (wary && him && this.dist(pl.pos) < wary) { this.spook(pl.pos, S.flock); return true; }
+    // EYES AND EARS, instead of a circle. `wary` used to be a radius: inside it, run. Which
+    // meant nothing could ever be crept up on, from any side, at any pace -- the whole reason
+    // a poacher tiptoes and the whole reason you might. Now it is the range of its SIGHT, in a
+    // cone out the front of it, and of its HEARING, which reaches further the louder the thing
+    // coming is: a sprint is heard a long way off, a tiptoe barely at all. See SENSE.
+    // And what it does about it is two beats, not one: it freezes and looks -- the ! goes up --
+    // and a second later it runs. The second is the window a stalk is aiming for.
+    if (this.startleCool > 0) this.startleCool -= dt;
+    if (this.startle > 0) {
+      this.startle -= dt; this.moving = 0;
+      const f = this.startleFrom;
+      let a = Math.atan2(f.x - this.pos.x, f.z - this.pos.z) - this.heading; a = Math.atan2(Math.sin(a), Math.cos(a));
+      this.heading += clamp(a, -this.turn * dt * 1.5, this.turn * dt * 1.5);
+      if (this.startle <= 0) this.spook(f, S.flock);
+      this.doing = 'startle'; return true;
+    }
+    if (wary && this.startleCool <= 0 && !this.fling && !this.net) {
+      const t = this.threat(wary, him ? pl : null);
+      if (t) {
+        this.startle = SENSE.hold; this.startleFrom = { x: t.x, z: t.z }; this.startleCool = SENSE.cool;
+        this.moving = 0; bubbleSay(this, 'alarm');
+        this.doing = 'startle'; return true;
+      }
+    }
     if (this.met > 0) {
       this.met -= dt; this.moving = 0;
       if (this.metWho && this.metWho.alive) this.seek(this.metWho.pos, 1);
@@ -8773,6 +8804,23 @@ class Creature {
       if (o) { const t = rnd(2.4, 4.8); this.met = t; this.metWho = o; o.met = t; o.metWho = this; this.doing = 'meet'; return true; }
     }
     return false;
+  }
+  // Can it see or hear this thing? `range` is the species' own wariness; the cone and the
+  // hearing fall-off are SENSE's. `pl` is the player when he counts as a threat (null when he
+  // is trusted or disguised); poachers always count.
+  threat(range, pl) {
+    const fx = Math.sin(this.heading), fz = Math.cos(this.heading), cosC = Math.cos(SENSE.cone);
+    const test = (x, z, noise) => {
+      const dx = x - this.pos.x, dz = z - this.pos.z, d = Math.hypot(dx, dz);
+      if (d < .3) return true;
+      if (d < range && (dx * fx + dz * fz) / d > cosC) return true;             // seen
+      const n = clamp(noise, 0, 1);
+      return d < range * SENSE.hear * n * n;                                    // heard
+    };
+    if (pl && test(pl.pos.x, pl.pos.z, pl.speed / MOVE.max)) return pl.pos;
+    const po = nearest(world.creatures, this.pos, c => c instanceof Poacher && c.alive && c.daze <= 0 && !c.fling, range * SENSE.hear);
+    if (po && test(po.pos.x, po.pos.z, po.moveK)) return po.pos;
+    return null;
   }
   // A head that turns to follow him. Applied after pose() rather than inside it, because a
   // species' own idle sway lives on the same joint and would otherwise overwrite this; pose()
@@ -10081,7 +10129,10 @@ const POACHER = {
   // against a hopper's 3.6 -- he could close on something standing still and never on anything
   // that moved, so he spent the whole hunt hovering just outside arm's reach. Inside this he
   // goes at him.
-  pounce: 7,
+  hunt: [20, 40],    // how long one quarry is worth, before he shrugs and looks for another
+  notice: .7,        // the stop-and-look when one comes into range
+  behind: 2.4,       // how far behind the animal the tiptoe aims for, past its own radius
+  creepK: .62,       // his pace while tiptoeing, as a fraction of full
   grab: 2.6,
   cool: [2, 5],      // after he gives one up, before he looks for another
   take: .80,         // wind at or below which it cannot fight him off
@@ -10107,10 +10158,13 @@ class Poacher extends Creature {
     // Alternated rather than rolled, so seven of them are four and three and never all one
     // man seven times. Counted in the super() call because that is where it is read.
     super(x, z, { speed: 4.4, turn: 3.4, rad: .95, look: 7, minObR: 1.1,
-      wary: 0, flock: 0, notice: 26, social: 1, thirst: 90,
+      // thirst was 90, and with the hunt now standing aside during his cool-downs that put a
+      // sixth of his life at the water's edge. A man drinks now and then; this is then.
+      wary: 0, flock: 0, notice: 26, social: 1, thirst: 420,
       rigKey: (Poacher._n = (Poacher._n || 0) + 1) % 2 ? 'Poacher' : 'Poacher1' });
     this.quarry = null; this.hunt = 0; this.cool = rnd(0, 3);
     this.carry = null; this.carryK = 0; this.carryT = 0; this.grabT = 0; this.grip = 0;
+    this.job = 'wander'; this.noticeT = 0; this.restT = 0;
     this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
     this.hasAir = 1;                       // and two for being in it: skip the procedural lean
@@ -10188,6 +10242,7 @@ class Poacher extends Creature {
   // worth taking. Their clocks still tick, so nothing starves for being skipped.
   senses(dt) {
     if (this.daze > 0 || this.alarm > 0 || this.fling || this.net) return super.senses(dt);
+    if (!this.carry && !this.quarry && this.cool > 0) return super.senses(dt);
     if (!this.carry && !this.quarry && !this.prey()) return super.senses(dt);
     this.doing = '';
     if (world.clock - this.hurtAt > VIT.regenAfter && this.vig < 1) this.vig = Math.min(1, this.vig + VIT.regen * dt);
@@ -10254,80 +10309,122 @@ class Poacher extends Creature {
     this._wasDown = 1;
     if (this.act !== 'lay') this.play('lay', 1, this.daze + .6);
   }
+  // THE BRAIN, WRITTEN AS THE STATES HE DESCRIBED, in the order he described them, and
+  // nothing else. It had been a pile of conditions layered over an animal's senses, and every
+  // one of them had a way of quietly winning that could not be seen from a phone. This is a
+  // `job` with five names, one branch each, and the transitions are the whole of the design:
+  //   wander  -- stupid on purpose: a random direction, a random distance, an occasional rest
+  //   notice  -- a creature came inside POACHER.see. He stops, an ! goes up, and he looks at it
+  //   stalk   -- the tiptoe. He does not walk AT it: he walks to a spot BEHIND it first (its
+  //              own heading says where behind is), and only when he is there does he close.
+  //              If it turns and sees him, or hears him, it startles -- that is the creature's
+  //              side, in Creature.senses -- and the stalk is over
+  //   chase   -- so he runs. Full pace after a fleeing animal, which he can catch on the flat
+  //   haul    -- and once he has it, home to the camp with it under his arm
+  // The grab itself is the two beats that were already here: a fresh one twists free and is
+  // worse for it; catch it again before it has its wind back and it is his.
   think(dt) {
     this.moving = 1;
     this.cool = Math.max(0, this.cool - dt);
     if (this._wasDown) { this._wasDown = 0; this.play('standUp', 1.15); }
     if (this.actT > 0 && (this.act === 'lay' || this.act === 'standUp')) { this.moving = 0; return; }
-    // Worn down, he limps -- which is also the tell that he can be taken.
     this.gaitClip = (this.vig < POACHER.limp && this.rig && this.rig.acts.hobble) ? 'hobble' : null;
-    // ARMS FULL: he is going home, and nothing else is interesting. The stoop owns him for its
-    // own length first, so he bends over the animal rather than gliding away from it.
+    const q = this.quarry;
+    // ── haul ──
     if (this.carry) {
-      this.quarry = null;
+      this.quarry = null; this.job = 'haul';
       if (this.grabT > 0) { this.moving = 0; this.doing = 'stoop'; return; }
-      const c = world.poachCamp || this.lastGood;
-      const d = this.dist(c);
+      const cp = world.poachCamp || this.lastGood, d = this.dist(cp);
       this.carryT -= dt;
-      if (d < POACHER.camp) { this.dropCarry('camp'); this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); return; }
-      if (this.carryT <= 0) { this.dropCarry('bored'); this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); return; }
-      this.gaitClip = null;                    // the cradle is an overlay; the legs walk normally
-      this.moving = .85;
-      this.seek(c, 1.0);
-      this.doing = 'haul';
+      if (d < POACHER.camp) { this.dropCarry('camp'); this.job = 'wander'; this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); return; }
+      if (this.carryT <= 0) { this.dropCarry('bored'); this.job = 'wander'; this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); return; }
+      this.gaitClip = null; this.moving = .85; this.seek(cp, 1.0); this.doing = 'haul';
       return;
     }
-    // A creature worth having. He keeps the one he chose while it is still worth keeping.
-    if (this.quarry && (!this.quarry.alive || this.quarry.carried || this.dist(this.quarry.pos) > POACHER.see * 1.4)) this.quarry = null;
-    if (!this.quarry && this.cool <= 0) {
-      this.quarry = this.prey();
-      if (this.quarry) this.hunt = rnd(18, 34);
+    // A quarry stops being one: gone, taken by somebody else, out of sight, or he has simply
+    // spent long enough on it.
+    if (q && (!q.alive || q.carried || this.dist(q.pos) > POACHER.see * 1.6 || (this.hunt -= dt) <= 0)) {
+      this.quarry = null; this.job = 'wander'; this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); this.doing = 'give up'; return;
     }
-    if (this.quarry) {
-      const d = this.dist(this.quarry.pos);
-      this.hunt -= dt;
-      if (this.hunt <= 0) { this.quarry = null; this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); this.doing = 'give up'; return; }
-      if (this.grip > 0) { this.grip -= dt; this.moving = .5; this.seek(this.quarry.pos, .5); this.doing = 'regrip'; return; }
-      if (d < POACHER.grab) {
-        // The cool-down is set on the FAILURE below rather than here: a man who has just got
-        // his hands on one has no reason to stand about, and the haul is its own long pause.
-        const q = this.quarry;
-        this.doing = 'grab';
-        // WHAT A SUCCESSFUL GRAB IS, and the last two answers were both wrong for the same
-        // reason: they asked a question about the PLAYER. "Already worn down" is the player's
-        // capture rule and nothing else on the island wears anything down, so it never fired.
-        // "Has not noticed him" reads well and fails in the one situation you would ever watch
-        // it in -- you standing there watching alarms every creature in sight, so every grab
-        // failed while you were looking at it and every grab succeeded when you were not. The
-        // headless run says so outright: with the player parked, eleven takes in three minutes.
-        // So it asks about the ANIMAL and nothing else. A fresh one twists out of his hands and
-        // is worse for it; catch it again before it gets its wind back and it is his. Two beats,
-        // visible, and the same whoever is or is not standing nearby.
-        if (q.daze > 0 || q.vig < POACHER.take) { this.quarry = null; this.takeIt(q); return; }
-        // IT GOT AWAY, AND HE IS STILL AFTER IT. The first version of this let go of the quarry
-        // and stood a cool-down out, then went looking again -- so the scuffle was the END of
-        // the hunt rather than the middle of it, and the headless run duly went from eleven
-        // takes to two. He keeps hold of the idea: a moment to get his hands back, and he is on
-        // it again while it is still short of its wind. The spook is small on purpose; a full
-        // one sends it across the region and no amount of pouncing catches that.
-        creatureHurt(q, POACHER.wear, this.pos, 1);
-        this.grip = POACHER.grip;
-        q.spook(this.pos, 0);
-        this.play('idle2', 1, 1.2);
-        return;
+    if (!q) this.job = 'wander';
+    // ── wander ──
+    if (this.job === 'wander') {
+      if (this.cool <= 0) {
+        const pr = this.prey();
+        if (pr) {
+          this.quarry = pr; this.hunt = rnd(POACHER.hunt[0], POACHER.hunt[1]);
+          this.job = 'notice'; this.noticeT = POACHER.notice;
+          bubbleSay(this, 'alarm');
+          this.doing = 'notice'; this.moving = 0; return;
+        }
       }
-      // Close in, then creep. A poacher who runs at everything catches nothing, and the
-      // tiptoe is the whole reason to watch him.
-      const pouncing = d < POACHER.pounce;
-      const creeping = d < POACHER.creep && !pouncing;
-      this.gaitClip = this.gaitClip || (creeping && this.rig && this.rig.acts.sneak ? 'sneak' : null);
-      this.moving = creeping ? .62 : 1;
-      this.seek(this.quarry.pos, creeping ? .62 : 1.15);
-      this.doing = pouncing ? 'pounce' : creeping ? 'creep' : 'stalk';
+      // the rest: he stands a moment now and then, which is what makes the walking read as a walk
+      if (this.restT > 0) { this.restT -= dt; this.moving = 0; this.doing = 'rest'; return; }
+      if (Math.random() < dt * .04) this.restT = rnd(1.5, 4);
+      this.moving = .8; this.wander(); this.doing = 'wander';
       return;
     }
-    this.wander();
-    this.doing = 'wander';
+    const d = this.dist(q.pos);
+    // ── notice ──
+    if (this.job === 'notice') {
+      this.noticeT -= dt; this.moving = 0; this.stall = 0; this.aimPt = null;
+      this.turnTo(q.pos, dt);
+      if (this.noticeT <= 0) this.job = 'stalk';
+      this.doing = 'notice'; return;
+    }
+    // the grab, from either of the two moving states
+    if (this.grip > 0) { this.grip -= dt; this.moving = .5; this.seek(q.pos, .5); this.doing = 'regrip'; return; }
+    if (d < POACHER.grab) {
+      this.doing = 'grab';
+      if (q.daze > 0 || q.vig < POACHER.take) { this.quarry = null; this.takeIt(q); return; }
+      creatureHurt(q, POACHER.wear, this.pos, 1);
+      this.grip = POACHER.grip;
+      q.spook(this.pos, 0);
+      this.play('idle2', 1, 1.2);
+      this.job = 'chase';                        // it is loose and alarmed: he runs it down
+      return;
+    }
+    // ── chase ──
+    // While it is running he runs. When it has forgotten him and he is far enough off to try
+    // again quietly, he goes back to creeping.
+    const seen = q.alarm > 0 || q.startle > 0;
+    if (this.job === 'chase') {
+      if (!seen && d > POACHER.creep * .6) { this.job = 'stalk'; }
+      else { this.moving = 1; this.seek(q.pos, 1.3); this.stall = 0; this.doing = 'chase'; return; }
+    }
+    // ── stalk ──
+    if (seen) { this.job = 'chase'; this.moving = 1; this.seek(q.pos, 1.3); this.stall = 0; this.doing = 'chase'; return; }
+    this.job = 'stalk';
+    // NOT STUCK, WORKING. The stall watchdog counts seconds of wanting to move and covering
+    // no ground, and a man circling to get behind something that keeps turning covers very
+    // little -- six seconds of that and it kicked him into an eight-second roam with no
+    // quarry, which the headless run showed as half his life spent doing nothing.
+    this.stall = 0;
+    // The spot behind it, and it is HELD for a while rather than read fresh every frame: an
+    // animal that is wandering turns constantly, and a point that swings round with it is a
+    // point he chases in circles and never reaches. Re-aimed when it has moved far enough to
+    // be a different place, or every so often regardless.
+    const fx = Math.sin(q.heading), fz = Math.cos(q.heading);
+    const inFront = ((this.pos.x - q.pos.x) * fx + (this.pos.z - q.pos.z) * fz) > 0;
+    const back = (q.rad || 1) + POACHER.behind;
+    const bx = q.pos.x - fx * back, bz = q.pos.z - fz * back;
+    const A = this.aimPt || (this.aimPt = { x: bx, z: bz, t: 0 });
+    A.t -= dt;
+    if (A.t <= 0 || Math.hypot(A.x - bx, A.z - bz) > 4) { A.x = bx; A.z = bz; A.t = .8; }
+    const db = Math.hypot(A.x - this.pos.x, A.z - this.pos.z);
+    // Close enough that it is about to notice him whatever he does: go straight in.
+    if (d < POACHER.grab * 1.8 || !inFront || db < 1.2) this.seek(q.pos, 1.0);
+    else this.seek(A, 1.0);                                       // round the back of it first
+    this.gaitClip = this.gaitClip || (this.rig && this.rig.acts.sneak ? 'sneak' : null);
+    this.moving = d < POACHER.creep ? POACHER.creepK : .85;
+    this.doing = inFront && d >= POACHER.grab * 1.8 ? 'circle' : 'stalk';
+  }
+  // Turn toward a point at his own turn rate, standing still. (Not `face` -- that is the
+  // creature's mood-face STRING, and a method of the same name is shadowed by the field.)
+  turnTo(pt, dt) {
+    let a = Math.atan2(pt.x - this.pos.x, pt.z - this.pos.z) - this.heading;
+    a = Math.atan2(Math.sin(a), Math.cos(a));
+    this.heading += clamp(a, -this.turn * dt, this.turn * dt);
   }
   update(dt) {
     if (this.daze > 0) this._wasDown = 1;

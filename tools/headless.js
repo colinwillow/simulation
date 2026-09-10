@@ -42,13 +42,14 @@ let stallWorst=0, stallWho='', stallState='', stallNear='', stallCount=0; const 
 const w=global.__w,C=global.__C,c=global.__count,obRad=global.__obRad;
 let worstOverlap=0, worstWho='', overlapFrames=0, stuckMax=0;
 const obs=new Set(); for(const [k,a] of global.__OB.map) for(const o of a) obs.add(o);
-const pDoing={}, pSeen=new Map(); let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
+const pDoing={}, pSeen=new Map(); let pBlank=0; let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
 for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
   if(i%10===0){ for(const cr of w.creatures){ if(!(cr instanceof C.Poacher)||!cr.alive) continue;
     pSamples++; const d=cr.doing||'-'; pDoing[d]=(pDoing[d]||0)+1;
     if(cr.carry) pCarryFrames++;
     const had=pSeen.get(cr); if(cr.carry&&!had) pGrabs++; if(!cr.carry&&had) pDrops++; pSeen.set(cr,!!cr.carry);
     if(!cr.prey||!cr.prey()) pNoPrey++;
+    if(!cr.doing && pBlank<6){ pBlank++; console.log('[poacher blank] job',cr.job,'quarry',cr.quarry?cr.quarry.constructor.name:'-','roamT',(cr.roamT||0).toFixed(1),'alarm',(cr.alarm||0).toFixed(1),'startle',(cr.startle||0).toFixed(1),'daze',cr.daze.toFixed(1),'fling',!!cr.fling,'net',!!cr.net,'cool',cr.cool.toFixed(1),'met',(cr.met||0).toFixed(1),'state',cr.state); }
   } }
   maxRain=Math.max(maxRain,global.__wx.rain); maxStorm=Math.max(maxStorm,global.__wx.storm);
   if(i%30===0){ for(const cr of w.creatures){ if(!cr.alive||cr.flying||cr.aquatic) continue;
