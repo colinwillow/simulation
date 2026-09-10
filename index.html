@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e84';
+const BUILD = 'e85';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -6623,6 +6623,22 @@ const RIG_WARNED = new Set();
 // every name clash. clipsFrom is for a body with no clips at all; this is for a body that has
 // fourteen of its own and is missing one gesture somebody else already authored -- the
 // poacher's pick-up and carry, which are the wanderer's, on a skeleton with the same names.
+// A CLIP IS ROTATIONS, and this is the line that makes that true rather than nearly true.
+// These exports keep a TRANSLATION track on every bone, not only on the hips -- 68 of them on
+// the wanderer, 54 on the poacher -- and a bone's translation is its LENGTH, in its own file's
+// units. The two rigs do not share those: the wanderer's hips sit at -1.6 in its rest pose and
+// the poacher's at +41. So a borrowed clip did not merely pose the poacher, it rebuilt his
+// skeleton at the donor's proportions the instant it took any weight, which is exactly what
+// was watched -- a normal man until he picks something up and a doll from then on.
+// Rotations travel between rigs; lengths and units do not. Keep the quaternions and drop the
+// rest. Cloned first, because these clip objects are the ones the DONOR's own rig is playing
+// and filtering them in place would take the wanderer's arms off with them.
+function borrow(clip) {
+  const c = clip.clone();
+  c.tracks = c.tracks.filter(t => /\.quaternion$/.test(t.name));
+  c.resetDuration();
+  return c;
+}
 function attachRig(parent, cfg, done) {
   if (cfg.clipsFrom) {
     loadModel(cfg.clipsFrom, donor => attachRigTo(parent, cfg, donor.anims, done));
@@ -6631,14 +6647,11 @@ function attachRig(parent, cfg, done) {
   if (cfg.clipsAlso) {
     loadModel(cfg.url, own => loadModel(cfg.clipsAlso, donor => {
       // NAMED, NOT WHOLESALE. The first version handed over everything the donor had that the
-      // model did not -- twenty-eight clips to get two. Every one of them then went through
-      // pickClip, measureStride and clipSpan against a skeleton with fourteen fewer bones in
-      // it, and the poacher quietly acquired a swim set, a jump set and the whole rifle stance
-      // besides. `clipsTake` names exactly what is wanted and the rest of the donor stays
-      // where it is.
+      // model did not -- twenty-eight clips to get two, each one measured against a skeleton
+      // with fourteen fewer bones in it. `clipsTake` names exactly what is wanted.
       const take = cfg.clipsTake, have = new Set(own.anims.map(a => a.name));
       const add = donor.anims.filter(a => !have.has(a.name) && (!take || take.indexOf(a.name) >= 0));
-      attachRigTo(parent, cfg, own.anims.concat(add), done);
+      attachRigTo(parent, cfg, own.anims.concat(add.map(borrow)), done);
     }, () => attachRigTo(parent, cfg, null, done)), () => attachRigTo(parent, cfg, null, done));
     return;
   }
