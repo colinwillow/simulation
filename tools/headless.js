@@ -4,7 +4,7 @@ THREE.CanvasTexture = class extends THREE.Texture {};
 global.THREE = THREE; global.devicePixelRatio=1; global.innerWidth=1280; global.innerHeight=800;
 global.matchMedia=()=>({matches:false});
 const els={};
-global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,getContext(){return {createRadialGradient(){return {addColorStop(){}}},fillRect(){},createImageData(w,h){return {data:new Uint8ClampedArray(w*h*4)}},putImageData(){}}}};
+global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,getContext(){const g={createRadialGradient(){return {addColorStop(){}}},createLinearGradient(){return {addColorStop(){}}},fillRect(){},clearRect(){},strokeRect(){},createImageData(w,h){return {data:new Uint8ClampedArray(w*h*4)}},putImageData(){},getImageData(w,h){return {data:new Uint8ClampedArray(4)}},beginPath(){},closePath(){},moveTo(){},lineTo(){},arc(){},ellipse(){},quadraticCurveTo(){},bezierCurveTo(){},rect(){},fill(){},stroke(){},clip(){},save(){},restore(){},translate(){},rotate(){},scale(){},setTransform(){},transform(){},drawImage(){},fillText(){},strokeText(){},measureText(){return {width:0}},setLineDash(){}};return g;}};
   const d={children:[],style:{setProperty(){},removeProperty(){}},dataset:{},title:'',className:'',addEventListener(){},classList:{toggle(){},add(){},remove(){}},querySelector(){return this.__k||(this.__k=global.document.createElement('div'))},getBoundingClientRect(){return {left:0,top:0,width:132,height:132}},setPointerCapture(){},appendChild(c){this.children.push(c);c.parent=this},removeChild(c){const i=this.children.indexOf(c);if(i>=0)this.children.splice(i,1)},remove(){if(this.parent)this.parent.removeChild(this)},get firstChild(){return this.children[0]},set textContent(v){},set innerHTML(v){}}; return d;},
   // three's TextureLoader goes through createElementNS for its <img>, and an img it can
   // never load is fine here: nothing headless samples a texture.
@@ -14,6 +14,8 @@ global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,ge
   // containing block for every fixed panel and this is what sizes it.
   documentElement:{style:{setProperty(){},removeProperty(){}}} };
 global.screen={width:390,height:844};
+global.location={search:'',hash:'',href:'file:///index.html',pathname:'/index.html'};   // ?flags are read with a bare location in one place
+
 global.getComputedStyle=()=>({getPropertyValue:()=>'0px'});   // the lens is sized against the glass, not only the viewport
 let cbs=[]; global.requestAnimationFrame=f=>cbs.push(f); global.addEventListener=()=>{}; global.setInterval=()=>{}; global.setTimeout=()=>{};
 global.window=global;   // the page hangs a debug handle off window; no GLTFLoader here, so the rig load is skipped
@@ -25,7 +27,7 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('cons
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__REGIONS=REGIONS;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__REGIONS=REGIONS;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump,Poacher};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
 eval(src);
 // The title screen parks the camera out at the planet and flies the ship round it. That is
 // the first thing a player sees and the last thing a harness wants: every tool here measures
@@ -40,7 +42,14 @@ let stallWorst=0, stallWho='', stallState='', stallNear='', stallCount=0; const 
 const w=global.__w,C=global.__C,c=global.__count,obRad=global.__obRad;
 let worstOverlap=0, worstWho='', overlapFrames=0, stuckMax=0;
 const obs=new Set(); for(const [k,a] of global.__OB.map) for(const o of a) obs.add(o);
+const pDoing={}, pSeen=new Map(); let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
 for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
+  if(i%10===0){ for(const cr of w.creatures){ if(!(cr instanceof C.Poacher)||!cr.alive) continue;
+    pSamples++; const d=cr.doing||'-'; pDoing[d]=(pDoing[d]||0)+1;
+    if(cr.carry) pCarryFrames++;
+    const had=pSeen.get(cr); if(cr.carry&&!had) pGrabs++; if(!cr.carry&&had) pDrops++; pSeen.set(cr,!!cr.carry);
+    if(!cr.prey||!cr.prey()) pNoPrey++;
+  } }
   maxRain=Math.max(maxRain,global.__wx.rain); maxStorm=Math.max(maxStorm,global.__wx.storm);
   if(i%30===0){ for(const cr of w.creatures){ if(!cr.alive||cr.flying||cr.aquatic) continue;
       let e=stall.get(cr); if(!e){ e={t:0,x:cr.pos.x,z:cr.pos.z,worst:0}; stall.set(cr,e); }
@@ -65,6 +74,14 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
     if(bad) overlapFrames++;
   }
 }
+{ const ds=Object.entries(pDoing).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' '+(100*v/Math.max(1,pSamples)).toFixed(0)+'%').join('  ');
+  console.log('[poacher] samples '+pSamples+'  grabs '+pGrabs+'  drops '+pDrops+'  carrying '+(100*pCarryFrames/Math.max(1,pSamples)).toFixed(0)+'%  no-prey-in-range '+(100*pNoPrey/Math.max(1,pSamples)).toFixed(0)+'%');
+  console.log('[poacher] doing: '+ds);
+  let n=0; for(const cr of w.creatures){ if(!(cr instanceof C.Poacher)||!cr.alive||n>=4) continue; n++;
+    const q=cr.prey&&cr.prey(); const dd=q?Math.hypot(q.pos.x-cr.pos.x,q.pos.z-cr.pos.z).toFixed(1):'-';
+    console.log('  #'+n+' doing '+(cr.doing||'-')+' cool '+(cr.cool||0).toFixed(1)+' hunt '+(cr.hunt||0).toFixed(1)
+      +' quarry '+(cr.quarry?cr.quarry.constructor.name:'-')+' nearest prey '+(q?q.constructor.name:'none')+' at '+dd
+      +' carry '+(cr.carry?cr.carry.constructor.name:'-')+' vig '+cr.vig.toFixed(2)+' daze '+cr.daze.toFixed(1)); } }
 const C2=global.__C;
 let nm=0,tri=0; global.__scene.traverse(o=>{ if(o.isMesh){nm++; const g=o.geometry; if(g&&g.index) tri+=g.index.count/3; else if(g&&g.attributes.position) tri+=g.attributes.position.count/3; }});
 console.log('meshes',nm,'approx tris',Math.round(tri/1000)+'k');

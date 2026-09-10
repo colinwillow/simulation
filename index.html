@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e82';
+const BUILD = 'e83';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -10054,9 +10054,12 @@ const POACHER = {
   // against a hopper's 3.6 -- he could close on something standing still and never on anything
   // that moved, so he spent the whole hunt hovering just outside arm's reach. Inside this he
   // goes at him.
-  pounce: 4.8,
+  pounce: 7,
   grab: 2.6,
-  cool: [4, 10],     // between attempts, whether or not the last one worked
+  cool: [2, 5],      // after he gives one up, before he looks for another
+  take: .80,         // wind at or below which it cannot fight him off
+  wear: .34,         // and what failing to hold one costs it
+  grip: 1.1,         // and how long he spends getting his hands back before trying again
   size: 1.8,         // the biggest thing he can get his arms round, by its collider radius
   react: .55,        // how long a hit reaction owns him
   limp: .55,         // he limps below this much of his wind
@@ -10064,7 +10067,10 @@ const POACHER = {
   // so in the log, and let go. Now he picks it up and walks it home, which is the whole reason
   // a poacher is on the island and the thing the player is meant to interrupt.
   stoop: .55,        // how long the bend owns him
-  haul: 34,          // the longest he will spend walking one home before giving it up
+  // 34 seconds is 125 units at his hauling pace, and the camp is often further than that from
+  // wherever he caught it -- so most hauls timed out in open country and he put it down for no
+  // reason anyone watching could see.
+  haul: 75,          // the longest he will spend walking one home before giving it up
   hold: 5,           // how fast the cradle blends in and out
   camp: 7,           // near enough to the camp to set it down
   put: 1.5,          // and how far in front of him it goes when he does
@@ -10076,8 +10082,8 @@ class Poacher extends Creature {
     super(x, z, { speed: 4.4, turn: 3.4, rad: .95, look: 7, minObR: 1.1,
       wary: 0, flock: 0, notice: 26, social: 1, thirst: 90,
       rigKey: (Poacher._n = (Poacher._n || 0) + 1) % 2 ? 'Poacher' : 'Poacher1' });
-    this.quarry = null; this.hunt = 0; this.cool = rnd(0, 8);
-    this.carry = null; this.carryK = 0; this.carryT = 0; this.grabT = 0;
+    this.quarry = null; this.hunt = 0; this.cool = rnd(0, 3);
+    this.carry = null; this.carryK = 0; this.carryT = 0; this.grabT = 0; this.grip = 0;
     this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
     this.hasAir = 1;                       // and two for being in it: skip the procedural lean
@@ -10254,21 +10260,33 @@ class Poacher extends Creature {
       const d = this.dist(this.quarry.pos);
       this.hunt -= dt;
       if (this.hunt <= 0) { this.quarry = null; this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); this.doing = 'give up'; return; }
+      if (this.grip > 0) { this.grip -= dt; this.moving = .5; this.seek(this.quarry.pos, .5); this.doing = 'regrip'; return; }
       if (d < POACHER.grab) {
-        // The grab. It works on something already worn down or dazed, and otherwise it does
-        // not -- the same rule the player's own capture runs on, which is the point of him.
-        this.cool = rnd(POACHER.cool[0], POACHER.cool[1]);
+        // The cool-down is set on the FAILURE below rather than here: a man who has just got
+        // his hands on one has no reason to stand about, and the haul is its own long pause.
         const q = this.quarry;
-        this.quarry = null; this.doing = 'grab';
-        // WHAT A SUCCESSFUL STALK IS. It used to be "already dazed or already worn down", which
-        // is the player's rule -- and nothing on this island wears a creature down except the
-        // player, so the condition was very nearly never true and no poacher had ever taken
-        // anything. The tiptoe is his rule: get within arm's reach of something that has not
-        // noticed him and it is his. Let it notice him on the way in and it bolts, which is
-        // what the creeping is for and what walking up to one loudly costs.
-        if (q.daze > 0 || q.vig < .45 || q.alarm <= 0) { this.takeIt(q); return; }
-        q.spook(this.pos, 14); bubbleSay(q, 'alarm');
-        this.play('idle2', 1, 1.6);
+        this.doing = 'grab';
+        // WHAT A SUCCESSFUL GRAB IS, and the last two answers were both wrong for the same
+        // reason: they asked a question about the PLAYER. "Already worn down" is the player's
+        // capture rule and nothing else on the island wears anything down, so it never fired.
+        // "Has not noticed him" reads well and fails in the one situation you would ever watch
+        // it in -- you standing there watching alarms every creature in sight, so every grab
+        // failed while you were looking at it and every grab succeeded when you were not. The
+        // headless run says so outright: with the player parked, eleven takes in three minutes.
+        // So it asks about the ANIMAL and nothing else. A fresh one twists out of his hands and
+        // is worse for it; catch it again before it gets its wind back and it is his. Two beats,
+        // visible, and the same whoever is or is not standing nearby.
+        if (q.daze > 0 || q.vig < POACHER.take) { this.quarry = null; this.takeIt(q); return; }
+        // IT GOT AWAY, AND HE IS STILL AFTER IT. The first version of this let go of the quarry
+        // and stood a cool-down out, then went looking again -- so the scuffle was the END of
+        // the hunt rather than the middle of it, and the headless run duly went from eleven
+        // takes to two. He keeps hold of the idea: a moment to get his hands back, and he is on
+        // it again while it is still short of its wind. The spook is small on purpose; a full
+        // one sends it across the region and no amount of pouncing catches that.
+        creatureHurt(q, POACHER.wear, this.pos, 1);
+        this.grip = POACHER.grip;
+        q.spook(this.pos, 0);
+        this.play('idle2', 1, 1.2);
         return;
       }
       // Close in, then creep. A poacher who runs at everything catches nothing, and the
@@ -10276,8 +10294,8 @@ class Poacher extends Creature {
       const pouncing = d < POACHER.pounce;
       const creeping = d < POACHER.creep && !pouncing;
       this.gaitClip = this.gaitClip || (creeping && this.rig && this.rig.acts.sneak ? 'sneak' : null);
-      this.moving = creeping ? .45 : 1;
-      this.seek(this.quarry.pos, creeping ? .40 : 1.15);
+      this.moving = creeping ? .62 : 1;
+      this.seek(this.quarry.pos, creeping ? .62 : 1.15);
       this.doing = pouncing ? 'pounce' : creeping ? 'creep' : 'stalk';
       return;
     }
