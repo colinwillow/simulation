@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e65';
+const BUILD = 'e66';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -1940,6 +1940,14 @@ const snd = {
     const q = clamp(k === undefined ? 1 : k, 0, 1), f = (232 - 62 * q) * rnd(.94, 1.07);
     SFX.blip(f, .045 + .055 * q, 'sine', .05 + .13 * q, f * .55, x, z);
     SFX.noise(.035, .02 + .05 * q, 900 + 600 * (1 - q), x, z);
+  },
+  // AND ONE INTO THE WATER. Same beat as the plop, made of the opposite material: no pitched
+  // body at all, just a bright noise that opens and shuts, with the low end under it.
+  splash: (x, z, k) => {
+    if (!sndOnce('splash', 45)) return;
+    const q = clamp(k === undefined ? 1 : k, 0, 1);
+    SFX.noise(.07 + .10 * q, .05 + .13 * q, 2600 - 900 * q, x, z);
+    SFX.blip(150 + 90 * (1 - q), .07, 'sine', .03 + .06 * q, 90, x, z);
   },
   // THE ARM CROSSING THE BODY. The same air the swing and the leap use, because it is the same
   // motion done slower, and pitched by which way it is going: up and quick for a draw, down
@@ -8245,6 +8253,13 @@ class Creature {
           k.vx *= .3; k.vz *= .3;
         }
         if (wet && !k.splash) { k.splash = 1; world.effects.push(new Burst(k.x, SEA + .3, k.z, '#bfe8ff', 9, .8)); }
+        // EVERY TOUCH, the way a thrown crate already does it. An animal came down two or three
+        // times and every one of them was silent, so the throw ended the moment it left his
+        // hands. Read the drop before the bounce takes it, and scale by it: the putt-putt-putt
+        // quietens and rises on its own as the thing runs out of energy.
+        const drop = Math.abs(k.vy);
+        if (wet) snd.splash(k.x, k.z, clamp(drop / 22, .2, 1));
+        else snd.plop(k.x, k.z, clamp(drop / 22, .2, 1));
         if (++k.hops < K.hops && -k.vy > K.stop) {
           k.y = g; k.vy = -k.vy * K.bounce; k.vx *= K.friction; k.vz *= K.friction;
           k.spin *= K.friction;
