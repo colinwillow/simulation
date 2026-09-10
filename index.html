@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e63';
+const BUILD = 'e64';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -10823,15 +10823,30 @@ class FloatingIsle {
           return smoothstep(0.0,0.30,t)*smoothstep(1.0,0.55,t);
         }
         void main(){
-          float acc = 1.0 + vUv.y*2.2;                 // gravity: faster the further it falls
+          // WHY IT RAN UPWARDS. The phase used to be y*freq - uT*acc*sp with acc = 1 + 2.2y,
+          // to make the water "faster the further it falls". But that puts t and y in the same
+          // product: the y-derivative of the phase is freq - 2.2*sp*uT, which crosses zero
+          // about half a second into the world's clock and is negative for ever after. Past
+          // that instant every strand runs UP the sheet, faster the longer the game has been
+          // open, with the stripes so fine by then that they alias into a crawl of dashes.
+          // An acceleration has to live in the SHAPE of the coordinate, never in a factor on t.
+          // tau is how long a parcel of water has been falling by the time it is at this
+          // height. Depth under gravity goes as t squared, so tau goes as sqrt(depth) -- and a
+          // pattern laid out evenly in tau and carried at ONE constant rate falls exactly the
+          // way water does: tight and quick at the lip, drawn out and slow-looking at the foot,
+          // because the same slice of tau covers more of the sheet down there. The 0.05 keeps
+          // the crest off sqrt's infinite-frequency singularity, and 0.224 is sqrt(0.05) so the
+          // lip still starts at zero. Frequencies are scaled by 1/0.8 -- tau's full range -- to
+          // land back on the strand count the sheet already had.
+          float tau = sqrt(vUv.y + 0.05) - 0.224;
           float c1 = floor(vUv.x*34.0), o1 = h(vec2(c1,3.0));
           float c2 = floor(vUv.x*13.0), o2 = h(vec2(c2,7.0));
           float c3 = floor(vUv.x*61.0), o3 = h(vec2(c3,11.0));
-          float s1 = band(vUv.y, (1.5+o1*1.1)*acc, o1, 1.7);
-          float s2 = band(vUv.y, (1.0+o2*0.7)*acc, o2, 0.85);
-          float s3 = band(vUv.y, (2.3+o3*1.6)*acc, o3, 3.4);
-          float sheet = n(vec2(vUv.x*5.0, vUv.y*2.0 - uT*acc*1.4))*0.6
-                      + n(vec2(vUv.x*12.0, vUv.y*6.0 - uT*acc*2.2))*0.4;
+          float s1 = band(tau, 1.5+o1*1.1, o1, 2.10);
+          float s2 = band(tau, 1.0+o2*0.7, o2, 1.05);
+          float s3 = band(tau, 2.3+o3*1.6, o3, 4.25);
+          float sheet = n(vec2(vUv.x*5.0, tau*2.5 - uT*1.4))*0.6
+                      + n(vec2(vUv.x*12.0, tau*7.5 - uT*2.2))*0.4;
           float core  = smoothstep(0.58,0.0,abs(vUv.x-0.5));
           float edge  = smoothstep(0.0,0.07,vUv.x)*smoothstep(1.0,0.93,vUv.x);
           float crest = smoothstep(0.09,0.0,vUv.y);
