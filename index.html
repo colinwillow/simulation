@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e62';
+const BUILD = 'e63';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -3521,18 +3521,24 @@ function glow(hex, size, opacity = .8) {
 // everything in the world. It is NOT the old fog: that covered the whole background and is
 // staying gone. This one is a couple of degrees tall and everything above it is untouched.
 //   k    strength, 0 is off
-//   y    where the middle of the band sits, in sin(elevation) -- slightly below the
-//        waterline, because the planet's edge is a touch below eye level from the ground
+//   y    a NUDGE off the true horizon, in sin(elevation); 0 puts the middle of the band
+//        exactly on the world's edge, positive lifts it. It used to be an absolute height,
+//        which is why the first one floated: the sea's edge is not at eye level, it is
+//        acos(R/(R+eye)) BELOW it -- ten to fourteen degrees from the ground on a planet
+//        this small -- so a band pinned near zero sat a quarter of the frame up in the sky
+//        with a gap under it. The dip is computed from the lens every frame now, so the
+//        strip rides the waterline at any camera height and at any ?curve.
 //   t    half-thickness in the same units; .04 is about 2.3 degrees, and the camera's
 //        whole frame is 46, so the band is a tenth of the picture at most
 //   roll how much the strip wanders up and down around the compass, so it reads as weather
 //        at a distance instead of a drawn line
-const HZ = { k: .34, y: -.022, t: .042, roll: .5, col: new THREE.Color(0xdfeaf0) };
+const HZ = { k: .38, y: 0, t: .042, roll: .35, col: new THREE.Color(0xdfeaf0) };
 // ?hz=0 turns it off, ?hz=.6 doubles it, ?hzt=.09 makes it a fat one -- so the two numbers
 // worth arguing about can be argued about on the phone instead of over a push.
 try {
   const q = /[?&]hz=([\d.]+)/.exec(location.search); if (q) HZ.k = clamp(+q[1] || 0, 0, 1.2);
   const w = /[?&]hzt=([\d.]+)/.exec(location.search); if (w) HZ.t = clamp(+w[1] || .042, .008, .3);
+  const y = /[?&]hzy=(-?[\d.]+)/.exec(location.search); if (y) HZ.y = clamp(+y[1] || 0, -.2, .2);
 } catch (_) {}
 const skyUni = {
   uTop: { value: new THREE.Color(0x2a6fc4) }, uMid: { value: new THREE.Color(0x9ec8ea) }, uLow: { value: new THREE.Color(0xd9e5ee) },
@@ -3568,7 +3574,7 @@ const skyUni = {
   uPlate: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([12, 10, 26, 255]), 1, 1); t.needsUpdate = true; return t; })() },
   uPlateK: { value: 0 }, uPlateRep: { value: 3 }, uPlateH: { value: .34 }, uSpace: { value: 0 },
   uHzK: { value: HZ.k }, uHzY: { value: HZ.y }, uHzT: { value: HZ.t }, uHzR: { value: HZ.roll },
-  uHzCol: { value: HZ.col }
+  uHzCol: { value: HZ.col }, uHzUp: { value: new THREE.Vector3(0, 1, 0) }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyUni,
@@ -3578,7 +3584,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
     uniform float uCloud,uStorm,uCloudT,uRainbow,uFlash,uHigh,uNeb,uEnvK; uniform vec2 uWind; varying vec3 vD;
     uniform vec3 uOrbA,uOrbB; uniform sampler2D uEnv;
     uniform sampler2D uPlate; uniform float uPlateK, uPlateRep, uPlateH, uSpace;
-    uniform float uHzK, uHzY, uHzT, uHzR; uniform vec3 uHzCol;
+    uniform float uHzK, uHzY, uHzT, uHzR; uniform vec3 uHzCol, uHzUp;
     // Value noise is all the clouds need: they are far away, soft, and never looked at closely.
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vno(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -3681,8 +3687,13 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 20), new THREE.Shad
       // for the same reason the sky is. It closes down as the camera leaves the air, because
       // from up there the horizon is the planet's limb and this would be a halo.
       if (uHzK > 0.002) {
+        // Off the LENS's own up, not the dome's. The dome is rotated to the frame under the
+        // PLAYER, and the camera stands twenty units back from him -- three degrees of arc on
+        // a four-hundred-unit planet, which tilts the true horizon by three degrees across the
+        // frame. Measured this way the horizon is one constant everywhere around the compass.
+        float he = dot(d, uHzUp);
         float wob = (fbm(vec2(atan(d.z, d.x) * 1.7, 4.2)) - 0.5) * uHzT * uHzR;
-        float g = (h - uHzY - wob) / max(uHzT, 0.004);
+        float g = (he - uHzY - wob) / max(uHzT, 0.004);
         float t = exp(-g * g);
         vec2 fd = normalize(vec2(d.x, d.z) + 1e-5), fs = normalize(vec2(sn.x, sn.z) + 1e-5);
         float toward = 0.62 + 0.55 * pow(max(dot(fd, fs) * 0.5 + 0.5, 0.0), 3.0);
@@ -15077,6 +15088,7 @@ function diveFrame(dt) {
 // stood on and very little of what was ahead. 1.28 is seventeen degrees above the horizon
 // and nine over his head, which puts the treeline and the sky in frame without the boom
 // getting any shorter — sin(pol)*r barely moves, so he stays the same size on screen.
+const _hzQ = new THREE.Quaternion();   // scratch: the dome's frame, inverted, for the horizon band
 const CAM_POL = 1.28;
 const cam = { az: .7, pol: CAM_POL, pol0: CAM_POL, polBias: 0, r: 20, tgt: new THREE.Vector3(0, 6, 0), idle: 0, rWalk: 0, lift: 0 };   // pol0: the pitch before the weather leans it
 const camS = { pol: CAM_POL, r: 24 };       // what the camera actually flies at
@@ -21923,6 +21935,18 @@ function frame(now) {
   // also buys depth precision back at ground level, where 1600 was always far more range than
   // a 990-unit dome needed.
   skyRig.position.copy(camera.position); skyRig.quaternion.copy(_camQ);
+  // WHERE THE WORLD'S EDGE IS, and it is a right-angled triangle, not a guess. The sea is a
+  // sphere of radius R; the lens is at distance Re from its centre; the line of sight that
+  // grazes it is tangent, so the angle between that line and the lens's own horizontal is
+  // exactly acos(R/Re) below it. Feed the sine of that to the haze band and it sits on the
+  // waterline at any height, on any ?curve, with no number to tune. The band's own y is a
+  // nudge on top of it.
+  {
+    const Rs = PLANET.R + SEA, Re = Math.max(camera.position.length(), Rs + 1e-3);
+    skyUni.uHzY.value = -Math.sqrt(Math.max(0, 1 - (Rs / Re) * (Rs / Re))) + HZ.y;
+    _hzQ.copy(_camQ).conjugate();
+    skyUni.uHzUp.value.copy(camera.position).normalize().applyQuaternion(_hzQ);
+  }
   const skyS = Math.max(1, (camera.position.length() + PLANET.R + 80) / 800);
   skyRig.scale.setScalar(skyS);
   {
