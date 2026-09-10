@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e88';
+const BUILD = 'e89';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7399,11 +7399,13 @@ function tintFor(mat, biome, cfg) {
   }
   return m;
 }
-// YOURS. A creature you have fed takes on the wanderer's own orange, so the ones in your
-// pasture read as yours from across a field. `rate` is how quickly it comes over. And every
+// YOURS. A DOMESTICATED creature -- one taken home and kept, not merely fed -- takes on the
+// wanderer's own orange, so the ones in your pasture read as yours from across a field.
+// `feeds` is how many handfuls it takes for a wild one to stop running from him, which is a
+// different and much smaller thing. `rate` is how quickly the colour comes over. And every
 // individual of a species that carries `hue` in its rig config is born a little way round the
 // colour wheel from the next, so a herd is not nine copies of one animal.
-const TAME = { col: '#ff9a3c', rate: .9 };
+const TAME = { col: '#ff9a3c', rate: .9, feeds: 2 };
 // (declared above worldTint, which reads TAME.col: a const read above its declaration is
 // the landmine that has cost more cycles than any other in this file.)
 function worldTint(mat, cfg) {
@@ -7983,9 +7985,16 @@ const CBUB = {
 };
 const FACE_KEYS = ['calm', 'happy', 'scared', 'angry', 'daze'];
 // The glyph set. A bubble with a tail and one mark in it, drawn once each into a texture.
+// WHAT ONE CAN SAY. Five was two shapes and three colours; these are the beats the sensing
+// and the feeding actually have. `watch` is the new one that matters -- an animal that has
+// noticed something and has not decided about it yet, which is the whole second of a startle
+// the tiptoe is aiming for, and it is a question mark rather than an alarm on purpose.
 const BUB_ART = {
   alarm: ['!', '#ffd27a'], angry: ['!', '#ff7a6a'], watch: ['?', '#dfeaf0'],
   fond: ['\u2665', '#a8f0b8'], daze: ['\u2736', '#ffe9a8'],
+  love: ['\u2665', '#ff9ec4'],       // fed enough that it has decided: a warmer heart
+  happy: ['\u266a', '#bff0ff'],      // content, and the one a fed one shows afterwards
+  curious: ['?', '#c9b3ff'],          // it is coming over to look at you of its own accord
 };
 function bubTex(glyph, cl) {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -8155,7 +8164,7 @@ class Creature {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
     this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null;
-    this.tame = 0; this.tameK = 0; this.hue = 0;
+    this.tame = 0; this.tameK = 0; this.hue = 0; this.fed = 0; this.friend = 0;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
@@ -8735,7 +8744,9 @@ class Creature {
     if (this.metCool > 0) this.metCool -= dt;
     if (this.curioCool > 0) this.curioCool -= dt;
     // (moved up from below the flee: the flee needs to know whether he still counts)
-    const known = this.tame || this.trust > 0 || world.asSpecies === this.constructor.name;
+    // FED ENOUGH, TAMED, OR WEARING ITS FACE. Any of the three and he is not a threat: the
+    // three ways in that were designed, and the disguise is the one the DNA centre will set.
+    const known = this.friend || this.tame || this.trust > 0 || world.asSpecies === this.constructor.name;
     const him = pl && !pl.free && !pl.aboard && !known;
     if (this.alarm > 0) {
       this.alarm -= dt; this.moving = SENSE.run;
@@ -8791,14 +8802,16 @@ class Creature {
       const f = this.startleFrom;
       let a = Math.atan2(f.x - this.pos.x, f.z - this.pos.z) - this.heading; a = Math.atan2(Math.sin(a), Math.cos(a));
       this.heading += clamp(a, -this.turn * dt * 1.5, this.turn * dt * 1.5);
-      if (this.startle <= 0) this.spook(f, S.flock);
+      if (this.startle <= 0) { bubbleSay(this, 'alarm'); this.spook(f, S.flock); }
       this.doing = 'startle'; return true;
     }
     if (wary && this.startleCool <= 0 && !this.fling && !this.net) {
       const t = this.threat(wary, him ? pl : null);
       if (t) {
         this.startle = SENSE.hold; this.startleFrom = { x: t.x, z: t.z }; this.startleCool = SENSE.cool;
-        this.moving = 0; bubbleSay(this, 'alarm');
+        // A QUESTION, THEN A SHOUT. The freeze is "what was that" -- it has heard or half-seen
+        // something and is looking. The ! comes a second later, when it has decided and bolts.
+        this.moving = 0; bubbleSay(this, 'watch');
         this.doing = 'startle'; return true;
       }
     }
@@ -8837,6 +8850,7 @@ class Creature {
       else {
         const d = this.dist(pl.pos);
         if (d > 6) { this.moving = .6; this.seek(pl.pos, cur); } else { this.moving = 0; this.seek(pl.pos, 1); }
+        if (Math.random() < dt * .5) bubbleSay(this, this.friend ? 'happy' : 'curious');
         this.doing = 'watch'; return true;
       }
     } else if (this.curio > 0) this.curio = Math.max(0, this.curio - dt * .5);
@@ -8863,6 +8877,10 @@ class Creature {
     }
     return false;
   }
+  // WHAT THE PASTURE WILL CALL. Domestication is not feeding -- it is taking one home and
+  // keeping it -- and only this puts your colour on an animal. Nothing calls it yet; when the
+  // pens are built, that is the one line they need. isle.tame(c) drives it by hand meanwhile.
+  domesticate() { this.friend = 1; this.tame = 1; this.trust = Math.max(this.trust, 1e6); }
   // Can it see or hear this thing? `range` is the species' own wariness; the cone and the
   // hearing fall-off are SENSE's. `pl` is the player when he counts as a threat (null when he
   // is trusted or disguised); poachers always count.
@@ -16565,7 +16583,10 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // for the solo switch did not shadow it -- the LATER one in an object literal wins silently,
 // so isle.sky stayed the uniforms and isle.sky('env') was calling an object. The uniforms are
 // isle.skyU now and isle.sky is the switch, which is the way round anybody would guess.
-window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, get chop() { return CHOP; }, get melee() { return MELEE; },
+window.isle = { player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, tame: TAME,
+  // isle.domesticate() takes the nearest creature into the fold, so the colour and the friend
+  // state can be looked at before the pasture that will call it properly exists.
+  domesticate: (c) => { c = c || nearest(world.creatures, player.pos, o => o.alive && !o.tame, 40); if (c) c.domesticate(); return c && c.constructor.name; }, get chop() { return CHOP; }, get melee() { return MELEE; },
   dpr: setDpr, perf: profStart, stain: stainSet, get view() { return VIEW; },
   sfx: SFX, snd, fx: FX, music: MUSIC,
   // AUDITION. isle.hear() lists every file that is loaded; isle.hear('beam_01') plays it, and
@@ -19252,10 +19273,18 @@ function takeFood(c, kind, x, y, z) {
     // AND THIS ONE, PERSONALLY, now lets him walk right up to it -- which is the difference
     // between a species that tolerates him and the animal in front of him trusting him.
     c.trust = VIT.trust * VIT.trustFeed; c.ire = 0; c.alarm = 0; c.vig = Math.min(1, (c.vig || 0) + .3);
-    // AND IT IS HIS NOW. Trust is a window; this is for keeps -- it wears his colour and it
-    // does not run from him again. The pasture it belongs in is not built yet.
-    if (!c.tame) { c.tame = 1; logMsg('It takes the food from his hand, and it is his.'); }
-    bubbleSay(c, 'fond');
+    // FED IS NOT TAMED, and it is certainly not OWNED. A feed buys a window of trust -- it
+    // will let him walk up to it while that lasts. Feed the same one enough times and the
+    // window stops closing: it has decided about him and does not run from him again. That is
+    // as far as a handful of food goes. Taking it home to the pasture and breeding from it is
+    // what makes one YOURS, and what earns it your colour; neither exists yet, so nothing in
+    // the game calls domesticate() but the handle is there for when the pasture is.
+    c.fed = (c.fed || 0) + 1;
+    if (c.fed >= TAME.feeds && !c.friend) {
+      c.friend = 1;
+      bubbleSay(c, 'love');
+      logMsg('It has made up its mind about him. It will not run from him again.');
+    } else bubbleSay(c, 'fond');
     world.effects.push(new Burst(c.pos.x, c.pos.y + c.rad * .8, c.pos.z, '#d8ffb0', 9, .8));
     logMsg('The ' + nm + ' finds it where it landed and eats it on the spot.');
   } else {
