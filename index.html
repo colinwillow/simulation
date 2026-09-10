@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e64';
+const BUILD = 'e65';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -1883,6 +1883,10 @@ function sndOnce(k, ms) {
 const snd = {
   swing: (x, z) => SFX.play('swing', .5, rnd(.92, 1.12), x, z)
     || (SFX.noise(.13, .16, 2600, x, z), SFX.blip(520, .09, 'sine', .05, 260, x, z)),
+  // The dive roll. Same swoosh pool the melee uses, dropped most of an octave: a blade cuts
+  // the air thin and high, a whole body going through it is long and low.
+  roll: (x, z) => SFX.play('swing', .52, rnd(.58, .70), x, z)
+    || (SFX.noise(.26, .20, 900, x, z), SFX.blip(180, .16, 'sine', .06, 90, x, z)),
   hit: (x, z, big, armed) => armed
     ? SFX.play('clang', big ? .8 : .62, rnd(.9, 1.1), x, z)
       || (SFX.noise(.10, .34, 900, x, z), SFX.blip(150, .12, 'square', .2, 70, x, z))
@@ -16731,6 +16735,7 @@ function flickRoll(x, y) {
   p.rollCool = p.rollT + ROLL.cool;
   p.jump = 0; p.leadT = 0;
   cam.idle = 0;
+  snd.roll(p.pos.x, p.pos.z);
 }
 
 // WHERE THE BEACON GOES and how long it stands. `range` is how far down the aim it can be
@@ -17606,6 +17611,7 @@ function stepChargeFx(c, dt) {
 }
 Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimAdj: 0, lock: null, cool: 0, shootT: 0, charge: 0,
   rollT: 0, rollMax: ROLL.time, rollH: 0, rollCool: 0,
+  stowFor: null, stowT: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
   actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actFrom: 0, actFire: null, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0, windK: 0, holdT: 0,
@@ -17812,6 +17818,9 @@ const CARRY = {
   // The prompt reaches 4.6 units and his arms reach about two, so pressing it from the far
   // end of that had him stooping over open ground while the animal stood a body-length off.
   // Close the gap first: he walks himself in, then bends.
+  // Putting the weapon away before he stoops: the longest that is allowed to take, and how
+  // far down the draw ramp counts as "out of his hand" -- whichever comes first.
+  stow: .8, stowAt: .25,
   grab: 2.0,         // near enough that the stoop lands on the animal
   walk: .8,          // how hard he walks himself in
   walkMax: 2.0,      // and the longest he is allowed to spend doing it before giving up
@@ -17849,7 +17858,9 @@ function carryOffer() {
     if (!p.throwAim) offerAct({ icon: 'put', label: 'SET DOWN', run: setDown });
     return;
   }
-  if (p.armWant || p.carryCool > 0 || p.approach) return;   // both hands are busy, or he is already walking to it
+  // Armed is no longer a refusal, it is one more beat: the offer stands, and taking it puts
+  // the weapon away first. `stowFor` means that is already happening.
+  if (p.carryCool > 0 || p.approach || p.stowFor) return;
   let best = null, bd = CARRY.reach;
   for (const o of world.creatures) {
     if (!o.alive || o.carried || o.net || o.aquatic || o.flying || (o.rad || 1) > CARRY.size) continue;
@@ -17863,6 +17874,16 @@ function carryOffer() {
 function pickUp(o) {
   const p = player;
   if (!o || !o.alive || p.carry || p.liftT > 0) return;
+  // BOTH HANDS, and he only has the two. With a weapon out this is the put-away first and the
+  // stoop after -- the same two moves a swap is, in the same order, rather than a prompt that
+  // silently does not appear. carryStep waits for the hand-off frame and calls back in here.
+  if (p.armWant) {
+    p.armWant = 0; p.armAct = { to: 0 };
+    playAct(ARMA.clip, ARMA.rate); armSound(0); paintWeapon();
+    p.stowFor = o; p.stowT = CARRY.stow;
+    logMsg('He clips the ' + WEAPONS[p.wpn].label + ' away.');
+    return;
+  }
   if (Math.hypot(o.pos.x - p.pos.x, o.pos.z - p.pos.z) > CARRY.grab) {
     p.approach = o; p.approachT = CARRY.walkMax;
     logMsg('He goes over to it.');
@@ -17899,6 +17920,15 @@ function setDown() {
 }
 function carryStep(dt) {
   const p = player;
+  // The waiting half of the armed pick-up. It goes on the weapon actually leaving his hand
+  // rather than on a stopwatch, so the stoop starts on the frame the arm move hands off; the
+  // timer is only there so a missing clip cannot strand him.
+  if (p.stowFor) {
+    const o = p.stowFor;
+    p.stowT -= dt;
+    if (!o.alive || o.carried || o.net || p.carry || p.liftT > 0 || p.aboard || p.free || p.swim > .5) p.stowFor = null;
+    else if (p.armed < CARRY.stowAt || p.stowT <= 0) { p.stowFor = null; pickUp(o); }
+  }
   stepApproach(dt);
   p.carryCool = Math.max(0, p.carryCool - dt);
   // Anything that needs both hands, or both feet, puts it down where he stands.
@@ -20155,7 +20185,10 @@ function updatePlayer(dt) {
   // The recording runs whenever he is on his feet and moving, and stops the instant he does.
   // The stride-counted synth is what happens when the file has not loaded or the browser has
   // no context yet -- FOOT.go says so by returning false rather than by going quiet.
-  if (player.grounded && player.swim < .5 && !player.aboard && !player.free && !player.fly && player.speed > .6) {
+  // A roll is not a walk: he is on his shoulder and his hip, and the loop was running the
+  // whole way through it -- the one place in the game where he covers ground fast and his
+  // feet never touch it.
+  if (player.grounded && !player.rollT && player.swim < .5 && !player.aboard && !player.free && !player.fly && player.speed > .6) {
     if (FOOT.go(player.speed)) player.stepD = 0;
     else {
       player.stepD = (player.stepD || 0) + player.speed * dt;
