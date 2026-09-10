@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e66';
+const BUILD = 'e67';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -21197,12 +21197,32 @@ const bldEl = document.getElementById('bld');
 // reads as a chase rather than as a hint. A fixed slow drift looks the same near and far.
 // The rest is noise: two out-of-step sines per axis, per mote, off a phase that never repeats
 // across the line, so they wander a little instead of running on rails.
-const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 110, gap: 2.5,
+const WAY = { g: null, at: null, t: 0, uni: null, trail: null, N: 170, gap: 1.9,
   // 4.6 units apart over a walk of a couple of hundred is a dotted line you lose against the
-  // ground; 2.5 is a line. N is up to match, because the count is the span over the gap and a
-  // denser trail that stops after forty-four motes is a line that ends in the middle of the
-  // walk. The buffer is allocated from N, so the two must move together.
-  sway: .55, swayR: .62, bob: .30, bobR: .74 };
+  // ground; 2.5 was a line; 1.9 is a rope. N is up to match, because the count is the span
+  // over the gap and a denser trail that stops after forty-four motes is a line that ends in
+  // the middle of the walk. The buffer is allocated from N, so the two must move together.
+  sway: .38, swayR: .62, bob: .26, bobR: .74,
+  // Off the ground, because at .82 they sat in the grass blades and behind every stone.
+  lift: 1.45,
+  // THE SLACK. Every mote used to be placed straight from the player's position that frame,
+  // so the whole line snapped sideways with him: a rigid pole pivoting on the mark, not a
+  // rope. Each one keeps its own position now and eases toward where the geometry says it
+  // belongs, over a time that GROWS with its distance from him -- the end in his hand answers
+  // at once, the far end drifts after it, and a turn travels down the line instead of
+  // happening to all of it at the same instant. ease0 is the near end's response, easeK the
+  // seconds added per unit of distance, cap the longest any of it may take.
+  ease0: .07, easeK: .020, easeCap: 2.4,
+  // AND IT RUNS. A stationary dotted line says "something is here"; a brightness travelling
+  // along it says "go THAT way", which is the whole job and the one thing it was not doing.
+  // waveS is units a second toward the mark, waveF is 2pi over the wavelength.
+  waveS: 13, waveF: .70,
+  // The two ends of the pulse, as raw additive colour. Cyan stays -- it is the ship's hull
+  // lights and the mark's own beam, and the note by the stick styles is right that against an
+  // amber interface it is the one thing that cannot be mistaken for something else. What
+  // changes is the CONTRAST inside the line: the trough is a deep saturated blue and the crest
+  // goes past white, so the wave running along it is what the eye catches, not the dots.
+  dim: [.30, .62, .92], hot: [1.65, 1.40, 1.47] };
 function buildWaypoint() {
   const g = new THREE.Group(); g.visible = false; scene.add(g); WAY.g = g;
   const uni = { uT: { value: 0 }, uC: { value: col('#7fd8ff') } }; WAY.uni = uni;
@@ -21224,8 +21244,15 @@ function buildWaypoint() {
   g.add(WAY.glow = glow('#8fe0ff', 7, .42));  WAY.glow.position.y = 2.4;
   const gm = new THREE.BufferGeometry();
   gm.setAttribute('position', new THREE.BufferAttribute(new Float32Array(WAY.N * 3), 3));
-  WAY.trail = new THREE.Points(gm, new THREE.PointsMaterial({ map: glowTex, color: col('#9fe6ff'),
-    size: 1.5, sizeAttenuation: true, transparent: true, opacity: .75, blending: THREE.AdditiveBlending, depthWrite: false }));
+  // Per-mote colour, so the pulse can travel along the line. PointsMaterial has one opacity
+  // for the whole cloud and no per-point alpha -- but the blending is additive, so brightness
+  // in the vertex colour IS the fade, and a value over 1 is a hot core rather than a clamp.
+  gm.setAttribute('color', new THREE.BufferAttribute(new Float32Array(WAY.N * 3), 3));
+  // Where each mote actually is, as opposed to where the straight line says it should be.
+  WAY.nx = new Float32Array(WAY.N); WAY.nz = new Float32Array(WAY.N); WAY.ok = new Uint8Array(WAY.N);
+  WAY.trail = new THREE.Points(gm, new THREE.PointsMaterial({ map: glowTex, color: 0xffffff,
+    vertexColors: true,
+    size: 2.2, sizeAttenuation: true, transparent: true, opacity: .95, blending: THREE.AdditiveBlending, depthWrite: false }));
   WAY.trail.frustumCulled = false; WAY.trail.userData.flat = true; scene.add(WAY.trail);
 }
 function setWaypoint(w) {
@@ -21233,6 +21260,7 @@ function setWaypoint(w) {
   MAP.way = w ? { x: w.x, z: w.z } : null;
   WAY.at = MAP.way;
   WAY.g.visible = !!MAP.way; WAY.trail.visible = !!MAP.way;
+  if (WAY.ok) WAY.ok.fill(0);            // a fresh mark lays its rope straight, then goes slack
   if (MAP.way) {
     WAY.g.position.set(MAP.way.x, groundY(MAP.way.x, MAP.way.z), MAP.way.z);
     world.effects.push(new Burst(MAP.way.x, WAY.g.position.y + 1.4, MAP.way.z, '#9fe6ff', 10, 1.2));
@@ -21267,20 +21295,36 @@ function updateWaypoint(dt) {
   // Now each one sits a fixed number of units back from the MARK. It does not move when he
   // does; he walks through it, which is what he described wanting -- and the ones behind him
   // simply stop being drawn as the count comes down.
+  const cA = WAY.trail.geometry.attributes.color;
   for (let i = 0; i < n; i++) {
     const ph = i * 2.3999632;                  // the golden angle: no two motes in step
     const k = d - 2.0 - i * WAY.gap;
-    if (k < 1.2) { a.array[i * 3 + 1] = -9999; continue; }   // parked under the world, not drawn
+    if (k < 1.2) { a.array[i * 3 + 1] = -9999; WAY.ok[i] = 0; continue; }   // parked under the world
+    // Where the straight line wants it, and then the slack. A mote coming back into the count
+    // snaps to its place rather than flying in from wherever it was parked.
+    const tx = p.x + ux * k, tz = p.z + uz * k;
+    if (!WAY.ok[i]) { WAY.nx[i] = tx; WAY.nz[i] = tz; WAY.ok[i] = 1; }
+    else {
+      const lag = 1 - Math.exp(-dt / Math.min(WAY.easeCap, WAY.ease0 + k * WAY.easeK));
+      WAY.nx[i] += (tx - WAY.nx[i]) * lag; WAY.nz[i] += (tz - WAY.nz[i]) * lag;
+    }
     const sway = Math.sin(t * WAY.swayR + ph) * WAY.sway
                + Math.sin(t * WAY.swayR * 1.73 + ph * 2.1) * WAY.sway * .42;
     const bob = Math.sin(t * WAY.bobR + ph * 1.31) * WAY.bob
               + Math.sin(t * WAY.bobR * 2.29 + ph * .7) * WAY.bob * .38;
-    const x = p.x + ux * k + rgx * sway, z = p.z + uz * k + rgz * sway;
-    planetPos(x, groundY(x, z) + .82 + bob, z, _wgV);
+    const x = WAY.nx[i] + rgx * sway, z = WAY.nz[i] + rgz * sway;
+    planetPos(x, groundY(x, z) + WAY.lift + bob, z, _wgV);
     a.array[i * 3] = _wgV.x; a.array[i * 3 + 1] = _wgV.y; a.array[i * 3 + 2] = _wgV.z;
+    // The pulse, off DISTANCE rather than off index, so it runs at a fixed speed over the
+    // ground whatever the spacing works out to and does not stall as the count changes.
+    const wv = .5 + .5 * Math.cos((k - t * WAY.waveS) * WAY.waveF), w2 = wv * wv;
+    const D = WAY.dim, H = WAY.hot;
+    cA.array[i * 3] = D[0] + (H[0] - D[0]) * w2;
+    cA.array[i * 3 + 1] = D[1] + (H[1] - D[1]) * w2;
+    cA.array[i * 3 + 2] = D[2] + (H[2] - D[2]) * w2;
   }
-  a.needsUpdate = true;
-  WAY.trail.material.opacity = .75 * near;
+  a.needsUpdate = true; cA.needsUpdate = true;
+  WAY.trail.material.opacity = .95 * near;
   WAY.trail.visible = d > 5;
   // Walk through it and it is spent. Leaving it standing on top of him was the one thing
   // that made the mark feel like scenery rather than something he had set himself.
