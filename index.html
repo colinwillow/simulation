@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e83';
+const BUILD = 'e84';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -6630,8 +6630,15 @@ function attachRig(parent, cfg, done) {
   }
   if (cfg.clipsAlso) {
     loadModel(cfg.url, own => loadModel(cfg.clipsAlso, donor => {
-      const have = new Set(own.anims.map(a => a.name));
-      attachRigTo(parent, cfg, own.anims.concat(donor.anims.filter(a => !have.has(a.name))), done);
+      // NAMED, NOT WHOLESALE. The first version handed over everything the donor had that the
+      // model did not -- twenty-eight clips to get two. Every one of them then went through
+      // pickClip, measureStride and clipSpan against a skeleton with fourteen fewer bones in
+      // it, and the poacher quietly acquired a swim set, a jump set and the whole rifle stance
+      // besides. `clipsTake` names exactly what is wanted and the rest of the donor stays
+      // where it is.
+      const take = cfg.clipsTake, have = new Set(own.anims.map(a => a.name));
+      const add = donor.anims.filter(a => !have.has(a.name) && (!take || take.indexOf(a.name) >= 0));
+      attachRigTo(parent, cfg, own.anims.concat(add), done);
     }, () => attachRigTo(parent, cfg, null, done)), () => attachRigTo(parent, cfg, null, done));
     return;
   }
@@ -6646,6 +6653,13 @@ function attachRigTo(parent, cfg, lend, done) {
     const inst = markBody(cloneModel(e.root));
     const h = e.box.max.y - e.box.min.y;
     const s = h > 1e-4 ? cfg.height / h : 1;
+    // A BODY THAT COMES OUT THE WRONG SIZE SAYS SO. The scale is cfg.height over the model's
+    // own measured height, so it cannot be wrong unless the measurement is -- and a measurement
+    // taken in an idle pose can be wrong in ways that are invisible from the game side (a stray
+    // node, an armature left posed by whatever measured it last). One line in the console
+    // naming the file and both numbers turns "why is he tiny" into an answer.
+    if (!(h > .2 && h < 400)) console.warn('[rig] ' + cfg.url + ' measured ' + h.toFixed(3)
+      + ' tall in its idle pose, so it is being scaled by ' + s.toFixed(4) + ' to reach ' + cfg.height);
     inst.scale.setScalar(s);
     inst.position.y = -e.box.min.y * s;
     inst.rotation.y = cfg.yaw || 0;
@@ -7567,7 +7581,7 @@ const CREATURE_RIGS = {
     // He has no stoop and no cradle of his own, and does not need one exported: both are
     // rotations on a skeleton with the same bone names as the wanderer's, so they come off
     // that file and drive this body unchanged. See attachRig's clipsAlso.
-    clipsAlso: 'models/alien_orange.glb',
+    clipsAlso: 'models/alien_orange.glb', clipsTake: ['pick_up_object', 'holding_item'],
     pickUp: 'pick_up_object', hold: 'holding_item',
     // AND TWO OF THEM TRAVEL. Measured: hips Z runs 73 units on walk_02 and 54 on the tiptoe,
     // against under 20 for everything else in the file -- he meant to strip those and did not.
