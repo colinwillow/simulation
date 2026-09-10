@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e70';
+const BUILD = 'e71';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7767,6 +7767,30 @@ const THROW = {
   // over in eighty milliseconds and the ease cannot keep up with it either way -- while a slow
   // deliberate thumb now arrives where it is pointing instead of somewhere near it.
   ease: 11,
+  // ── THE AIM IS A JOYSTICK, NOT A MAP ──────────────────────────────────────────────
+  // Everything above this line describes mapping the PAD to the GROUND: the stick's angle was
+  // the bearing and its distance from centre was the range, so the mark went wherever the
+  // thumb was and the whole placement happened in the tenth of a second it took to get there.
+  // Two things are wrong with that and no amount of easing fixes either.
+  //   * There is no way to look around. Any push in any direction is a throw, so with
+  //     something in his hands he cannot turn the camera at all.
+  //   * A thumb has about a centimetre of travel and the throw has sixty units of range, so
+  //     the mark can only ever be flung near a spot, never walked onto one.
+  // So the stick is a RATE now, the way an aiming reticle is everywhere else. Pushing UP --
+  // and only up, inside a cone, the same gesture the rifle's trigger is -- commits to the
+  // throw. From then on the whole pad steers: Y walks the range out and back, X sweeps the
+  // bearing, both at a fixed pace, and letting go throws. Left and right on their own never
+  // commit, so the camera is his again while he is carrying something.
+  upAt: .55,         // how far UP the push has to go to commit
+  upArc: .95,        // and how far off straight up it may be and still count (54 degrees)
+  keep: .16,         // once committed the whole pad is the aim, down to here; below it, throw
+  dead: .15,         // and this much of the middle is centred
+  rate: .50,         // range out, in fractions of the full throw a second: two seconds end to end
+  rateIn: .70,       // and back in, a little quicker, because pulling back is a correction
+  // Sideways, in UNITS OF GROUND a second rather than radians, so the mark tracks the thumb at
+  // the same pace whether it is at his feet or out at the end of the range. Capped as an
+  // angular rate all the same, or a mark two units away would spin round him.
+  side: 12, sideMax: 1.4,
   // How much of the throw a heavy thing eats. `hurl` divides the launch speed by the body's
   // own radius; this is the power that radius is raised to, so above 1 a big animal loses
   // ground faster than its size and a small one barely notices being thrown hard.
@@ -16413,7 +16437,10 @@ const MELEE = {
   // AND IT TRAVELS. 22 over .70 with a third-speed tail carries about eight units, which is
   // three body lengths and reads as a stumble. These carry thirteen. slideRate stretches the
   // clip to cover the longer trip, or the last third of it is a man standing up and gliding.
-  slideAt: 4.2, slideSpeed: 26, slideT: .95, slideRate: .78,
+  // FURTHER AGAIN. 26 over .95 carried thirteen units and still read as a stumble rather than
+  // a slide. 30 over 1.15 carries eighteen, which is six of his own body lengths -- and the
+  // clip is 1.29s authored, so at .78 rate it runs 1.27s and still outlasts the travel.
+  slideAt: 4.2, slideSpeed: 30, slideT: 1.15, slideRate: .78,
   slideFar: 5.2,     // closer than this and the opening move is a punch, not a tackle
   // THE CLIPS PLAY HOT, and the bare-handed three play hotter than the armed four. A punch
   // is a jab: 0.92 s of authored swing is a man deciding to hit something. At 1.7 it is 0.54,
@@ -17851,6 +17878,7 @@ Object.assign(player, { armed: 0, armWant: 0, aiming: 0, aimH: 0, aimAz: 0, aimA
   stowFor: null, stowT: 0,
   carry: null, carryPend: null, carryK: 0, liftT: 0, placeT: 0, carryCool: 0, placeAt: null, holdPend: null, holdK: 0,
   throwAim: 0, tossAim: 0, windOwn: null, throwT: 0, throwK: 0, throwPeak: 0, throwRise: 0, flickH: null,
+  aimRange: 0,
   actN: null, actK: 0, actT: 0, actMax: 0, actRate: 1, actFrom: 0, actFire: null, actNext: null, actNextRate: 1, melN: 0, melT: 0, slideT: 0, windK: 0, holdT: 0,
   melTgt: null, melId: 0, hitT: 0, hitOn: 0, hitSlide: 0, slip: 0, slope: 0,
   lungeT: 0, lungeMax: 0, lungeSp: 0, lungeH: 0, armAct: null, wpnShow: 0, wpnK: 0,
@@ -18390,6 +18418,9 @@ function throwMarkStep(show, power, T) {
   const n = throwArc(power, T);
   const ex = _tmArc[(n - 1) * 3], ey = _tmArc[(n - 1) * 3 + 1], ez = _tmArc[(n - 1) * 3 + 2];
   tmark.g.visible = true;
+  // How far out it is actually landing, which is what the sideways sweep is scaled by so the
+  // mark tracks the thumb at one pace near and far. One frame behind, which nobody can see.
+  player.aimRange = Math.hypot(ex - player.pos.x, ez - player.pos.z);
   tmark.g.position.set(ex, ey + .07, ez);
   alignTo(tmark.g, ex, ez, .9);
   tmark.g.rotateY(player.aimH);                       // square to the throw, not spinning
@@ -18430,47 +18461,46 @@ function throwMarkStep(show, power, T) {
 // weapon step every frame, so with a single shared latch it cleared the beacon's wind-up out
 // from under it on the way past -- the charge reset and the aim snapped back to straight
 // ahead on every frame, and the beacon could never be steered or wound up at all.
-// Thumb travel to power, inverted through the square so the MARK moves at a steady rate. The
-// range of a lobbed throw is proportional to the square of the launch speed, and `power` is a
-// lerp along the speed -- so asking for half the thumb has to mean half the GROUND, not half
-// the speed. `sp` is the launcher's own speed pair, because the three of them differ.
-function throwPow(u, sp) {
-  const a = sp[0] * sp[0], b = sp[1] * sp[1];
-  const v = Math.sqrt(a + (b - a) * clamp(u, 0, 1));
-  return clamp((v - sp[0]) / Math.max(1e-4, sp[1] - sp[0]), 0, 1);
+// Is this push a commitment to throw? Straight up, inside a cone, past a firm threshold --
+// deliberately the same shape as the rifle's trigger, because it is the same decision. Any
+// other direction, and any gentler push, is the camera.
+function throwUp(rx, ry) {
+  return ry > THROW.upAt && Math.abs(Math.atan2(rx, ry)) < THROW.upArc;
 }
-function throwStick(dt, rx, ry, own, sp) {
+// One axis of the pad, past its dead zone, as a signed rate in -1..1.
+function stickAx(v) {
+  const a = Math.abs(v);
+  return a > THROW.dead ? Math.sign(v) * (a - THROW.dead) / (1 - THROW.dead) : 0;
+}
+function throwStick(dt, rx, ry, own) {
   const p = player, mag = Math.hypot(rx, ry);
-  // THE PAD IS THE GROUND. Angle is the bearing, distance from centre is the range, read in
-  // the LIVE camera frame so up the pad is away from the lens however he has turned. The
-  // camera is deliberately left alone while this runs -- see THROW.full.
-  const sa = Math.sin(cam.az), ca = Math.cos(cam.az);
-  const want = Math.atan2(sa * ry + ca * rx, ca * ry - sa * rx);
-  const wantK = throwPow((mag - THROW.at) / Math.max(.05, THROW.full - THROW.at), sp || THROW.speed);
   if (p.windOwn !== own) {
     p.windOwn = own; p.throwT = 0; p.throwPeak = 0; p.throwRise = 0;
-    p.aimH = want; p.throwK = 0;                   // the bearing starts under the thumb; the range winds out to it
+    // Straight away from the lens, at the near end of the range: the mark comes out at his
+    // feet and is WALKED to where it is wanted, rather than appearing wherever the thumb was.
+    p.aimH = cam.az + Math.PI; p.throwK = 0; p.aimRange = 0;
   }
   p.throwT += dt;
   // Sampled only while the stick is still travelling outward, so a swipe that has already
-  // pinned against the rim does not average its own speed back down to nothing. The flick
-  // takes the RAW bearing, not the eased one -- a swipe is over before the ease has moved.
+  // pinned against the rim does not average its own speed back down to nothing.
   if (mag > p.throwPeak) {
     p.throwRise = Math.max(p.throwRise, (mag - p.throwPeak) / Math.max(dt, 1 / 240));
     p.throwPeak = mag;
   }
-  p.flickH = want;
-  const e = Math.min(1, dt * THROW.ease);
-  let d = want - p.aimH; d = Math.atan2(Math.sin(d), Math.cos(d));
-  p.aimH += d * e;                                 // the friction: it chases the thumb, it is not pinned to it
-  p.throwK = lerp(p.throwK, wantK, e);
-  // AND THE CAMERA COMES ROUND WITH HIM. It did not, and the stance was a frozen frame: this
-  // function claims the right stick, which switches off the ordinary orbit further down, and
-  // nothing put anything back -- so the aim swung and the lens stayed where it was. It is the
-  // same loop the blaster uses, and capped for the same reason: the bearing is read in the
-  // camera's frame and the camera eases in behind the bearing, so an off-centre stick sweeps
-  // him round at a rate set by how far off centre it is, and uncapped that is unsteerable.
-  // stepToss comes through here too, so the beacon's stance turns as well.
+  // Range: forward walks it out, back walks it in. Nothing is mapped -- hold it and it keeps
+  // going, let it centre and it stops where it is.
+  const fy = stickAx(ry);
+  p.throwK = clamp(p.throwK + fy * (fy > 0 ? THROW.rate : THROW.rateIn) * dt, 0, 1);
+  // Bearing: a ground speed rather than a turn rate, so the same thumb moves the mark the same
+  // number of units whether it is at his feet or out at the end of the throw.
+  const r = Math.max(p.aimRange || 0, 3);
+  p.aimH += stickAx(rx) * Math.min(THROW.side / r, THROW.sideMax) * dt;
+  p.flickH = p.aimH;
+  // AND THE CAMERA COMES ROUND WITH IT. Same loop the blaster uses. It could never do its job
+  // before: the bearing was read in the camera's own frame and the camera eased in behind the
+  // bearing, so the two chased each other to a standstill at whatever offset the thumb held.
+  // With the bearing owned outright, the lens simply follows the mark -- which is what makes
+  // sweeping it round behind him possible at all.
   let cd = (p.aimH + Math.PI) - cam.az; cd = Math.atan2(Math.sin(cd), Math.cos(cd));
   cam.az += clamp(cd * THROW.camEase, -THROW.camTurn, THROW.camTurn) * dt;
   cam.idle = 0;
@@ -18498,8 +18528,10 @@ function stepThrow(dt, rx, ry) {
     return false;
   }
   const mag = Math.hypot(rx, ry);
-  if (mag > THROW.at) {
-    throwStick(dt, rx, ry, what, what === 'hold' ? HTOSS.speed : THROW.speed);
+  // Committed already, or committing now. Once it is his the whole pad is the aim; until then
+  // only a push straight up counts, so looking around with something in his arms is free.
+  if (p.windOwn === what ? mag > THROW.keep : throwUp(rx, ry)) {
+    throwStick(dt, rx, ry, what);
     p.throwAim = 1;
     throwMarkStep(true, p.throwK, what === 'hold' ? HTOSS : undefined);
     return true;
@@ -18526,12 +18558,14 @@ function stepThrow(dt, rx, ry) {
 // pad is the placement, right down to `keep`; anything short of that is just looking. The
 // commit is deliberately well past where a look lives, and a flick sails through it on its way
 // out, so the quick toss is unchanged.
-const TOSS = { at: .70, keep: .18 };
+// AND THE COMMIT IS NOW A PUSH UP rather than a firm push in any direction, for the same
+// reason it is on the throw: left and right have to stay the camera.
+const TOSS = { keep: .16 };
 function stepToss(dt, rx, ry) {
   const p = player;
   const mag = Math.hypot(rx, ry);
-  if (mag > (p.windOwn === 'beacon' ? TOSS.keep : TOSS.at)) {
-    throwStick(dt, rx, ry, 'beacon', BTOSS.speed);
+  if (p.windOwn === 'beacon' ? mag > TOSS.keep : throwUp(rx, ry)) {
+    throwStick(dt, rx, ry, 'beacon');
     p.tossAim = 1;                                 // NOT p.aiming: that is the rifle stance
     throwMarkStep(true, p.throwK, BTOSS);
     return true;
