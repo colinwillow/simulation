@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e90';
+const BUILD = 'e91';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7963,7 +7963,8 @@ const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7,
 // the time. 1.25 is two hundred and eighty degrees of vision with a blind arc directly behind,
 // which is both what a grazing animal actually has and the only shape that makes creeping up
 // BEHIND one a real thing to do rather than a coin flip.
-const SENSE = { cone: 1.25, hear: 1.15, hold: 1.0, cool: 2.5, keep: 1.6, walk: .55, run: 1.75, shy: 22 };
+// `jolt` is the flinch when it first notices, as a share of what a plasma bolt does to it.
+const SENSE = { jolt: .45, cone: 1.25, hear: 1.15, hold: .55, cool: 2.5, keep: 2.2, walk: .45, run: 2.4, shy: 22 };
 const VIT = {
   bolt: .34, melee: .26, thrash: .055,     // a plasma hit, a swing, and a second of fighting a net
   regenAfter: 9, regen: .05,               // it gets its wind back if he leaves it alone
@@ -8466,7 +8467,9 @@ class Creature {
   // field of animals and a field of things standing in it.
   spook(from, radius = 0) {
     if (this.alarm > 1.2) return;
-    this.alarm = rnd(1.6, 3.1); this.alarmFrom = { x: from.x, z: from.z }; this.fleeTo = null;
+    // A LONG BOLT. Two seconds at a walking pace was a shuffle; five to eight at more than
+    // double is the animal actually leaving, which is the only version of this anybody can see.
+    this.alarm = rnd(5, 8); this.alarmFrom = { x: from.x, z: from.z }; this.fleeTo = null;
     this.met = 0; this.metWho = null; this.abandon();
     if (radius > 0) for (const o of world.creatures)
       if (o !== this && o.alive && o.constructor === this.constructor && o.alarm <= 0 && this.dist(o.pos) < radius) o.spook(from, 0);
@@ -8825,6 +8828,12 @@ class Creature {
       if (t) {
         this.startle = SENSE.hold; this.startleFrom = { x: t.x, z: t.z }; this.startleCool = SENSE.cool;
         this.shy = SENSE.shy;
+        // AND IT JOLTS. A freeze is an ABSENCE of motion, which on an animal that was already
+        // standing still is nothing at all -- the speech bubble was carrying the entire moment.
+        // This is the same rock a blow gives it, at half the force and away from the thing: it
+        // flinches, and whatever it was doing it stops doing.
+        this.stagger({ x: 2 * this.pos.x - t.x, z: 2 * this.pos.z - t.z }, SENSE.jolt);
+        this.abandon(); this.state = 'wander'; this.timer = rnd(3, 7);
         // A QUESTION, THEN A SHOUT. The freeze is "what was that" -- it has heard or half-seen
         // something and is looking. The ! comes a second later, when it has decided and bolts.
         this.moving = 0; bubbleSay(this, 'watch');
@@ -9155,8 +9164,15 @@ class Creature {
     if (this.carried) return;          // somebody has hold of it; carryStep places it
     if (this.fling && this.tumble(dt)) return;
     if (this.net && this.inNet(dt)) return;
-    if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); }
-    else if (!this.senses(dt)) this.think(dt);
+    // SENSES FIRST, ALWAYS. The roam is a recovery -- eight seconds of walking away from
+    // somewhere it got stuck -- and it was written as a replacement for the whole brain,
+    // senses included. So for eight seconds at a time an animal could not see, hear or be
+    // frightened by anything, and with the island's geometry putting creatures into a roam
+    // fairly often, a good share of everything you walked up to was deaf and blind. It only
+    // ever needed to replace the THINKING.
+    if (this.senses(dt)) { /* a sense has the wheel */ }
+    else if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); }
+    else this.think(dt);
     this.locomote(dt);
     stepFace(this, dt);
     // The colour of a tamed one comes over rather than switching, on every material it owns.
@@ -9259,7 +9275,7 @@ class Grazer extends Creature {
   // Placid: it lets you walk right up before it moves off, but the whole herd hears about it
   // when it does. It drinks, and two of them meeting will stop and stand nose to nose.
   constructor(x, z) { super(x, z, { speed: 3.2, turn: 2.2, rad: 1.7, look: 9, minObR: .8,
-    wary: 10, flock: 8, notice: 17, thirst: 155, social: 1 }); this.gait = 7; this.bob = .18; this.full = 0; this.seeded = 0; }
+    wary: 20, flock: 8, notice: 17, thirst: 155, social: 1 }); this.gait = 7; this.bob = .18; this.full = 0; this.seeded = 0; }
   build() {
     const b = this.body, hide = pick(M.grazer);
     const torso = mesh(G.blob[0], hide, 1.5, 1.25, 2.0, 0, 1.35, 0); b.add(torso);
@@ -9352,7 +9368,7 @@ class Weaver extends Creature {
     // A SMALL ONE, and it is the hearing that does the work here. A tinker is bold and it is
     // meant to come over and look at you -- that is its whole character -- so a calm walk up to
     // one still gets curiosity. Run at it and it startles like anything else.
-    wary: 5, curious: 1.2, notice: 24, spark: 1, thirst: 200 }); this.gait = 10; this.bob = .22; this.carry = null; this.state = 'seek'; this.tree = null; }
+    wary: 11, curious: 1.2, notice: 24, spark: 1, thirst: 200 }); this.gait = 10; this.bob = .22; this.carry = null; this.state = 'seek'; this.tree = null; }
   build() {
     const b = this.body, skin = pick(M.weaver);
     b.add(mesh(G.blob[1], skin, .62, .95, .5, 0, 1.5, 0));            // torso
@@ -9485,12 +9501,11 @@ class Weaver extends Creature {
 // Mudlark — digger, accidental gardener
 class Burrower extends Creature {
   constructor(x, z) { super(x, z, { speed: 2.6, turn: 2.6, rad: 1.25, look: 6,
-    wary: 9, notice: 13, spark: 1 }); this.gait = 9; this.bob = .1; this.timer = rnd(6, 16); }
-  // A mudlark does not outrun anything. It goes down, and stays down until you have gone.
-  spook(from) {
-    if (this.state === 'dig') return;
-    this.abandon(); this.alarm = 0; this.state = 'dig'; this.timer = rnd(4, 8);
-  }
+    wary: 18, notice: 13, spark: 1 }); this.gait = 9; this.bob = .1; this.timer = rnd(6, 16); }
+  // IT RUNS. This used to burrow instead of fleeing -- "a mudlark does not outrun anything" --
+  // and from the outside that is the animal ignoring you and going back to work, which is the
+  // one thing none of them may do. The digging is still its whole character; it is just what it
+  // does with its own time now, rather than its answer to being frightened.
   build() {
     const b = this.body;
     b.add(mesh(G.blob[2], M.burrower, 1.25, .82, 1.75, 0, .85, 0));
@@ -9517,6 +9532,7 @@ class Burrower extends Creature {
   }
   think(dt) {
     this.timer -= dt;
+    if (this.state === 'dig' && this.alarm > 0) { this.state = 'wander'; this.timer = rnd(10, 20); this.body.rotation.z = 0; this.head.rotation.x = 0; this.body.position.y = 0; }
     if (this.state === 'dig') {
       this.moving = 0;
       this.body.rotation.z = Math.sin(world.clock * 26) * .16;
@@ -10136,7 +10152,7 @@ class Leviathan extends Creature {
 const WDECK = { y: 9.7, r: 1.55, z: .5 };
 class Walker extends Creature {
   // Far too big to mind you. It turns its head, and that is the whole of its reaction.
-  constructor(x, z) { super(x, z, { speed: 1.6, turn: .85, rad: 2.6, look: 15, minObR: 1.3,
+  constructor(x, z) { super(x, z, { speed: 1.6, turn: .85, rad: 2.6, look: 15, minObR: 1.3, wary: 16,
     notice: 30, thirst: 280 }); this.gait = 2.5; this.bob = .3; this.browse = 0;
     this.massive = 1;            // hits rock it; nothing the player has knocks it over
     this.deck = WDECK; }
@@ -10582,7 +10598,7 @@ class Hopper extends Creature {
   // round. minObR is the size of obstacle it bothers to notice, and a bigger bird can push
   // past more, so that one goes up rather than across.
   constructor(x, z) { super(x, z, { speed: 3.6, turn: 4.2, rad: .74, look: 5.4, minObR: 1.15,
-    wary: 11, flock: 12, notice: 13, social: 1 }); this.gait = 9; this.bob = .62; }
+    wary: 22, flock: 12, notice: 13, social: 1 }); this.gait = 9; this.bob = .62; }
   build() {
     const b = this.body, coat = pick(M.hopper);
     b.add(mesh(G.blob[2], coat, .42, .4, .58, 0, .5, 0));
