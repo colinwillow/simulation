@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e91';
+const BUILD = 'e92';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7673,7 +7673,7 @@ const CREATURE_RIGS = {
 // of his own is that the model cache is keyed on the url and the rig table on this key.
 // The other one is the stockier build: eye to eye with the wanderer rather than looming.
 CREATURE_RIGS.Poacher1 = Object.assign({}, CREATURE_RIGS.Poacher,
-  { url: 'models/alien_poacher_01.glb', height: 2.95 });
+  { url: 'models/alien_poacher_01.glb', height: 3.2 });
 
 // Getting hit. Nothing in this game kills an animal, and nothing here starts: a hit throws.
 // The creature leaves the ground, tumbles, bounces, lies there a moment and gets up
@@ -7964,7 +7964,7 @@ const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7,
 // which is both what a grazing animal actually has and the only shape that makes creeping up
 // BEHIND one a real thing to do rather than a coin flip.
 // `jolt` is the flinch when it first notices, as a share of what a plasma bolt does to it.
-const SENSE = { jolt: .45, cone: 1.25, hear: 1.15, hold: .55, cool: 2.5, keep: 2.2, walk: .45, run: 2.4, shy: 22 };
+const SENSE = { jolt: .45, pro: .58, cone: 1.05, hear: 1.15, hold: .55, cool: 2.5, keep: 2.2, walk: .45, run: 2.4, shy: 22 };
 const VIT = {
   bolt: .34, melee: .26, thrash: .055,     // a plasma hit, a swing, and a second of fighting a net
   regenAfter: 9, regen: .05,               // it gets its wind back if he leaves it alone
@@ -8177,7 +8177,7 @@ class Creature {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
     this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null;
-    this.tame = 0; this.tameK = 0; this.hue = 0; this.fed = 0; this.friend = 0; this.shy = 0;
+    this.tame = 0; this.tameK = 0; this.hue = 0; this.fed = 0; this.friend = 0; this.shy = 0; this.loud = 0;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
     this.rad = o.rad || 1; this.look = o.look || 7; this.minObR = o.minObR || 0; this.ignore = null; this.nearMiss = 0; this.stuck = 0; this.ghost = 0; this.pinned = 0; this.lastGood = new THREE.Vector3(x, 0, z);
@@ -8915,7 +8915,7 @@ class Creature {
   // Can it see or hear this thing? `range` is the species' own wariness; the cone and the
   // hearing fall-off are SENSE's. `pl` is the player when he counts as a threat (null when he
   // is trusted or disguised); poachers always count.
-  threat(range, pl, any) {
+  threat(range, pl, any) {   // `range` is reassigned for the poacher below -- see SENSE.pro
     const fx = Math.sin(this.heading), fz = Math.cos(this.heading), cosC = Math.cos(SENSE.cone);
     const test = (x, z, noise) => {
       const dx = x - this.pos.x, dz = z - this.pos.z, d = Math.hypot(dx, dz);
@@ -8929,8 +8929,13 @@ class Creature {
       return d < range * SENSE.hear * clamp(noise, 0, 1);                       // heard
     };
     if (pl && test(pl.pos.x, pl.pos.z, pl.speed / MOVE.max)) return pl.pos;
-    const po = nearest(world.creatures, this.pos, c => c instanceof Poacher && c.alive && c.daze <= 0 && !c.fling, range * SENSE.hear);
-    if (po && test(po.pos.x, po.pos.z, po.moveK)) return po.pos;
+    // A POACHER IS BETTER AT THIS THAN YOU ARE. He does it for a living, he knows to keep low
+    // and to come up on the blind side, and none of that can be modelled -- so it is one number
+    // instead: an animal clocks him at a bit over half the distance it clocks the wanderer. It
+    // is also what keeps the tiptoe on screen, which is the whole reason to have poachers.
+    const pr = range * SENSE.pro;
+    const po = nearest(world.creatures, this.pos, c => c instanceof Poacher && c.alive && c.daze <= 0 && !c.fling, pr * SENSE.hear);
+    if (po) { const keep = range; range = pr; const hit = test(po.pos.x, po.pos.z, po.loud || 0); range = keep; if (hit) return po.pos; }
     return null;
   }
   // A head that turns to follow him. Applied after pose() rather than inside it, because a
@@ -9042,6 +9047,12 @@ class Creature {
     if (this.moveK > .02) {
       const shelter = this.flying || this.aquatic ? 1 : 1 - WX.storm * .45;   // nothing hurries in a storm
       const st = this.speed * this.moveK * this.paceK() * (1 - this.nearMiss * .28) * shelter * dt;
+      // HOW LOUD IT IS, and it has to be measured rather than taken off `moveK`. moveK is how
+      // much of its OWN intent a body is using -- a poacher creeping at .62 of his walk reads
+      // as .62 loud, which had him heard from fourteen units and made the tiptoe pointless.
+      // Ground actually covered over the most this body could ever cover is the honest number:
+      // the same creep comes out at a quarter, and a sprint at one.
+      this.loud = st / Math.max(1e-4, this.speed * SENSE.run * dt);
       const nx = this.pos.x + Math.sin(this.heading) * st, nz = this.pos.z + Math.cos(this.heading) * st;
       const step = (h2, dist) => {
         const mx = this.pos.x + Math.sin(h2) * dist, mz = this.pos.z + Math.cos(h2) * dist;
@@ -10260,6 +10271,8 @@ const POACHER = {
   // that moved, so he spent the whole hunt hovering just outside arm's reach. Inside this he
   // goes at him.
   hunt: [20, 40],    // how long one quarry is worth, before he shrugs and looks for another
+  give: 3.0,         // and how long of not getting any closer to it before he gives up on it
+  shun: 25,          // then that one is somebody else's problem for this long
   notice: .7,        // the stop-and-look when one comes into range
   behind: 2.4,       // how far behind the animal the tiptoe aims for, past its own radius
   creepK: .62,       // his pace while tiptoeing, as a fraction of full
@@ -10298,6 +10311,7 @@ class Poacher extends Creature {
     this.quarry = null; this.hunt = 0; this.cool = rnd(0, 3);
     this.carry = null; this.carryK = 0; this.carryT = 0; this.grabT = 0; this.grip = 0;
     this.job = 'wander'; this.noticeT = 0; this.restT = 0;
+    this.near = 1e9; this.nearT = 0; this.shun = null; this.shunT = 0;
     this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
     this.hasAir = 1;                       // and two for being in it: skip the procedural lean
@@ -10361,7 +10375,7 @@ class Poacher extends Creature {
     return nearest(world.creatures, this.pos,
       // Not the tinkers: they are the island's builders, and a poacher walking off with one
       // stops a cairn. Their species has its own relationship with him. One word to change.
-      c => c.alive && c !== this && !(c instanceof Poacher) && !(c instanceof Weaver) && !c.carried && !c.net
+      c => c.alive && c !== this && c !== this.shun && !(c instanceof Poacher) && !(c instanceof Weaver) && !c.carried && !c.net
         && !c.aquatic && !c.flying && (c.rad || 1) < POACHER.size, r || POACHER.see);
   }
   // HIS OWN BUSINESS OUTRANKS AN ANIMAL'S, and this is why no poacher had ever taken anything
@@ -10478,16 +10492,33 @@ class Poacher extends Creature {
     }
     // A quarry stops being one: gone, taken by somebody else, out of sight, or he has simply
     // spent long enough on it.
-    if (q && (!q.alive || q.carried || this.dist(q.pos) > POACHER.see * 1.6 || (this.hunt -= dt) <= 0)) {
-      this.quarry = null; this.job = 'wander'; this.cool = rnd(POACHER.cool[0], POACHER.cool[1]); this.doing = 'give up'; return;
+    //
+    // AND ONE HE IS NOT GETTING ANY CLOSER TO. The stalk turns the stall watchdog off -- it has
+    // to, or a man circling a turning animal reads as stuck -- and that left nothing at all
+    // watching a hunt that cannot be completed. An animal up a cliff, or across water, is a
+    // quarry he will walk into the mountainside after for ever, tiptoeing on the spot, which is
+    // exactly what was watched. So the hunt keeps its own measure: closest approach so far, and
+    // how long since that improved. Three seconds of not gaining on it and it is not his.
+    if (q) {
+      const dq = this.dist(q.pos);
+      if (dq < (this.near || 1e9) - .4) { this.near = dq; this.nearT = 0; }
+      else this.nearT = (this.nearT || 0) + dt;
+    }
+    if (q && (!q.alive || q.carried || this.dist(q.pos) > POACHER.see * 1.6
+        || (this.nearT || 0) > POACHER.give || (this.hunt -= dt) <= 0)) {
+      this.quarry = null; this.job = 'wander'; this.cool = rnd(POACHER.cool[0], POACHER.cool[1]);
+      this.shun = q; this.shunT = POACHER.shun;      // and not that one again for a while
+      this.doing = 'give up'; return;
     }
     if (!q) this.job = 'wander';
     // ── wander ──
     if (this.job === 'wander') {
+      if (this.shunT > 0 && (this.shunT -= dt) <= 0) this.shun = null;
       if (this.cool <= 0) {
         const pr = this.prey();
         if (pr) {
           this.quarry = pr; this.hunt = rnd(POACHER.hunt[0], POACHER.hunt[1]);
+          this.near = 1e9; this.nearT = 0;
           this.job = 'notice'; this.noticeT = POACHER.notice;
           bubbleSay(this, 'alarm');
           this.doing = 'notice'; this.moving = 0; return;
