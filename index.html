@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e92';
+const BUILD = 'e93';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7964,7 +7964,7 @@ const HTOSS = { speed: [13, 44], lift: .42, spin: 7, r: .34, maxT: 7,
 // which is both what a grazing animal actually has and the only shape that makes creeping up
 // BEHIND one a real thing to do rather than a coin flip.
 // `jolt` is the flinch when it first notices, as a share of what a plasma bolt does to it.
-const SENSE = { jolt: .45, pro: .58, cone: 1.05, hear: 1.15, hold: .55, cool: 2.5, keep: 2.2, walk: .45, run: 2.4, shy: 22 };
+const SENSE = { jolt: .45, pro: .58, cone: 1.05, hear: 1.15, hold: 1.2, spin: 2.6, cool: 2.5, keep: 2.2, walk: .45, run: 2.4, shy: 22 };
 const VIT = {
   bolt: .34, melee: .26, thrash: .055,     // a plasma hit, a swing, and a second of fighting a net
   regenAfter: 9, regen: .05,               // it gets its wind back if he leaves it alone
@@ -8176,7 +8176,7 @@ class Creature {
   constructor(x, z, o) {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
-    this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null;
+    this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null; this.spin = 0;
     this.tame = 0; this.tameK = 0; this.hue = 0; this.fed = 0; this.friend = 0; this.shy = 0; this.loud = 0;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
@@ -8747,6 +8747,7 @@ class Creature {
     // there to be picked up. It comes round with a fraction of its wind back, which is what
     // stops a second knock being free -- it is on its feet and worth something again.
     if (this.daze > 0) {
+      this.startle = 0; this.spin = 0;
       this.daze -= dt; this.moving = 0; this.wp = null; this.target = null; this.alarm = 0;
       // AND IT ACTUALLY LIES DOWN. senses() takes the wheel before think() ever runs, so the
       // poacher's own "if dazed, play lay" lived in a branch that could not be reached: he had
@@ -8815,13 +8816,28 @@ class Creature {
     // And what it does about it is two beats, not one: it freezes and looks -- the ! goes up --
     // and a second later it runs. The second is the window a stalk is aiming for.
     if (this.startleCool > 0) this.startleCool -= dt;
+    // THREE BEATS, AND EACH ONE HAS TO BE SEEN. It looks AT the thing and stops dead; it turns
+    // its whole body away from it, on the spot, at two and a half times its own turn rate; and
+    // then it goes. Before this, beat two did not exist -- the flee simply steered toward a
+    // point behind it while already walking, so a creature swung round in a lazy arc and the
+    // moment read as "it wandered off a bit". A body that plants, pivots and bolts is legible
+    // from across a field.
     if (this.startle > 0) {
       this.startle -= dt; this.moving = 0;
       const f = this.startleFrom;
       let a = Math.atan2(f.x - this.pos.x, f.z - this.pos.z) - this.heading; a = Math.atan2(Math.sin(a), Math.cos(a));
-      this.heading += clamp(a, -this.turn * dt * 1.5, this.turn * dt * 1.5);
-      if (this.startle <= 0) { bubbleSay(this, 'alarm'); this.spook(f, S.flock); }
+      this.heading += clamp(a, -this.turn * dt * 2.5, this.turn * dt * 2.5);
+      if (this.startle <= 0) this.spin = 1;
       this.doing = 'startle'; return true;
+    }
+    if (this.spin) {
+      this.moving = 0;
+      const f = this.startleFrom;
+      let a = Math.atan2(this.pos.x - f.x, this.pos.z - f.z) - this.heading; a = Math.atan2(Math.sin(a), Math.cos(a));
+      const step = this.turn * SENSE.spin * dt;
+      this.heading += clamp(a, -step, step);
+      if (Math.abs(a) < .3) { this.spin = 0; bubbleSay(this, 'alarm'); this.spook(f, S.flock); }
+      this.doing = 'turn'; return true;
     }
     if (wary && this.startleCool <= 0 && !this.fling && !this.net) {
       const t = this.threat(wary, him ? pl : null);
@@ -10390,9 +10406,15 @@ class Poacher extends Creature {
   // running for his life -- and everything else stands aside while there is something in reach
   // worth taking. Their clocks still tick, so nothing starves for being skipped.
   senses(dt) {
-    if (this.daze > 0 || this.alarm > 0 || this.fling || this.net) return super.senses(dt);
-    if (!this.carry && !this.quarry && this.cool > 0) return super.senses(dt);
-    if (!this.carry && !this.quarry && !this.prey()) return super.senses(dt);
+    // OUT COLD, IN THE AIR, OR IN A NET. Those are the only three things that are about his
+    // body rather than about his job, and they are the only three that may take the wheel.
+    //
+    // Everything else in Creature.senses is an ANIMAL's: thirst, chit-chat, curiosity about
+    // you, fear. Each one returns true and owns him for seconds at a time, and every version
+    // of this override so far has left a crack for them -- most recently the cool-down between
+    // attempts, which is two to five seconds of a man standing in a meadow full of hoppers
+    // being CURIOUS ABOUT YOU while you watch him ignore them. He is a poacher. He hunts.
+    if (this.daze > 0 || this.fling || this.net) return super.senses(dt);
     this.doing = '';
     if (world.clock - this.hurtAt > VIT.regenAfter && this.vig < 1) this.vig = Math.min(1, this.vig + VIT.regen * dt);
     if (this.ire > 0) this.ire = Math.max(0, this.ire - VIT.ireEase * dt);
@@ -10400,9 +10422,10 @@ class Poacher extends Creature {
     if (this.metCool > 0) this.metCool -= dt;
     if (this.curioCool > 0) this.curioCool -= dt;
     if (this.drinkT > 0) this.drinkT -= dt;
+    if (this.shy > 0) this.shy -= dt;
     if (this.met > 0) { this.met = 0; this.metWho = null; }
     if (this.state === 'drink') { this.state = 'wander'; this.wp = null; }
-    this.curio = 0;
+    this.curio = 0; this.alarm = 0;
     return false;                     // he is working; think() has the wheel
   }
   // TAKING ONE. `carried` is what stops everything else in the game reaching for it: the
@@ -10514,7 +10537,10 @@ class Poacher extends Creature {
     // ── wander ──
     if (this.job === 'wander') {
       if (this.shunT > 0 && (this.shunT -= dt) <= 0) this.shun = null;
-      if (this.cool <= 0) {
+      // NO COOL-DOWN ON LOOKING. `cool` used to gate this, which meant that for seconds after
+      // every attempt -- and after every delivery -- he walked past whatever was in front of
+      // him on purpose. It now only spaces out re-grabs on the SAME animal, through `shun`.
+      {
         const pr = this.prey();
         if (pr) {
           this.quarry = pr; this.hunt = rnd(POACHER.hunt[0], POACHER.hunt[1]);
