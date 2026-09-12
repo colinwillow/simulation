@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e95';
+const BUILD = 'e96';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -2310,7 +2310,7 @@ addEventListener('unhandledrejection', e => {
   if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason);
 });
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { loll: 14, turnip: 64, loose: 20, poacher: 7, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
+const MAX = { bruin: 6, loll: 14, turnip: 64, loose: 20, poacher: 7, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -7646,6 +7646,33 @@ const CREATURE_RIGS = {
     flatten: ['walk2', 'sneak'],
     glow: { lo: .14, hi: .40, k: 1.6, lum: [.42, .88] },
   },
+  // THE BRUIN. A plain Mixamo skeleton, bone for bone the wanderer's -- so nothing in the
+  // pipeline needed a word of accommodation for this one -- with eleven clips, of which every
+  // single one is used. Three of them are IDLES, and that is the interesting part: the mood
+  // system already works out what each animal thinks of him every frame, and this is the first
+  // body that can say it standing still. See Bruin.idleFor.
+  //
+  // `flee` and `run_fwd` are the same clip in the file, to the frame. Kept as a name anyway:
+  // when a scared-run is authored it drops in here and nothing else changes.
+  Bruin: {
+    url: 'models/alien_bear.glb',
+    height: 3.4,          // half a head over a poacher, and twice the mass by eye
+    yaw: 0,
+    idle: 'idle_01', walk: 'walk_fwd', run: 'run_fwd',
+    extra: {
+      idleHappy: 'idle_happy', idleSad: 'idle_sad', idleStretch: 'idle_stretch',
+      flee: 'flee', climb: 'climbing',
+      punch: 'punch', slash: 'slash',
+    },
+    extraLoop: ['idleHappy', 'idleSad', 'idleStretch', 'flee', 'climb'],
+    // MEASURED, AND THE SLASH IS THE ONE THAT MATTERS: its hips travel 39 units down Z, which
+    // on a clip the game plays on the spot is the animal sliding a body length sideways out of
+    // its own swing. The punch carries 6 and the two idles a couple each. Detrended here, so
+    // the swings stay where they are thrown.
+    flatten: ['slash', 'punch', 'idleSad', 'idleHappy'],
+    glow: { lo: .13, hi: .40, k: 1.6, lum: [.40, .86] },
+    hue: .30,
+  },
   // THE LOLLS, and this is the first body on the island that arrived with a vocabulary instead
   // of a walk cycle. Seventy-seven clips came in the file; these are the sixteen worth wiring,
   // and the rest stay in the GLB costing nothing but bytes -- pickClip only ever looks up what
@@ -7794,7 +7821,7 @@ const MOOD = {
   waryMin: 34,           // and a terrified species keeps its distance even if it never had one
   label: { Grazer: 'the mossbacks', Weaver: 'the tinkers', Burrower: 'the mudlarks',
     Skimmer: 'the glimmerfins', Drifter: 'the kitewings', Hopper: 'the hoppers', Poacher: 'the poachers',
-    Walker: 'the grovewalkers', Leviathan: 'the leviathans', Loll: 'the lolls' },
+    Walker: 'the grovewalkers', Leviathan: 'the leviathans', Loll: 'the lolls', Bruin: 'the bruins' },
 };
 function moodOf(c) { return MOOD.m[c.constructor.name] || 0; }
 function moodShift(c, d) {
@@ -9596,6 +9623,141 @@ class Weaver extends Creature {
     }
     if (this.tree) { this.ignore = this.tree; if (this.dist(this.tree.pos) < 2.8) { this.state = 'chop'; this.timer = rnd(5, 7.5); } else this.seek(this.tree.pos, 1.4); }
     else this.wander();
+  }
+}
+// THE BRUINS. The one thing on the island that does not run from you by default. It minds its
+// own business, it tells you when you are too close, and if you hit it it comes after you --
+// which is the whole of it, and the reason the island needs one: everything else is something
+// you do things TO.
+//
+// It is also the first body that says what it thinks of you standing still. `stepFace` already
+// works out a mood for every creature every frame; this one has three idles to spend it on.
+const BRUIN = {
+  ring: 9,           // step inside this and it stands up and tells you
+  warn: [6, 13],     // and how long before it bothers to say so again
+  swipe: 2.6,        // reach of the swing, past both radii
+  hurtAt: .55,       // worn down to this and it stops arguing and leaves
+  climb: { see: 34, up: 2.6, perch: [9, 20], odds: .5, walk: 12 },   // the tree, the trip, the sit
+  idleAt: 2.2,       // seconds of standing still before it does something with them
+  idleEvery: [7, 16],
+};
+class Bruin extends Creature {
+  constructor(x, z) {
+    // wary 13 and it still only flees once it is WORN: the sense is what makes it look up and
+    // face you, and `hurtAt` is what makes it actually go. rad 2.3 is past VIT.bold, so one
+    // solid hit is enough to turn it round -- see creatureHurt.
+    super(x, z, { speed: 4.2, turn: 2.4, rad: 2.3, look: 10, minObR: 1.2,
+      wary: 13, flock: 0, notice: 24, thirst: 260 });
+    this.gait = 7; this.bob = 0;
+    this.warnT = 0; this.idleT = rnd(3, 9); this.still = 0;
+    this.tree = null; this.treeT = 0; this.up = 0; this.climbY = 0; this.perch = 0; this.climbCool = rnd(0, 20);
+  }
+  build() {
+    const b = this.body, coat = pick(M.hopper);
+    b.add(mesh(G.blob[1], coat, .95, 1.35, .8, 0, 1.7, 0));
+    const head = new THREE.Group(); head.position.set(0, 2.9, .2); b.add(head); this.head = head;
+    head.add(mesh(G.blob[0], coat, .62, .58, .68, 0, 0, 0));
+    for (const sx of [1, -1]) b.add(mesh(G.cylT, coat, .22, 1.1, .22, sx * .85, 1.9, 0));
+    for (const [x, z] of [[.38, 0], [-.38, 0]]) this.addLeg(x, z, 1.15, coat, .22);
+  }
+  // WHAT IT LOOKS LIKE THINKING. Not a random idle out of three: a mood, read off the same
+  // numbers the face morphs use, so the animal you have been feeding stands differently from
+  // the one you have been shooting. It only ever plays one while it is genuinely standing.
+  idleFor() {
+    if (this.vig < .7 || moodOf(this) <= MOOD.afraid) return 'idleSad';
+    if (this.trust > 0 || this.friend || moodOf(this) >= MOOD.fond) return 'idleHappy';
+    return 'idleStretch';
+  }
+  // A blow from this thing is its whole swing, so the clip fires it rather than the other way
+  // round: ram() is the damage and this is what the damage looks like.
+  ram(pl) { this.play('slash', 1.15); super.ram(pl); }
+  // A STARTLED BEAR GOES UP A TREE -- half of them, and not twice in a minute, because the one
+  // that stands its ground is the more interesting half of the coin. Decided ONCE, here, when
+  // it is frightened, rather than rolled every frame of the fright: a per-frame dice roll over
+  // a two-second alarm is a coin you almost never see land.
+  spook(from, radius) {
+    super.spook(from, radius);
+    if (this.up || this.tree || this.climbCool > 0 || Math.random() > BRUIN.climb.odds) return;
+    const t = nearest(world.plants, this.pos, pl => pl instanceof LanternTree && pl.alive && pl.growth > .8 && pl.falling < 0, BRUIN.climb.see);
+    if (t) { this.tree = t; this.treeT = BRUIN.climb.walk; this.climbCool = rnd(30, 70); }
+  }
+  stagger(from, force = 1) { super.stagger(from, force); this.tree = null; this.up = 0; }
+  // Up a trunk. The clip climbs in place, so the height is the game's business -- which is the
+  // same division of labour the loll's turns use, and the reason both were cheap.
+  pose(dt) {
+    super.pose(dt);
+    if (this.climbY > .01) { this.g.position.y += this.climbY; this.pos.y += this.climbY; }
+  }
+  think(dt) {
+    this.gaitClip = this.alarm > 0 && this.rig && this.rig.acts.flee ? 'flee' : null;
+    // ── up a tree ──
+    // Frightened and worn, with something to climb: it goes up and waits you out. Nothing else
+    // on the island leaves the ground under its own power, and a bear in a canopy is the sort
+    // of thing you notice from across a valley.
+    if (this.up) {
+      const t = this.tree;
+      if (!t || !t.alive) { this.up = 0; this.climbY = Math.max(0, this.climbY - dt * 9); this.doing = 'down'; return; }
+      const top = t.h * .62;
+      this.moving = 0; this.ignore = t;
+      this.heading = Math.atan2(t.pos.x - this.pos.x, t.pos.z - this.pos.z);
+      if (this.up === 1) {                                  // going up
+        this.climbY = Math.min(top, this.climbY + dt * BRUIN.climb.up);
+        this.gaitClip = 'climb';
+        if (this.climbY >= top - .05) { this.up = 2; this.perch = rnd(BRUIN.climb.perch[0], BRUIN.climb.perch[1]); }
+        this.doing = 'climb'; return;
+      }
+      if (this.up === 2) {                                  // sitting it out
+        this.perch -= dt;
+        this.gaitClip = null;
+        if (!this.act && Math.random() < dt * .3) this.play(this.idleFor(), 1);
+        if (this.perch <= 0 && this.alarm <= 0) this.up = 3;
+        this.doing = 'perch'; return;
+      }
+      this.climbY = Math.max(0, this.climbY - dt * BRUIN.climb.up * 1.6);   // coming down
+      this.gaitClip = 'climb';
+      if (this.climbY <= .02) { this.up = 0; this.tree = null; this.ignore = null; this.timer = rnd(4, 9); }
+      this.doing = 'down'; return;
+    }
+    if (this.tree) {                                        // walking to the trunk
+      // AND IT IS NOT A PILGRIMAGE. A tree across a ravine is a tree it will walk at for ever,
+      // which is the poacher's mountainside again in a different coat. Twelve seconds and the
+      // fright has passed anyway.
+      if (!this.tree.alive || (this.treeT -= dt) <= 0) { this.tree = null; }
+      else {
+        this.ignore = this.tree;
+        if (this.dist(this.tree.pos) < 2.6) { this.up = 1; this.climbY = 0; this.moving = 0; this.doing = 'climb'; return; }
+        this.moving = 1; this.seek(this.tree.pos, 1.6); this.doing = 'totree'; return;
+      }
+    }
+    if (this.climbCool > 0) this.climbCool -= dt;
+    // ── the warning ──
+    // Inside its ring and not afraid of you: it plants, rears, and swings at the air. It does
+    // not connect -- that is what the charge is for, and the charge only happens once you have
+    // given it a reason. This is the sentence before the argument.
+    const pl = world.player;
+    this.warnT -= dt;
+    if (pl && !pl.free && !pl.aboard && !this.friend && this.trust <= 0 && this.vig > BRUIN.hurtAt
+        && this.warnT <= 0 && this.dist(pl.pos) < BRUIN.ring + this.rad) {
+      this.warnT = rnd(BRUIN.warn[0], BRUIN.warn[1]);
+      this.play('punch', 1.1);
+      bubbleSay(this, 'angry');
+      this.heading = Math.atan2(pl.pos.x - this.pos.x, pl.pos.z - this.pos.z);
+      this.moving = 0; this.doing = 'warn'; return;
+    }
+    if (this.actT > 0 && (this.act === 'punch' || this.act === 'slash')) { this.moving = 0; this.doing = 'swing'; return; }
+    // ── standing about ──
+    this.timer -= dt;
+    this.still = this.moveK < .12 ? this.still + dt : 0;
+    if (this.still > BRUIN.idleAt && this.idleT <= 0 && !this.act) {
+      this.idleT = rnd(BRUIN.idleEvery[0], BRUIN.idleEvery[1]);
+      this.play(this.idleFor(), 1);
+    }
+    this.idleT -= dt;
+    if (this.actT > 0) { this.moving = 0; this.doing = 'idle'; return; }
+    if (this.timer <= 0) { this.timer = rnd(5, 13); this.wp = null; }
+    this.moving = this.timer > 9 ? 0 : .8;                  // it stops and looks around a lot
+    if (this.moving > 0) this.wander();
+    this.doing = this.moving > 0 ? 'wander' : 'idle';
   }
 }
 // THE LOLLS. Big, placid, slow to make up their mind, and the first species built AROUND a
@@ -14131,6 +14293,8 @@ function populate() {
     }
   }
   for (let i = 0; i < 20; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Grazer(p.x, p.z)); }
+  // Bruins keep to themselves, one at a time, in the higher ground where the trees are.
+  for (let i = 0; i < MAX.bruin; i++) { const p = randomLand(3, 15, .7); if (p) world.creatures.push(new Bruin(p.x, p.z)); }
   // The lolls keep to the open meadow, in twos and threes rather than scattered one by one --
   // and the first two herds go down on the shore, because a thing that wades is worth putting
   // where you can see it wade.

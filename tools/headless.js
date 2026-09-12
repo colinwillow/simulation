@@ -27,7 +27,7 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('cons
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__REGIONS=REGIONS;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump,Poacher,Loll};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__REGIONS=REGIONS;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump,Poacher,Loll,Bruin};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
 eval(src);
 // The title screen parks the camera out at the planet and flies the ship round it. That is
 // the first thing a player sees and the last thing a harness wants: every tool here measures
@@ -45,7 +45,8 @@ const obs=new Set(); for(const [k,a] of global.__OB.map) for(const o of a) obs.a
 const pDoing={}, pSeen=new Map(); let pBlank=0;
 // FLEE: park the player next to something and see whether it actually leaves.
 const flee={n:0,ran:0,walked:0,far:0,best:0,near:0,sees:0};
-const loll={wet:0,towater:0,samp:0,deep:0}; let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
+const loll={wet:0,towater:0,samp:0,deep:0};
+const bru={samp:0,up:0,warn:0,high:0,d:{}}; let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
 for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
   if(i%10===0){ for(const cr of w.creatures){ if(!(cr instanceof C.Poacher)||!cr.alive) continue;
     pSamples++; const d=cr.doing||'-'; pDoing[d]=(pDoing[d]||0)+1;
@@ -54,6 +55,7 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
     if(!cr.prey||!cr.prey()) pNoPrey++;
     if(false){ pBlank++; console.log('[poacher blank] job',cr.job,'quarry',cr.quarry?cr.quarry.constructor.name:'-','roamT',(cr.roamT||0).toFixed(1),'alarm',(cr.alarm||0).toFixed(1),'startle',(cr.startle||0).toFixed(1),'daze',cr.daze.toFixed(1),'fling',!!cr.fling,'net',!!cr.net,'cool',cr.cool.toFixed(1),'met',(cr.met||0).toFixed(1),'state',cr.state); }
   } }
+  if(i===600||i===1800){ for(const cr of w.creatures) if(cr instanceof C.Bruin && cr.alive) cr.spook({x:cr.pos.x+4,z:cr.pos.z+4},0); }
   if(i>300 && i%15===0){ const P=global.__p;
     for(const cr of w.creatures){ if(!cr.alive||cr.flying||cr.aquatic||!cr.SN||!cr.SN.wary) continue;
       const d=Math.hypot(cr.pos.x-P.pos.x,cr.pos.z-P.pos.z);
@@ -64,6 +66,9 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
       }
       cr._px=cr.pos.x; cr._pz=cr.pos.z; cr._pv=1;
     }
+    for(const cr of w.creatures){ if(!(cr instanceof C.Bruin)||!cr.alive) continue; bru.samp++;
+      const d=cr.doing||'-'; bru.d[d]=(bru.d[d]||0)+1; if(cr.up) bru.up++; if(d==='warn') bru.warn++;
+      bru.high=Math.max(bru.high,cr.climbY||0); }
     for(const cr of w.creatures){ if(!(cr instanceof C.Loll)||!cr.alive) continue; loll.samp++;
       if((cr.swimK||0)>.35) loll.wet++; if(cr.doing==='towater') loll.towater++; loll.deep=Math.max(loll.deep,cr.swimK||0);
     } }
@@ -101,7 +106,9 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
       +' carry '+(cr.carry?cr.carry.constructor.name:'-')+' vig '+cr.vig.toFixed(2)+' daze '+cr.daze.toFixed(1)); } }
 { const ld={}; let n=0; for(const c of w.creatures){ if(!(c instanceof C.Loll)||!c.alive) continue; n++; const d=c.doing||'-'; ld[d]=(ld[d]||0)+1; }
   { let wet=0,calf=0; for(const c of w.creatures){ if(!(c instanceof C.Loll)||!c.alive) continue; if((c.swimK||0)>.35) wet++; if(c.size<.8) calf++; }
-  console.log('[loll] afloat now '+wet+'  calves '+calf+'  | over the run: afloat '+(100*loll.wet/Math.max(1,loll.samp)).toFixed(1)+'%  heading in '+(100*loll.towater/Math.max(1,loll.samp)).toFixed(1)+'%  deepest swimK '+loll.deep.toFixed(2)); }
+  console.log('[bruin] samples '+bru.samp+'  aloft '+(100*bru.up/Math.max(1,bru.samp)).toFixed(1)+'%  highest '+bru.high.toFixed(1)
+  +'  doing: '+Object.entries(bru.d).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' '+v).join('  '));
+console.log('[loll] afloat now '+wet+'  calves '+calf+'  | over the run: afloat '+(100*loll.wet/Math.max(1,loll.samp)).toFixed(1)+'%  heading in '+(100*loll.towater/Math.max(1,loll.samp)).toFixed(1)+'%  deepest swimK '+loll.deep.toFixed(2)); }
 console.log('[loll] alive '+n+'  doing: '+Object.entries(ld).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' '+v).join('  ')); }
 console.log('[flee] samples near player '+flee.near+'  alarmed/startled '+flee.sees
   +' ('+(100*flee.sees/Math.max(1,flee.near)).toFixed(0)+'%)  of those: running '+flee.ran+'  ambling '+flee.walked);
