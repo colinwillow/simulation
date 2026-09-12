@@ -44,7 +44,8 @@ let worstOverlap=0, worstWho='', overlapFrames=0, stuckMax=0;
 const obs=new Set(); for(const [k,a] of global.__OB.map) for(const o of a) obs.add(o);
 const pDoing={}, pSeen=new Map(); let pBlank=0;
 // FLEE: park the player next to something and see whether it actually leaves.
-const flee={n:0,ran:0,walked:0,far:0,best:0,near:0,sees:0}; let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
+const flee={n:0,ran:0,walked:0,far:0,best:0,near:0,sees:0};
+const loll={wet:0,towater:0,samp:0,deep:0}; let pGrabs=0, pDrops=0, pCarryFrames=0, pNoPrey=0, pSamples=0;
 for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
   if(i%10===0){ for(const cr of w.creatures){ if(!(cr instanceof C.Poacher)||!cr.alive) continue;
     pSamples++; const d=cr.doing||'-'; pDoing[d]=(pDoing[d]||0)+1;
@@ -62,6 +63,9 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
         if(v>cr.speed*0.9) flee.ran++; else if(v>0.2) flee.walked++;
       }
       cr._px=cr.pos.x; cr._pz=cr.pos.z; cr._pv=1;
+    }
+    for(const cr of w.creatures){ if(!(cr instanceof C.Loll)||!cr.alive) continue; loll.samp++;
+      if((cr.swimK||0)>.35) loll.wet++; if(cr.doing==='towater') loll.towater++; loll.deep=Math.max(loll.deep,cr.swimK||0);
     } }
   maxRain=Math.max(maxRain,global.__wx.rain); maxStorm=Math.max(maxStorm,global.__wx.storm);
   if(i%30===0){ for(const cr of w.creatures){ if(!cr.alive||cr.flying||cr.aquatic) continue;
@@ -96,7 +100,9 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
       +' quarry '+(cr.quarry?cr.quarry.constructor.name:'-')+' nearest prey '+(q?q.constructor.name:'none')+' at '+dd
       +' carry '+(cr.carry?cr.carry.constructor.name:'-')+' vig '+cr.vig.toFixed(2)+' daze '+cr.daze.toFixed(1)); } }
 { const ld={}; let n=0; for(const c of w.creatures){ if(!(c instanceof C.Loll)||!c.alive) continue; n++; const d=c.doing||'-'; ld[d]=(ld[d]||0)+1; }
-  console.log('[loll] alive '+n+'  doing: '+Object.entries(ld).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' '+v).join('  ')); }
+  { let wet=0,calf=0; for(const c of w.creatures){ if(!(c instanceof C.Loll)||!c.alive) continue; if((c.swimK||0)>.35) wet++; if(c.size<.8) calf++; }
+  console.log('[loll] afloat now '+wet+'  calves '+calf+'  | over the run: afloat '+(100*loll.wet/Math.max(1,loll.samp)).toFixed(1)+'%  heading in '+(100*loll.towater/Math.max(1,loll.samp)).toFixed(1)+'%  deepest swimK '+loll.deep.toFixed(2)); }
+console.log('[loll] alive '+n+'  doing: '+Object.entries(ld).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' '+v).join('  ')); }
 console.log('[flee] samples near player '+flee.near+'  alarmed/startled '+flee.sees
   +' ('+(100*flee.sees/Math.max(1,flee.near)).toFixed(0)+'%)  of those: running '+flee.ran+'  ambling '+flee.walked);
 const C2=global.__C;

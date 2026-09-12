@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e94';
+const BUILD = 'e95';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7659,7 +7659,8 @@ const CREATURE_RIGS = {
   // procedurally and the clip is laid over it.
   Loll: {
     url: 'models/alien_cow.glb',
-    height: 2.35,
+    // A cow stands over the wanderer's 2.8 at the shoulder. Calves come out at .58 of this.
+    height: 3.05,
     yaw: 0,
     // Idle_1 is the standing breath; the walk, the trot and the run are a real three-speed
     // ladder rather than the usual two.
@@ -8215,7 +8216,7 @@ class Creature {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
     this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null; this.spin = 0;
-    this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
+    this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null; this.swimK = 0;
     this.tame = 0; this.tameK = 0; this.hue = 0; this.fed = 0; this.friend = 0; this.shy = 0; this.loud = 0;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
@@ -9161,7 +9162,12 @@ class Creature {
   }
   pose(dt) {
     this.g.position.x = this.rx; this.g.position.z = this.rz;
-    const base = this.aquatic ? waveY(this.rx, this.rz) - .4 : this.flying ? this.alt : groundY(this.rx, this.rz);
+    // On the ground, on the waterline, or somewhere between. groundY is already the waterline
+    // over water, so a wading body stands ON the sea rather than on the seabed; `swimK` only
+    // has to sink it the last little way once its feet have left the bottom.
+    const base = this.aquatic ? waveY(this.rx, this.rz) - .4 : this.flying ? this.alt
+      : (this.swimK > .001 ? lerp(groundY(this.rx, this.rz), waveY(this.rx, this.rz) - this.rad * .42, this.swimK)
+                           : groundY(this.rx, this.rz));
     this.pos.y = base; this.g.position.y = base;
     if (!this.flying && !this.aquatic) { alignTo(this.g, this.rx, this.rz, .55); this.g.rotateY(this.heading); }
     else this.g.rotation.set(0, this.heading, 0);
@@ -9343,6 +9349,11 @@ class Creature {
         // act / gait are how a species with its own clips drives them: it sets them on itself
         // and this hands them through. Nothing that has neither pays anything for them.
         { top: this.speed * 1.45, runAt: .78, runFull: .98, act: this.act || null, actK: this.actK || 0, gait: this.gaitClip || null,
+          // WADING. `swimK` is zero for everything that lives on land and everything that
+          // lives in the water -- an aquatic creature is always swimming and does not need a
+          // weight for it. It is for the ones that can be in both, and stepRig already knows
+          // what to do with it: the swim pair takes the body over from the ground gaits.
+          swim: this.swimK || 0,
           // and the two the carry needs: the cradle over the top of the gait, and the stoop.
           holding: this.carryK || 0,
           lift: this.grabT > 0 ? smooth(0, .14, Math.min(this.grabT, POACHER.stoop - this.grabT) * 2) : 0 });
@@ -9598,17 +9609,62 @@ const LOLL = {
   turnAt: .9,        // heading error past which it stops and turns on the spot instead
   trot: [.52, .88],  // the band of its own pace that is a trot rather than a walk or a run
   bed: .72,          // the darkness at which it beds down
+  // IN THE WATER, A LITTLE WAY. `wade` is the deepest seabed it will walk onto, under the
+  // waterline -- not the open sea, the shallows and the shelf off a beach, which is where a
+  // thing this shape belongs and where you can still see its legs. `float` is where its feet
+  // leave the bottom and the swim clips take the body; `slow` is what all that costs it.
+  wade: 4.2, float: [.7, 2.4], slow: .62,
+  // AND IT GOES IN OF ITS OWN ACCORD. Left to the wander it would reach the shallows about
+  // once an hour by accident; this is the urge, and it is the whole reason the swim clips are
+  // worth wiring. `every` is the gap between paddles, `stay` how long one lasts.
+  paddle: [70, 160], stay: [12, 26],
+  // TWO SIZES, and the small ones are three in ten. The rig is scaled as a whole, so the
+  // collider and the pace go with it and a calf is genuinely a smaller animal rather than the
+  // same animal drawn smaller.
+  calf: .58, calfOdds: .3,
 };
 class Loll extends Creature {
   constructor(x, z) {
-    // 1.8 is also exactly the size a poacher can get his arms round, and this one is too big
-    // for that: a man walking off with a cow under one arm is a different game.
-    super(x, z, { speed: 3.4, turn: 1.5, rad: 1.8, look: 9, minObR: .9,
+    // A CALF OR A FULL-GROWN ONE, decided before super() because the collider and the pace are
+    // arguments to it. 2.4 of collider on an adult is also comfortably past the 1.8 a poacher
+    // can get his arms round -- a man walking off with a cow under one arm is a different game
+    // -- while a calf at 1.4 is exactly the sort of thing he would try for.
+    const k = Math.random() < LOLL.calfOdds ? LOLL.calf : 1;
+    super(x, z, { speed: 3.4 * (.72 + k * .28), turn: 1.5 / (.6 + k * .4), rad: 2.4 * k, look: 9, minObR: .9,
       wary: 19, flock: 7, notice: 18, thirst: 150, social: 1 });
+    this.size = k;
+    this.g.scale.setScalar(k);            // the rig hangs off this, so the whole animal scales
     this.hasLay = 1;                      // it has clips for going down; skip the procedural roll
     this.gait = 6; this.bob = 0;          // the clips carry their own bounce; nothing procedural
     this.timer = rnd(4, 14); this.chew = 0; this.bedded = 0;
+    this.paddleT = rnd(10, LOLL.paddle[1]); this.wadeT = 0; this.wadeTo = null;
   }
+  // THE SHALLOWS ARE WALKABLE. Everything else on land stops at the waterline; this one will
+  // go out onto the shelf until the bottom is `wade` under the surface, and no further -- so
+  // you get cows standing knee-deep off a beach rather than cows in the middle of the ocean.
+  terrainOK(x, z) {
+    if (Math.hypot(x, z) > PLANET.wander) return false;
+    const h = height(x, z);
+    return h > SEA - LOLL.wade && h < 20 && slope(x, z) < 1.25;
+  }
+  // How much of it is being held up by water rather than by its legs. Everything else about
+  // being in the sea follows from this one number: the clip set, the ride height, the pace.
+  // Somewhere out on the shelf: past the waterline, not past its depth. Deliberately not
+  // shoreNear -- that finds dry ground BESIDE the water, which is where a drink happens.
+  wadeSpot() {
+    for (let i = 0; i < 60; i++) {
+      const a = rnd(Math.PI * 2), r = rnd(10, 80);
+      const x = this.pos.x + Math.cos(a) * r, z = this.pos.z + Math.sin(a) * r;
+      const h = height(x, z);
+      if (h < SEA - LOLL.float[1] && h > SEA - LOLL.wade + .6 && this.valid(x, z)) return { x, z };
+    }
+    return null;
+  }
+  wetK() {
+    const d = SEA - height(this.pos.x, this.pos.z);
+    return smooth(LOLL.float[0], LOLL.float[1], d);
+  }
+  paceK() { return super.paceK() * (1 - this.swimK * (1 - LOLL.slow)); }
   // A stand-in only, hidden the moment the GLB lands -- same contract as the poacher's.
   build() {
     const b = this.body, hide = pick(M.grazer);
@@ -9623,6 +9679,7 @@ class Loll extends Creature {
   // `gait` channel is for. So a loll ambling reads as a walk, one crossing a meadow as a trot,
   // and one that has been frightened as a flat run, with no thresholds anywhere but here.
   gears() {
+    if (this.swimK > .35) return null;        // the swim pair owns the body out there
     const m = this.moveK * this.paceK();
     return (m > LOLL.trot[0] && m < LOLL.trot[1]) ? 'trot' : null;
   }
@@ -9647,6 +9704,12 @@ class Loll extends Creature {
     if (this.act !== 'lieIn' && this.gaitClipWas !== 'lie') { this.play('lieIn', 1.3); this.gaitClipWas = 'lie'; }
     if (!this.act) this.gaitClip = 'lie';
   }
+  update(dt) {
+    // Before anything reads it: the brain, the pace and the pose all ask what it is standing
+    // in this frame, and a value a frame old puts the legs in the wrong clip at the waterline.
+    this.swimK = lerp(this.swimK, this.wetK(), Math.min(1, dt * 3));
+    super.update(dt);
+  }
   senses(dt) {
     const took = super.senses(dt);
     if (this.daze <= 0) this.gaitClipWas = null;
@@ -9667,6 +9730,28 @@ class Loll extends Creature {
   think(dt) {
     this.timer -= dt;
     this.gaitClip = this.gears();
+    // ── the water ──
+    // Nothing it does with its head works out there, so a paddle owns it outright: it walks to
+    // a spot on the shelf, stands about in it, and comes back in when it has had enough.
+    this.paddleT -= dt;
+    if (this.paddleT <= 0 && !this.wadeTo && this.wadeT <= 0 && world.night < LOLL.bed) {
+      this.wadeTo = this.wadeSpot();
+      this.paddleT = rnd(LOLL.paddle[0], LOLL.paddle[1]);
+      if (this.wadeTo) { this.chew = 0; this.bedded = 0; this.act = null; this.actT = 0; }
+    }
+    if (this.wadeTo) {
+      if (this.dist(this.wadeTo) < 3.5) { this.wadeT = rnd(LOLL.stay[0], LOLL.stay[1]); this.wadeTo = null; }
+      else { this.moving = .7; this.steerOrTurn(this.wadeTo, 1.1, dt); this.doing = 'towater'; return; }
+    }
+    if (this.wadeT > 0) {
+      this.wadeT -= dt;
+      this.moving = this.swimK > .35 ? .55 : .8;
+      if (this.swimK > .35) this.wander(); else { const w = this.wadeSpot(); if (w) this.seek(w, 1.1); else this.wadeT = 0; }
+      this.doing = 'wade'; return;
+    }
+    if (this.swimK > .35) {          // came out here some other way: head for dry land
+      this.moving = .8; this.wander(); this.doing = 'wade'; return;
+    }
     // ── bedded down ──
     // It lies down when the light goes and gets up when it comes back, and the three clips are
     // played in order rather than cut between: fold, settle, rise.
@@ -14046,9 +14131,12 @@ function populate() {
     }
   }
   for (let i = 0; i < 20; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Grazer(p.x, p.z)); }
-  // The lolls keep to the open meadow, in twos and threes rather than scattered one by one.
+  // The lolls keep to the open meadow, in twos and threes rather than scattered one by one --
+  // and the first two herds go down on the shore, because a thing that wades is worth putting
+  // where you can see it wade.
   for (let i = 0; i < MAX.loll; i += 3) {
-    const h = randomLand(1.6, 9, .5); if (!h) continue;
+    const h = i < 6 ? randomLand(.2, 2.2, .35) || randomLand(1.6, 9, .5) : randomLand(1.6, 9, .5);
+    if (!h) continue;
     for (let k = 0; k < 3 && i + k < MAX.loll; k++) {
       const p = nearLand(new THREE.Vector3(h.x, 0, h.z), 3, 13, 1.6, 9, .6) || h;
       world.creatures.push(new Loll(p.x, p.z));
