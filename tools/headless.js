@@ -4,7 +4,7 @@ THREE.CanvasTexture = class extends THREE.Texture {};
 global.THREE = THREE; global.devicePixelRatio=1; global.innerWidth=1280; global.innerHeight=800;
 global.matchMedia=()=>({matches:false});
 const els={};
-global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,getContext(){const g={createRadialGradient(){return {addColorStop(){}}},createLinearGradient(){return {addColorStop(){}}},fillRect(){},clearRect(){},strokeRect(){},createImageData(w,h){return {data:new Uint8ClampedArray(w*h*4)}},putImageData(){},getImageData(w,h){return {data:new Uint8ClampedArray(4)}},beginPath(){},closePath(){},moveTo(){},lineTo(){},arc(){},ellipse(){},quadraticCurveTo(){},bezierCurveTo(){},rect(){},fill(){},stroke(){},clip(){},save(){},restore(){},translate(){},rotate(){},scale(){},setTransform(){},transform(){},drawImage(){},fillText(){},strokeText(){},measureText(){return {width:0}},setLineDash(){}};return g;}};
+global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,getContext(){const g={createRadialGradient(){return {addColorStop(){}}},createLinearGradient(){return {addColorStop(){}}},fillRect(){},clearRect(){},strokeRect(){},createImageData(w,h){return {data:new Uint8ClampedArray(w*h*4)}},putImageData(){},getImageData(w,h){return {data:new Uint8ClampedArray(4)}},beginPath(){},closePath(){},moveTo(){},lineTo(){},arc(){},arcTo(){},ellipse(){},quadraticCurveTo(){},bezierCurveTo(){},rect(){},fill(){},stroke(){},clip(){},save(){},restore(){},translate(){},rotate(){},scale(){},setTransform(){},transform(){},drawImage(){},fillText(){},strokeText(){},measureText(){return {width:0}},setLineDash(){}};return g;}};
   const d={children:[],style:{setProperty(){},removeProperty(){}},dataset:{},title:'',className:'',addEventListener(){},classList:{toggle(){},add(){},remove(){}},querySelector(){return this.__k||(this.__k=global.document.createElement('div'))},getBoundingClientRect(){return {left:0,top:0,width:132,height:132}},setPointerCapture(){},appendChild(c){this.children.push(c);c.parent=this},removeChild(c){const i=this.children.indexOf(c);if(i>=0)this.children.splice(i,1)},remove(){if(this.parent)this.parent.removeChild(this)},get firstChild(){return this.children[0]},set textContent(v){},set innerHTML(v){}}; return d;},
   // three's TextureLoader goes through createElementNS for its <img>, and an img it can
   // never load is fine here: nothing headless samples a texture.
@@ -27,7 +27,7 @@ const block=html.match(/<script>([\s\S]*?)<\/script>/g).find(b=>b.includes('cons
 let src=block.replace(/^<script>/,'').replace(/<\/script>$/,'');
 // inject at the close of the MAIN IIFE (the last one) — earlier ones are nested helpers
 const cut=src.lastIndexOf('})();');
-src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__REGIONS=REGIONS;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump,Poacher};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
+src=src.slice(0,cut)+'global.__w=world;global.__INTRO=INTRO;global.__bio=biomeAt;global.__REGIONS=REGIONS;global.__W=W;global.__C={Cairn,Weaver,LanternTree,Bloom,MossTuft,Grazer,Skimmer,Drifter,Burrower,Leviathan,Walker,Hopper,GreatTree,Campfire,Cave,FloatingIsle,Log,Stump,Poacher,Loll};global.__f=ferry;global.__count=count;global.__OB=OB;global.__obRad=obRad;global.__h=height;global.__sl=slope;global.__scene=scene;global.__p=player;global.__S=Streaks;global.__wu=waterUni;global.__wx=WX;'+src.slice(cut);
 eval(src);
 // The title screen parks the camera out at the planet and flies the ship round it. That is
 // the first thing a player sees and the last thing a harness wants: every tool here measures
@@ -95,6 +95,8 @@ for(let i=0;i<N;i++){ const f=cbs.shift(); global.__t+=33; f(global.__t);
     console.log('  #'+n+' doing '+(cr.doing||'-')+' cool '+(cr.cool||0).toFixed(1)+' hunt '+(cr.hunt||0).toFixed(1)
       +' quarry '+(cr.quarry?cr.quarry.constructor.name:'-')+' nearest prey '+(q?q.constructor.name:'none')+' at '+dd
       +' carry '+(cr.carry?cr.carry.constructor.name:'-')+' vig '+cr.vig.toFixed(2)+' daze '+cr.daze.toFixed(1)); } }
+{ const ld={}; let n=0; for(const c of w.creatures){ if(!(c instanceof C.Loll)||!c.alive) continue; n++; const d=c.doing||'-'; ld[d]=(ld[d]||0)+1; }
+  console.log('[loll] alive '+n+'  doing: '+Object.entries(ld).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' '+v).join('  ')); }
 console.log('[flee] samples near player '+flee.near+'  alarmed/startled '+flee.sees
   +' ('+(100*flee.sees/Math.max(1,flee.near)).toFixed(0)+'%)  of those: running '+flee.ran+'  ambling '+flee.walked);
 const C2=global.__C;

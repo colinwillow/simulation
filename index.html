@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e93';
+const BUILD = 'e94';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -2310,7 +2310,7 @@ addEventListener('unhandledrejection', e => {
   if (!firstErr) firstErr = 'promise: ' + ((e.reason && e.reason.message) || e.reason);
 });
 const WS = W / 170;              // landform coords were authored at W=170
-const MAX = { turnip: 64, loose: 20, poacher: 7, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
+const MAX = { loll: 14, turnip: 64, loose: 20, poacher: 7, tinkerHut: 6, tree: MOBILE ? 150 : 230, moss: 170, bloom: MOBILE ? 50 : 74, mushroom: 80, cairn: 9, grazer: 30, weaver: 20, drifter: 13, walker: 6, hopper: 50 };
 
 const rnd = (a = 1, b) => b === undefined ? Math.random() * a : a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -7646,6 +7646,44 @@ const CREATURE_RIGS = {
     flatten: ['walk2', 'sneak'],
     glow: { lo: .14, hi: .40, k: 1.6, lum: [.42, .88] },
   },
+  // THE LOLLS, and this is the first body on the island that arrived with a vocabulary instead
+  // of a walk cycle. Seventy-seven clips came in the file; these are the sixteen worth wiring,
+  // and the rest stay in the GLB costing nothing but bytes -- pickClip only ever looks up what
+  // it is asked for by name.
+  //
+  // Two things about this rig are not like the others and both are handled here rather than in
+  // the species. Its hips are called `Spine_base`, which the pivot search finds through its
+  // /spine/ pass; and every clip is authored IN PLACE with a dead root, which is exactly what
+  // this engine wants -- the world drives the body and the clip only says what the legs do.
+  // The turns are the same: they LEAN into a turn without rotating, so the heading is driven
+  // procedurally and the clip is laid over it.
+  Loll: {
+    url: 'models/alien_cow.glb',
+    height: 2.35,
+    yaw: 0,
+    // Idle_1 is the standing breath; the walk, the trot and the run are a real three-speed
+    // ladder rather than the usual two.
+    idle: 'Arm_Cow|Idle_1', walk: 'Arm_Cow|Walk_F_IP', run: 'Arm_Cow|Run_F_IP',
+    swim: 'Arm_Cow|Swim_F_IP', swimIdle: 'Arm_Cow|Swim_Idle',
+    extra: {
+      trot: 'Arm_Cow|Trot_F_IP',            // the middle gear, between the walk and the run
+      idle2: 'Arm_Cow|Idle_2', idle3: 'Arm_Cow|Idle_3',
+      // Eating is three clips, not one: it lowers its head, it chews, it lifts its head.
+      grazeIn: 'Arm_Cow|EatDrink_start', graze: 'Arm_Cow|Eat_loop', grazeOut: 'Arm_Cow|EatDrink_end',
+      drink: 'Arm_Cow|Drink_loop',
+      // Lying down is four: fold, settle, sleep, and get back up.
+      lieIn: 'Arm_Cow|Lie_start', lie: 'Arm_Cow|Lie_loop1', sleep: 'Arm_Cow|Lie_sleep_loop', lieOut: 'Arm_Cow|Lie_end',
+      // Turning on the spot, and the half-turn the flee uses for its pivot.
+      turnL: 'Arm_Cow|Turn_L_IP', turnR: 'Arm_Cow|Turn_R_IP',
+      spinL: 'Arm_Cow|Turn180_L_IP', spinR: 'Arm_Cow|Turn180_R_IP',
+      hitC: 'Arm_Cow|Hit_Front', hitB: 'Arm_Cow|Hit_Back',
+    },
+    // Anything that LOOPS while it is the body's whole business goes here; the one-shots
+    // (grazeIn, lieIn, the hits, the turns) are played through the act channel instead.
+    extraLoop: ['trot', 'graze', 'drink', 'lie', 'sleep', 'idle2', 'idle3'],
+    glow: { lo: .14, hi: .40, k: 1.5, lum: [.42, .88] },
+    hue: .40,
+  },
   Grazer: {
     hue: .38,             // each one a little way round the wheel from the next -- see TAME
     url: 'models/purple_horny.glb',
@@ -7755,7 +7793,7 @@ const MOOD = {
   waryMin: 34,           // and a terrified species keeps its distance even if it never had one
   label: { Grazer: 'the mossbacks', Weaver: 'the tinkers', Burrower: 'the mudlarks',
     Skimmer: 'the glimmerfins', Drifter: 'the kitewings', Hopper: 'the hoppers', Poacher: 'the poachers',
-    Walker: 'the grovewalkers', Leviathan: 'the leviathans' },
+    Walker: 'the grovewalkers', Leviathan: 'the leviathans', Loll: 'the lolls' },
 };
 function moodOf(c) { return MOOD.m[c.constructor.name] || 0; }
 function moodShift(c, d) {
@@ -8177,6 +8215,7 @@ class Creature {
     this.alive = true; this.pos = new THREE.Vector3(x, 0, z); this.speed = o.speed; this.turn = o.turn; this.aquatic = !!o.aquatic; this.flying = !!o.flying;
     this.heading = rnd(Math.PI * 2); this.steer = new THREE.Vector3(); this.steerS = new THREE.Vector3(); this.avoidO = null; this.avoidSide = 1; this.turnBias = 0; this.rx = x; this.rz = z; this.moving = 1; this.moveK = 1; this.phase = rnd(Math.PI * 2);
     this.recover = null; this.startle = 0; this.startleCool = 0; this.startleFrom = null; this.spin = 0;
+    this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.tame = 0; this.tameK = 0; this.hue = 0; this.fed = 0; this.friend = 0; this.shy = 0; this.loud = 0;
     this.state = 'wander'; this.timer = rnd(2, 6); this.target = null; this.wp = null; this.alt = 0; this.legs = []; this.lean = 0;
     this.animK = 0; this.stall = 0; this.px0 = x; this.pz0 = z; this.ax = x; this.az = z; this.aT = 0; this.roamT = 0; this.avoidB = 0;   // animK: measured motion; stall: seconds wanting to move and covering no ground
@@ -8836,7 +8875,10 @@ class Creature {
       let a = Math.atan2(this.pos.x - f.x, this.pos.z - f.z) - this.heading; a = Math.atan2(Math.sin(a), Math.cos(a));
       const step = this.turn * SENSE.spin * dt;
       this.heading += clamp(a, -step, step);
-      if (Math.abs(a) < .3) { this.spin = 0; bubbleSay(this, 'alarm'); this.spook(f, S.flock); }
+      // AND A RIG THAT HAS A TURN PLAYS IT. Nothing else has one yet; play() is a no-op on a
+      // rig without the clip, so this costs the rest of them nothing.
+      if (!this.act) this.play(a > 0 ? 'spinL' : 'spinR', 1.2);
+      if (Math.abs(a) < .3) { this.spin = 0; this.actT = Math.min(this.actT, .12); bubbleSay(this, 'alarm'); this.spook(f, S.flock); }
       this.doing = 'turn'; return true;
     }
     if (wary && this.startleCool <= 0 && !this.fling && !this.net) {
@@ -8928,6 +8970,25 @@ class Creature {
   // keeping it -- and only this puts your colour on an animal. Nothing calls it yet; when the
   // pens are built, that is the one line they need. isle.tame(c) drives it by hand meanwhile.
   domesticate() { this.friend = 1; this.tame = 1; this.trust = Math.max(this.trust, 1e6); }
+  // ONE OF ITS OWN CLIPS, for as long as it lasts. This was the poacher's; it is every rigged
+  // creature's now, because the moment a species arrives with seventy clips in it the one-shot
+  // channel stops being a special case and becomes the ordinary way to say "do that".
+  // `play` on a rig that has no such clip returns false and costs nothing, so a species can
+  // ask for a gesture it might not have and carry on.
+  play(key, rate, own) {
+    const a = this.rig && this.rig.acts[key]; if (!a) return false;
+    this.act = key; this.actT = this.actMax = a.getClip().duration / (rate || 1);
+    if (own !== undefined) this.actT = this.actMax = own;
+    a.timeScale = rate || 1;
+    return true;
+  }
+  stepAct(dt) {
+    if (this.actT > 0) {
+      this.actT -= dt;
+      this.actK = Math.min(smooth(0, .10, this.actMax - this.actT), smooth(0, this.actMax * .25, this.actT));
+      if (this.actT <= 0) { this.actT = 0; this.actK = 0; this.act = null; }
+    } else if (this.actK > 0) { this.actK = Math.max(0, this.actK - dt * 6); if (this.actK <= 0) this.act = null; }
+  }
   // Can it see or hear this thing? `range` is the species' own wariness; the cone and the
   // hearing fall-off are SENSE's. `pl` is the player when he counts as a threat (null when he
   // is trusted or disguised); poachers always count.
@@ -9201,6 +9262,7 @@ class Creature {
     else if (this.roamT > 0) { this.roamT -= dt; this.moving = 1; this.wander(); }
     else this.think(dt);
     this.locomote(dt);
+    this.stepAct(dt);
     stepFace(this, dt);
     // The colour of a tamed one comes over rather than switching, on every material it owns.
     if (this.rig && this.rig.tints && (this.tame || this.tameK > .001)) {
@@ -9523,6 +9585,144 @@ class Weaver extends Creature {
     }
     if (this.tree) { this.ignore = this.tree; if (this.dist(this.tree.pos) < 2.8) { this.state = 'chop'; this.timer = rnd(5, 7.5); } else this.seek(this.tree.pos, 1.4); }
     else this.wander();
+  }
+}
+// THE LOLLS. Big, placid, slow to make up their mind, and the first species built AROUND a
+// clip set rather than given one. Everything it does is a named animation and a state that
+// knows when to be in it: it grazes in three beats, it drinks at the shore, it lies down when
+// the light goes and sleeps, it turns on the spot instead of steering like a boat, and it has
+// three gears rather than the usual two.
+const LOLL = {
+  graze: [14, 26],   // how long a mouthful lasts
+  hunt: [9, 18],     // and how long it wanders between them
+  turnAt: .9,        // heading error past which it stops and turns on the spot instead
+  trot: [.52, .88],  // the band of its own pace that is a trot rather than a walk or a run
+  bed: .72,          // the darkness at which it beds down
+};
+class Loll extends Creature {
+  constructor(x, z) {
+    // 1.8 is also exactly the size a poacher can get his arms round, and this one is too big
+    // for that: a man walking off with a cow under one arm is a different game.
+    super(x, z, { speed: 3.4, turn: 1.5, rad: 1.8, look: 9, minObR: .9,
+      wary: 19, flock: 7, notice: 18, thirst: 150, social: 1 });
+    this.hasLay = 1;                      // it has clips for going down; skip the procedural roll
+    this.gait = 6; this.bob = 0;          // the clips carry their own bounce; nothing procedural
+    this.timer = rnd(4, 14); this.chew = 0; this.bedded = 0;
+  }
+  // A stand-in only, hidden the moment the GLB lands -- same contract as the poacher's.
+  build() {
+    const b = this.body, hide = pick(M.grazer);
+    b.add(mesh(G.blob[0], hide, 1.3, 1.05, 1.8, 0, 1.25, 0));
+    b.add(mesh(G.blob[2], hide, 1.05, .95, 1.0, 0, 1.35, -1.2));
+    const head = new THREE.Group(); head.position.set(0, 1.95, 1.5); b.add(head); this.head = head;
+    head.add(mesh(G.blob[3], hide, .55, .5, .7, 0, 0, 0));
+    for (const [x, z] of [[.62, .85], [-.62, .85], [.6, -.9], [-.6, -.9]]) this.addLeg(x, z, 1.15, M.grazer2, .17);
+  }
+  // THE GEARS. stepRig blends idle into walk into run off the ground it actually covers; the
+  // trot is laid over the middle of that band as an alternative gait, which is what the engine's
+  // `gait` channel is for. So a loll ambling reads as a walk, one crossing a meadow as a trot,
+  // and one that has been frightened as a flat run, with no thresholds anywhere but here.
+  gears() {
+    const m = this.moveK * this.paceK();
+    return (m > LOLL.trot[0] && m < LOLL.trot[1]) ? 'trot' : null;
+  }
+  // TURNING ON THE SPOT. The clips lean into a turn without rotating a degree, which is exactly
+  // right: the heading is the game's business. When it wants to go somewhere well off its nose
+  // it plants, plays the turn, and only then sets off -- which is most of what makes something
+  // this big read as heavy rather than as a sprite being dragged around.
+  steerOrTurn(to, w, dt) {
+    let a = Math.atan2(to.x - this.pos.x, to.z - this.pos.z) - this.heading;
+    a = Math.atan2(Math.sin(a), Math.cos(a));
+    if (Math.abs(a) > LOLL.turnAt && this.moveK < .5) {
+      if (!this.act) this.play(a > 0 ? 'turnL' : 'turnR', 1);
+      this.heading += clamp(a, -this.turn * dt * 1.4, this.turn * dt * 1.4);
+      this.moving = 0; return true;
+    }
+    this.seek(to, w); return false;
+  }
+  // Out cold. It has three clips for being on the floor, so it uses them rather than the
+  // procedural roll onto its side that everything without them gets.
+  dazePose() {
+    this.gaitClip = null;
+    if (this.act !== 'lieIn' && this.gaitClipWas !== 'lie') { this.play('lieIn', 1.3); this.gaitClipWas = 'lie'; }
+    if (!this.act) this.gaitClip = 'lie';
+  }
+  senses(dt) {
+    const took = super.senses(dt);
+    if (this.daze <= 0) this.gaitClipWas = null;
+    if (took) {
+      // Whatever a sense decided to do, dress it: a drink is a drink clip, a flight is a run.
+      this.gaitClip = (this.doing === 'drink' && this.moveK < .2) ? 'drink' : this.gears();
+      if (this.doing !== 'startle' && this.doing !== 'turn') this.bedded = 0;
+    }
+    return took;
+  }
+  stagger(from, force = 1) {
+    super.stagger(from, force);
+    const dx = from.x - this.pos.x, dz = from.z - this.pos.z;
+    const front = (dx * Math.sin(this.heading) + dz * Math.cos(this.heading)) / (Math.hypot(dx, dz) || 1);
+    this.play(front > 0 ? 'hitC' : 'hitB', 1.2);
+    this.chew = 0; this.state = 'wander';
+  }
+  think(dt) {
+    this.timer -= dt;
+    this.gaitClip = this.gears();
+    // ── bedded down ──
+    // It lies down when the light goes and gets up when it comes back, and the three clips are
+    // played in order rather than cut between: fold, settle, rise.
+    if (world.night > LOLL.bed || this.bedded) {
+      const want = world.night > LOLL.bed;
+      if (want && !this.bedded) { this.bedded = 1; this.play('lieIn', 1); this.chew = 0; }
+      if (!want && this.bedded) { this.bedded = 0; this.play('lieOut', 1); this.timer = rnd(2, 6); }
+      if (this.bedded) {
+        this.moving = 0;
+        if (!this.act) this.gaitClip = world.night > LOLL.bed + .12 ? 'sleep' : 'lie';
+        this.doing = 'bed'; return;
+      }
+      if (this.actT > 0) { this.moving = 0; this.doing = 'rise'; return; }
+    }
+    // ── grazing ──
+    // Three beats: the head goes down, it chews for a while, the head comes up. `chew` is the
+    // middle one, and nothing interrupts the two ends of it.
+    if (this.chew > 0) {
+      this.moving = 0; this.chew -= dt;
+      if (!this.act) this.gaitClip = 'graze';
+      if (this.target && this.target.alive && this.target.size > .12) { this.target.size -= dt * .06; this.target.apply(); }
+      if (this.chew <= 0) { this.play('grazeOut', 1); this.target = null; this.state = 'wander'; this.timer = rnd(LOLL.hunt[0], LOLL.hunt[1]); }
+      this.doing = 'graze'; return;
+    }
+    if (this.actT > 0 && (this.act === 'grazeIn' || this.act === 'grazeOut' || this.act === 'lieIn' || this.act === 'lieOut')) {
+      this.moving = 0; this.doing = 'settle'; return;
+    }
+    this.moving = 1;
+    // ── the herd ──
+    // It keeps loose company with its own kind without queueing up on them.
+    let cx = 0, cz = 0, n = 0;
+    for (const o of world.creatures) {
+      if (o === this || !(o instanceof Loll) || !o.alive) continue;
+      const d = this.dist(o.pos);
+      if (d < 26) { cx += o.pos.x; cz += o.pos.z; n++; if (d < 4.2) this.flee(o.pos, 2.2 / Math.max(d, .5)); }
+    }
+    if (n) this.seek({ x: cx / n, z: cz / n }, .22);
+    // ── finding a mouthful ──
+    if (this.timer <= 0 || this.target) {
+      if (!this.target || !this.target.alive || this.target.size < .3)
+        this.target = nearest(world.plants, this.pos, pl => pl instanceof MossTuft && pl.size > .45, 60);
+      if (this.target) {
+        this.ignore = this.target;
+        if (this.dist(this.target.pos) < 3.0) {
+          this.play('grazeIn', 1); this.chew = rnd(LOLL.graze[0], LOLL.graze[1]);
+          this.moving = 0; this.doing = 'graze'; return;
+        }
+        this.moving = .62;
+        this.steerOrTurn(this.target.pos, 1.2, dt);
+        this.doing = 'browse'; return;
+      }
+      this.timer = rnd(6, 12);
+    }
+    this.moving = .55;
+    this.wander();
+    this.doing = 'wander';
   }
 }
 // Mudlark — digger, accidental gardener
@@ -10328,7 +10528,6 @@ class Poacher extends Creature {
     this.carry = null; this.carryK = 0; this.carryT = 0; this.grabT = 0; this.grip = 0;
     this.job = 'wander'; this.noticeT = 0; this.restT = 0;
     this.near = 1e9; this.nearT = 0; this.shun = null; this.shunT = 0;
-    this.act = null; this.actK = 0; this.actT = 0; this.actMax = 0; this.gaitClip = null;
     this.hasLay = 1;                       // it has a clip for going down: skip the procedural roll
     this.hasAir = 1;                       // and two for being in it: skip the procedural lean
   }
@@ -10339,21 +10538,6 @@ class Poacher extends Creature {
     b.add(mesh(G.cyl, coat, .34, 1.5, .26, 0, 1.15, 0));
     b.add(mesh(G.sph, coat, .3, .34, .3, 0, 2.15, 0));
     for (const sx of [1, -1]) this.addLeg(sx * .22, 0, .95, coat, .12);
-  }
-  // One of his own clips, for as long as it lasts. Same shape as the wanderer's act channel.
-  play(key, rate, own) {
-    const a = this.rig && this.rig.acts[key]; if (!a) return false;
-    this.act = key; this.actT = this.actMax = a.getClip().duration / (rate || 1);
-    if (own !== undefined) this.actT = this.actMax = own;
-    a.timeScale = rate || 1;
-    return true;
-  }
-  stepAct(dt) {
-    if (this.actT > 0) {
-      this.actT -= dt;
-      this.actK = Math.min(smooth(0, .10, this.actMax - this.actT), smooth(0, this.actMax * .25, this.actT));
-      if (this.actT <= 0) { this.actT = 0; this.actK = 0; this.act = null; }
-    } else if (this.actK > 0) { this.actK = Math.max(0, this.actK - dt * 6); if (this.actK <= 0) this.act = null; }
   }
   // WHICH WAY HE TOOK IT. `right` is the cross of his facing with the line back to whatever
   // hit him -- positive when it came off his right -- and `front` is how much of it he was
@@ -10639,7 +10823,6 @@ class Poacher extends Creature {
     const k = this.fling;
     const up = k && k.rest <= 0 && k.y > this.flingFloor(k.x, k.z) + .3;
     if (!up && this.actT > .12 && (this.act === 'airFwd' || this.act === 'airBwd')) this.actT = .12;
-    this.stepAct(dt);
     super.update(dt);
     // AFTER the body has moved, not before: holdPlace reads his position and his heading, and
     // reading them a frame early is an animal that swims a stride behind the man carrying it.
@@ -13863,6 +14046,14 @@ function populate() {
     }
   }
   for (let i = 0; i < 20; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Grazer(p.x, p.z)); }
+  // The lolls keep to the open meadow, in twos and threes rather than scattered one by one.
+  for (let i = 0; i < MAX.loll; i += 3) {
+    const h = randomLand(1.6, 9, .5); if (!h) continue;
+    for (let k = 0; k < 3 && i + k < MAX.loll; k++) {
+      const p = nearLand(new THREE.Vector3(h.x, 0, h.z), 3, 13, 1.6, 9, .6) || h;
+      world.creatures.push(new Loll(p.x, p.z));
+    }
+  }
   for (let i = 0; i < 7; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Weaver(p.x, p.z)); }
   for (let i = 0; i < 9; i++) { const p = randomLand(1.4, 10, .8); if (p) world.creatures.push(new Burrower(p.x, p.z)); }
   for (let i = 0; i < 38; i++) { const p = randomWater(); world.creatures.push(new Skimmer(p.x, p.z)); }
@@ -20369,7 +20560,10 @@ function drawReticle() {
 // re-export at a different scale or tempo still looks right.
 function measureStride(rig, clip) {
   const feet = [];
-  rig.traverse(o => { if (o.isBone && /foot|ankle/i.test(o.name) && !/toe/i.test(o.name)) feet.push(o); });
+  // `hoof` as well as foot and ankle: the stride is measured off whatever touches the floor,
+  // and a cow rig names those hooves. The _tip bones are the toe equivalent and are excluded
+  // for the same reason -- they swing furthest and would over-read every stride.
+  rig.traverse(o => { if (o.isBone && /foot|ankle|hoof|paw/i.test(o.name) && !/toe|tip/i.test(o.name)) feet.push(o); });
   if (!feet.length || !clip.duration) return 0;
   const mx = new THREE.AnimationMixer(rig);
   mx.clipAction(clip).play();
