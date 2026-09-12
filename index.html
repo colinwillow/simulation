@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e96';
+const BUILD = 'e97';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7652,8 +7652,10 @@ const CREATURE_RIGS = {
   // system already works out what each animal thinks of him every frame, and this is the first
   // body that can say it standing still. See Bruin.idleFor.
   //
-  // `flee` and `run_fwd` are the same clip in the file, to the frame. Kept as a name anyway:
-  // when a scared-run is authored it drops in here and nothing else changes.
+  // `flee` IS the run with its arms up and back, and that is not a guess: compared track by
+  // track against run_fwd, every bone in the body is identical to four decimal places -- hips,
+  // spine, legs, forearms, all exactly 0.0000 apart -- and the two upper arms differ by .49 and
+  // .72 of a quaternion. One clip, two moods, and the difference is the whole silhouette.
   Bruin: {
     url: 'models/alien_bear.glb',
     height: 3.4,          // half a head over a poacher, and twice the mass by eye
@@ -9688,8 +9690,17 @@ class Bruin extends Creature {
     super.pose(dt);
     if (this.climbY > .01) { this.g.position.y += this.climbY; this.pos.y += this.climbY; }
   }
+  // AND THE SCARED RUN HAS TO BE CHOSEN HERE. think() only runs when no sense has taken the
+  // wheel, and being frightened is a sense -- so a gait clip picked in think() for the one
+  // state it exists for could never once be reached. It is the poacher's crack again, and it
+  // is worth writing down: anything that dresses a SENSE has to be set in senses().
+  senses(dt) {
+    const took = super.senses(dt);
+    if (took) this.gaitClip = (this.alarm > 0 || this.startle > 0 || this.spin) && this.rig && this.rig.acts.flee ? 'flee' : null;
+    return took;
+  }
   think(dt) {
-    this.gaitClip = this.alarm > 0 && this.rig && this.rig.acts.flee ? 'flee' : null;
+    this.gaitClip = null;
     // ── up a tree ──
     // Frightened and worn, with something to climb: it goes up and waits you out. Nothing else
     // on the island leaves the ground under its own power, and a bear in a canopy is the sort
